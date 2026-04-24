@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	sourceProwRunsReconcileInterval = 2 * time.Minute
+	sourceProwRunsReconcileInterval = 10 * time.Minute
 	sourceProwRunsReplayWindow      = 1 * time.Hour
+	sourceProwRunsSyncKey           = "all"
 )
 
 type sourceProwRunsController struct {
@@ -34,8 +35,7 @@ type sourceProwRunsController struct {
 }
 
 type prowRunsFetchStats struct {
-	PagesFetched  int
-	FetchedBuilds int
+	FetchedJobs int
 }
 
 var _ Controller = (*sourceProwRunsController)(nil)
@@ -59,7 +59,7 @@ func newSourceProwRunsController(logger logr.Logger, deps Dependencies, client p
 	}
 
 	for _, env := range deps.Source.Environments {
-		if _, ok := sourceoptions.ProwJobHistoryPathForEnvironment(env); !ok {
+		if _, ok := sourceoptions.ProwJobNameForEnvironment(env); !ok {
 			return nil, fmt.Errorf("source.prow.runs: missing prow job mapping for environment %q", normalizeEnvironment(env))
 		}
 	}
@@ -107,16 +107,10 @@ func (c *sourceProwRunsController) RunOnce(ctx context.Context, key string) erro
 }
 
 func (c *sourceProwRunsController) SyncOnce(ctx context.Context) error {
-	keys, err := c.listKeys(ctx)
-	if err != nil {
-		return err
+	if err := c.processKey(ctx, sourceProwRunsSyncKey); err != nil {
+		return fmt.Errorf("failed processing key %q: %w", sourceProwRunsSyncKey, err)
 	}
-	for _, key := range keys {
-		if err := c.processKey(ctx, key); err != nil {
-			return fmt.Errorf("failed processing key %q: %w", key, err)
-		}
-	}
-	c.logger.Info("Completed one full sync.", "keys", len(keys))
+	c.logger.Info("Completed one full sync.", "keys", 1)
 	return nil
 }
 
@@ -157,6 +151,10 @@ func (c *sourceProwRunsController) queueMetadata(ctx context.Context) {
 }
 
 func (c *sourceProwRunsController) listKeys(_ context.Context) ([]string, error) {
+	return []string{sourceProwRunsSyncKey}, nil
+}
+
+func (c *sourceProwRunsController) configuredEnvironments() []string {
 	keys := make([]string, 0, len(c.deps.Source.Environments))
 	for _, env := range c.deps.Source.Environments {
 		normalized := normalizeEnvironment(env)
@@ -165,25 +163,47 @@ func (c *sourceProwRunsController) listKeys(_ context.Context) ([]string, error)
 		}
 		keys = append(keys, normalized)
 	}
-	return keys, nil
+	return keys
 }
 
 func (c *sourceProwRunsController) processKey(ctx context.Context, key string) error {
-	environment := normalizeEnvironment(key)
-	if environment == "" {
+	normalizedKey := normalizeEnvironment(key)
+	if normalizedKey == "" {
 		return fmt.Errorf("empty key")
 	}
-	return c.syncEnvironment(ctx, environment)
+	if normalizedKey == sourceProwRunsSyncKey {
+		return c.syncEnvironments(ctx, c.configuredEnvironments())
+	}
+	return c.syncEnvironments(ctx, []string{normalizedKey})
 }
 
-func (c *sourceProwRunsController) syncEnvironment(ctx context.Context, environment string) error {
+func (c *sourceProwRunsController) syncEnvironments(ctx context.Context, environments []string) error {
+	if len(environments) == 0 {
+		return fmt.Errorf("no environments to sync")
+	}
+
+	jobs, fetchStats, err := fetchProwJobsSnapshot(ctx, c.prowClient)
+	if err != nil {
+		return fmt.Errorf("list prow jobs snapshot: %w", err)
+	}
+	c.logger.Info(
+		"Fetched Prow job snapshot for run discovery.",
+		"environments", len(environments),
+		"fetched_total", fetchStats.FetchedJobs,
+	)
+
+	for _, environment := range environments {
+		if err := c.syncEnvironmentFromSnapshot(ctx, environment, jobs, fetchStats); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *sourceProwRunsController) syncEnvironmentFromSnapshot(ctx context.Context, environment string, snapshotJobs []prowjobs.Job, fetchStats prowRunsFetchStats) error {
 	jobName, ok := sourceoptions.ProwJobNameForEnvironment(environment)
 	if !ok {
 		return fmt.Errorf("missing prow job mapping for environment %q", normalizeEnvironment(environment))
-	}
-	historyPath, ok := sourceoptions.ProwJobHistoryPathForEnvironment(environment)
-	if !ok {
-		return fmt.Errorf("missing prow job history path for environment %q", normalizeEnvironment(environment))
 	}
 
 	checkpointTime, err := c.getCheckpointTime(ctx, environment)
@@ -192,10 +212,7 @@ func (c *sourceProwRunsController) syncEnvironment(ctx context.Context, environm
 	}
 	since := c.resolveSince(checkpointTime)
 
-	jobs, fetchStats, err := listCompletedJobsSince(ctx, c.prowClient, c.deps.Source.ProwBaseURL, jobName, historyPath, since)
-	if err != nil {
-		return fmt.Errorf("list prow job history for environment %q: %w", environment, err)
-	}
+	jobs := filterCompletedJobsByNameAndSince(snapshotJobs, jobName, since)
 
 	now := time.Now().UTC()
 	runRecords := make([]contracts.RunRecord, 0, len(jobs))
@@ -233,9 +250,7 @@ func (c *sourceProwRunsController) syncEnvironment(ctx context.Context, environm
 		"Synced completed Prow runs for environment.",
 		"environment", environment,
 		"job_name", jobName,
-		"history_path", historyPath,
-		"pages_fetched", fetchStats.PagesFetched,
-		"fetched_total", fetchStats.FetchedBuilds,
+		"fetched_total", fetchStats.FetchedJobs,
 		"matched_completed", len(jobs),
 		"upserted_runs", len(runRecords),
 		"since_start", since.Format(time.RFC3339),
@@ -270,39 +285,12 @@ func (c *sourceProwRunsController) resolveSince(lastCheckpoint time.Time) time.T
 	return since
 }
 
-func listCompletedJobsSince(ctx context.Context, client prowjobs.Client, prowBaseURL string, jobName string, historyPath string, since time.Time) ([]prowjobs.Job, prowRunsFetchStats, error) {
-	nextPage := strings.TrimSpace(historyPath)
-	if nextPage == "" {
-		return nil, prowRunsFetchStats{}, fmt.Errorf("prow job history path is required")
+func fetchProwJobsSnapshot(ctx context.Context, client prowjobs.Client) ([]prowjobs.Job, prowRunsFetchStats, error) {
+	jobs, err := client.ListJobs(ctx)
+	if err != nil {
+		return nil, prowRunsFetchStats{}, err
 	}
-
-	seenPages := map[string]struct{}{}
-	jobs := []prowjobs.Job{}
-	stats := prowRunsFetchStats{}
-
-	for nextPage != "" {
-		if _, seen := seenPages[nextPage]; seen {
-			return nil, stats, fmt.Errorf("duplicate prow job history page %q", nextPage)
-		}
-		seenPages[nextPage] = struct{}{}
-
-		page, err := client.GetJobHistoryPage(ctx, nextPage)
-		if err != nil {
-			return nil, stats, err
-		}
-		stats.PagesFetched++
-		stats.FetchedBuilds += len(page.Builds)
-
-		pageJobs := page.AsJobs(prowBaseURL, jobName)
-		jobs = append(jobs, filterCompletedJobsByNameAndSince(pageJobs, jobName, since)...)
-
-		if page.OlderLink == "" || shouldStopPagingJobHistory(pageJobs, since) {
-			break
-		}
-		nextPage = page.OlderLink
-	}
-
-	return jobs, stats, nil
+	return jobs, prowRunsFetchStats{FetchedJobs: len(jobs)}, nil
 }
 
 func mapProwJobToRunRecord(prowBaseURL string, environment string, job prowjobs.Job) (contracts.RunRecord, bool) {
@@ -338,24 +326,6 @@ func mapProwJobToRunRecord(prowBaseURL string, environment string, job prowjobs.
 	}
 
 	return record, true
-}
-
-func shouldStopPagingJobHistory(jobs []prowjobs.Job, since time.Time) bool {
-	var oldestTerminalStart time.Time
-	foundTerminalStart := false
-
-	for _, job := range jobs {
-		if !prowjobs.IsTerminalState(job.Status.State) || job.Status.StartTime.IsZero() {
-			continue
-		}
-		startedAt := job.Status.StartTime.UTC()
-		if !foundTerminalStart || startedAt.Before(oldestTerminalStart) {
-			oldestTerminalStart = startedAt
-			foundTerminalStart = true
-		}
-	}
-
-	return foundTerminalStart && oldestTerminalStart.Before(since.UTC())
 }
 
 func filterCompletedJobsByNameAndSince(jobs []prowjobs.Job, jobName string, since time.Time) []prowjobs.Job {

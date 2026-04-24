@@ -6,6 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
+
+	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
+	sourceoptions "ci-failure-atlas/pkg/source/options"
 	"ci-failure-atlas/pkg/source/prowjobs"
 	"ci-failure-atlas/pkg/store/contracts"
 )
@@ -65,6 +69,27 @@ func TestMapProwJobToRunRecord(t *testing.T) {
 				JobName:        "periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel",
 				MergedPR:       true,
 				PostGoodCommit: true,
+				Failed:         false,
+			},
+		},
+		{
+			name:        "dev batch success",
+			environment: "dev",
+			job: prowjobs.Job{
+				Spec: prowjobs.JobSpec{
+					Job: "pull-ci-Azure-ARO-HCP-main-e2e-parallel",
+				},
+				Status: prowjobs.JobStatus{
+					State: "success",
+					URL:   "gs://test-platform-results/pr-logs/pull/batch/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455498",
+				},
+			},
+			want: contracts.RunRecord{
+				Environment:    "dev",
+				RunURL:         "https://prow.ci.openshift.org/view/gs/test-platform-results/pr-logs/pull/batch/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455498",
+				JobName:        "pull-ci-Azure-ARO-HCP-main-e2e-parallel",
+				MergedPR:       false,
+				PostGoodCommit: false,
 				Failed:         false,
 			},
 		},
@@ -138,114 +163,100 @@ func TestMapProwJobToRunRecordKeepsTerminalJobWithoutCompletionTime(t *testing.T
 	}
 }
 
-func TestListCompletedJobsSincePagesUntilCutoff(t *testing.T) {
+func TestSyncOnceUsesSharedSnapshotForAllEnvironments(t *testing.T) {
 	t.Parallel()
 
-	jobName := "pull-ci-Azure-ARO-HCP-main-e2e-parallel"
-	since := mustParseRFC3339(t, "2026-04-20T09:00:00Z")
-	client := &fakeProwJobHistoryClient{
-		pages: map[string]prowjobs.JobHistoryPage{
-			"pr-logs/directory/" + jobName: {
-				Builds: []prowjobs.JobHistoryBuild{
-					{
-						ID:           "2029578186907455488",
-						SpyglassLink: "/view/gs/test-platform-results/pr-logs/pull/Azure_ARO-HCP/4313/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455488",
-						Started:      mustParseRFC3339(t, "2026-04-20T12:00:00Z"),
-						Duration:     15 * time.Minute,
-						Result:       "FAILURE",
-						Refs: &prowjobs.Refs{
-							Pulls: []prowjobs.Pull{{Number: 4313, SHA: "abc123"}},
-						},
-					},
-					{
-						ID:           "2029578186907455487",
-						SpyglassLink: "/view/gs/test-platform-results/pr-logs/pull/Azure_ARO-HCP/4312/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455487",
-						Started:      mustParseRFC3339(t, "2026-04-20T10:00:00Z"),
-						Duration:     20 * time.Minute,
-						Result:       "SUCCESS",
-						Refs: &prowjobs.Refs{
-							Pulls: []prowjobs.Pull{{Number: 4312, SHA: "def456"}},
-						},
-					},
+	opts := testSourceOptions(t, []string{"dev", "int"})
+	devJobName, _ := sourceoptions.ProwJobNameForEnvironment("dev")
+	intJobName, _ := sourceoptions.ProwJobNameForEnvironment("int")
+	devStartedAt := time.Now().UTC().Add(-20 * time.Minute).Truncate(time.Second)
+	intStartedAt := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
+
+	client := &fakeProwSnapshotClient{
+		jobs: []prowjobs.Job{
+			{
+				Spec: prowjobs.JobSpec{
+					Job: devJobName,
 				},
-				OlderLink: "page-2",
-			},
-			"page-2": {
-				Builds: []prowjobs.JobHistoryBuild{
-					{
-						ID:           "2029578186907455486",
-						SpyglassLink: "/view/gs/test-platform-results/pr-logs/pull/Azure_ARO-HCP/4311/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455486",
-						Started:      mustParseRFC3339(t, "2026-04-20T09:03:00Z"),
-						Duration:     4 * time.Minute,
-						Result:       "ABORTED",
-						Refs: &prowjobs.Refs{
-							Pulls: []prowjobs.Pull{{Number: 4311, SHA: "ghi789"}},
-						},
-					},
-					{
-						ID:           "2029578186907455485",
-						SpyglassLink: "/view/gs/test-platform-results/pr-logs/pull/Azure_ARO-HCP/4310/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455485",
-						Started:      mustParseRFC3339(t, "2026-04-20T08:00:00Z"),
-						Duration:     10 * time.Minute,
-						Result:       "SUCCESS",
-						Refs: &prowjobs.Refs{
-							Pulls: []prowjobs.Pull{{Number: 4310, SHA: "jkl012"}},
-						},
-					},
+				Status: prowjobs.JobStatus{
+					State:     "failure",
+					URL:       "gs://test-platform-results/pr-logs/pull/batch/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455488",
+					StartTime: devStartedAt,
 				},
-				OlderLink: "page-3",
 			},
-			"page-3": {
-				Builds: []prowjobs.JobHistoryBuild{
-					{
-						ID:           "2029578186907455484",
-						SpyglassLink: "/view/gs/test-platform-results/pr-logs/pull/Azure_ARO-HCP/4309/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455484",
-						Started:      mustParseRFC3339(t, "2026-04-20T07:00:00Z"),
-						Duration:     10 * time.Minute,
-						Result:       "SUCCESS",
-					},
+			{
+				Spec: prowjobs.JobSpec{
+					Job: intJobName,
+				},
+				Status: prowjobs.JobStatus{
+					State:     "success",
+					URL:       "gs://test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499",
+					StartTime: intStartedAt,
+				},
+			},
+			{
+				Spec: prowjobs.JobSpec{
+					Job: devJobName,
+				},
+				Status: prowjobs.JobStatus{
+					State:     "pending",
+					URL:       "gs://test-platform-results/pr-logs/pull/Azure_ARO-HCP/4313/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455497",
+					StartTime: time.Now().UTC().Add(-5 * time.Minute),
 				},
 			},
 		},
 	}
-
-	jobs, stats, err := listCompletedJobsSince(
-		context.Background(),
-		client,
-		"https://prow.ci.openshift.org",
-		jobName,
-		"pr-logs/directory/"+jobName,
-		since,
-	)
+	store := &fakeProwRunsStore{
+		runs:        map[string]contracts.RunRecord{},
+		checkpoints: map[string]contracts.CheckpointRecord{},
+	}
+	controller, err := newSourceProwRunsController(logr.Discard(), Dependencies{
+		Store:  store,
+		Source: opts,
+	}, client)
 	if err != nil {
-		t.Fatalf("listCompletedJobsSince returned error: %v", err)
+		t.Fatalf("newSourceProwRunsController returned error: %v", err)
 	}
-	if len(jobs) != 2 {
-		t.Fatalf("unexpected job count: got=%d want=2", len(jobs))
+
+	if err := controller.SyncOnce(context.Background()); err != nil {
+		t.Fatalf("SyncOnce returned error: %v", err)
 	}
-	if stats.PagesFetched != 2 {
-		t.Fatalf("unexpected page count: got=%d want=2", stats.PagesFetched)
+	if client.listCalls != 1 {
+		t.Fatalf("expected exactly one snapshot fetch, got=%d", client.listCalls)
 	}
-	if stats.FetchedBuilds != 4 {
-		t.Fatalf("unexpected fetched build count: got=%d want=4", stats.FetchedBuilds)
+	if store.upsertRunsCalls != 2 {
+		t.Fatalf("expected one run upsert per environment, got=%d", store.upsertRunsCalls)
 	}
-	if len(client.calls) != 2 || client.calls[0] != "pr-logs/directory/"+jobName || client.calls[1] != "page-2" {
-		t.Fatalf("unexpected page calls: got=%v", client.calls)
+
+	devRunURL := "https://prow.ci.openshift.org/view/gs/test-platform-results/pr-logs/pull/batch/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455488"
+	intRunURL := "https://prow.ci.openshift.org/view/gs/test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499"
+	if _, found := store.GetStoredRun("dev", devRunURL); !found {
+		t.Fatalf("expected dev batch run to be stored")
 	}
-	if jobs[0].Status.URL != "https://prow.ci.openshift.org/view/gs/test-platform-results/pr-logs/pull/Azure_ARO-HCP/4313/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455488" {
-		t.Fatalf("unexpected resolved run URL: got=%q", jobs[0].Status.URL)
+	if _, found := store.GetStoredRun("int", intRunURL); !found {
+		t.Fatalf("expected int periodic run to be stored")
 	}
-	if jobs[1].Status.StartTime.Before(since) {
-		t.Fatalf("expected all returned jobs to satisfy the start-time cutoff: got start=%s since=%s", jobs[1].Status.StartTime.Format(time.RFC3339), since.Format(time.RFC3339))
+	if len(store.runs) != 2 {
+		t.Fatalf("expected exactly two stored runs, got=%d", len(store.runs))
 	}
-	for _, job := range jobs {
-		if job.Status.State == "aborted" || job.Status.State == "pending" {
-			t.Fatalf("unexpected non-ingestible job state returned: %q", job.Status.State)
-		}
+
+	devCheckpoint, found := store.checkpoints[prowRunsCheckpointNameForEnvironment("dev")]
+	if !found {
+		t.Fatalf("expected dev checkpoint to be stored")
+	}
+	if devCheckpoint.Value != devStartedAt.Format(time.RFC3339Nano) {
+		t.Fatalf("unexpected dev checkpoint value: got=%q want=%q", devCheckpoint.Value, devStartedAt.Format(time.RFC3339Nano))
+	}
+	intCheckpoint, found := store.checkpoints[prowRunsCheckpointNameForEnvironment("int")]
+	if !found {
+		t.Fatalf("expected int checkpoint to be stored")
+	}
+	if intCheckpoint.Value != intStartedAt.Format(time.RFC3339Nano) {
+		t.Fatalf("unexpected int checkpoint value: got=%q want=%q", intCheckpoint.Value, intStartedAt.Format(time.RFC3339Nano))
 	}
 }
 
-func TestShouldStopPagingJobHistoryIgnoresPendingJobs(t *testing.T) {
+func TestFilterCompletedJobsByNameAndSinceIncludesBatchRuns(t *testing.T) {
 	t.Parallel()
 
 	since := mustParseRFC3339(t, "2026-04-20T09:00:00Z")
@@ -253,13 +264,25 @@ func TestShouldStopPagingJobHistoryIgnoresPendingJobs(t *testing.T) {
 		{
 			Spec: prowjobs.JobSpec{Job: "pull-ci-Azure-ARO-HCP-main-e2e-parallel"},
 			Status: prowjobs.JobStatus{
-				State:     "pending",
+				State:     "success",
+				URL:       "gs://test-platform-results/pr-logs/pull/batch/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455488",
 				StartTime: mustParseRFC3339(t, "2026-04-20T12:00:00Z"),
 			},
 		},
+		{
+			Spec: prowjobs.JobSpec{Job: "pull-ci-Azure-ARO-HCP-main-e2e-parallel"},
+			Status: prowjobs.JobStatus{
+				State:     "pending",
+				StartTime: mustParseRFC3339(t, "2026-04-20T12:01:00Z"),
+			},
+		},
 	}
-	if shouldStopPagingJobHistory(jobs, since) {
-		t.Fatalf("expected paging to continue when a page has only non-terminal jobs")
+	filtered := filterCompletedJobsByNameAndSince(jobs, "pull-ci-Azure-ARO-HCP-main-e2e-parallel", since)
+	if len(filtered) != 1 {
+		t.Fatalf("unexpected filtered job count: got=%d want=1", len(filtered))
+	}
+	if filtered[0].Status.URL != "gs://test-platform-results/pr-logs/pull/batch/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455488" {
+		t.Fatalf("expected batch run to remain after filtering, got=%q", filtered[0].Status.URL)
 	}
 }
 
@@ -340,20 +363,209 @@ func mustParseRFC3339(t *testing.T, value string) time.Time {
 	return parsed.UTC()
 }
 
-type fakeProwJobHistoryClient struct {
-	pages map[string]prowjobs.JobHistoryPage
-	calls []string
+func testSourceOptions(t *testing.T, environments []string) *sourceoptions.Options {
+	t.Helper()
+
+	raw := sourceoptions.DefaultOptions()
+	raw.Environments = environments
+
+	validated, err := raw.Validate()
+	if err != nil {
+		t.Fatalf("validate source options: %v", err)
+	}
+	completed, err := validated.Complete(context.Background())
+	if err != nil {
+		t.Fatalf("complete source options: %v", err)
+	}
+	return completed
 }
 
-func (f *fakeProwJobHistoryClient) ListJobs(_ context.Context) ([]prowjobs.Job, error) {
+type fakeProwSnapshotClient struct {
+	jobs      []prowjobs.Job
+	listCalls int
+}
+
+func (f *fakeProwSnapshotClient) ListJobs(_ context.Context) ([]prowjobs.Job, error) {
+	f.listCalls++
+	return append([]prowjobs.Job(nil), f.jobs...), nil
+}
+
+func (f *fakeProwSnapshotClient) GetJobHistoryPage(_ context.Context, historyPathOrURL string) (prowjobs.JobHistoryPage, error) {
+	return prowjobs.JobHistoryPage{}, fmt.Errorf("unexpected history page request %q", historyPathOrURL)
+}
+
+type fakeProwRunsStore struct {
+	runs            map[string]contracts.RunRecord
+	checkpoints     map[string]contracts.CheckpointRecord
+	upsertRunsCalls int
+}
+
+func (f *fakeProwRunsStore) GetStoredRun(environment string, runURL string) (contracts.RunRecord, bool) {
+	row, found := f.runs[f.runKey(environment, runURL)]
+	return row, found
+}
+
+func (f *fakeProwRunsStore) UpsertRuns(_ context.Context, runs []contracts.RunRecord) error {
+	f.upsertRunsCalls++
+	for _, run := range runs {
+		f.runs[f.runKey(run.Environment, run.RunURL)] = run
+	}
+	return nil
+}
+
+func (f *fakeProwRunsStore) ListRuns(_ context.Context) ([]contracts.RunRecord, error) {
+	rows := make([]contracts.RunRecord, 0, len(f.runs))
+	for _, row := range f.runs {
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+func (f *fakeProwRunsStore) ListRunKeys(_ context.Context) ([]string, error) {
+	keys := make([]string, 0, len(f.runs))
+	for key := range f.runs {
+		keys = append(keys, key)
+	}
+	return keys, nil
+}
+
+func (f *fakeProwRunsStore) ListRunDates(_ context.Context) ([]string, error) {
 	return nil, nil
 }
 
-func (f *fakeProwJobHistoryClient) GetJobHistoryPage(_ context.Context, historyPathOrURL string) (prowjobs.JobHistoryPage, error) {
-	f.calls = append(f.calls, historyPathOrURL)
-	page, ok := f.pages[historyPathOrURL]
-	if !ok {
-		return prowjobs.JobHistoryPage{}, fmt.Errorf("unexpected history page %q", historyPathOrURL)
+func (f *fakeProwRunsStore) ListRunsByDate(_ context.Context, environment string, date string) ([]contracts.RunRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeProwRunsStore) GetRun(_ context.Context, environment string, runURL string) (contracts.RunRecord, bool, error) {
+	row, found := f.GetStoredRun(environment, runURL)
+	return row, found, nil
+}
+
+func (f *fakeProwRunsStore) UpsertPullRequests(_ context.Context, rows []contracts.PullRequestRecord) error {
+	return nil
+}
+
+func (f *fakeProwRunsStore) ListPullRequests(_ context.Context) ([]contracts.PullRequestRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeProwRunsStore) GetPullRequest(_ context.Context, prNumber int) (contracts.PullRequestRecord, bool, error) {
+	return contracts.PullRequestRecord{}, false, nil
+}
+
+func (f *fakeProwRunsStore) UpsertArtifactFailures(_ context.Context, rows []contracts.ArtifactFailureRecord) error {
+	return nil
+}
+
+func (f *fakeProwRunsStore) ListArtifactRunKeys(_ context.Context) ([]string, error) {
+	return nil, nil
+}
+
+func (f *fakeProwRunsStore) ListArtifactFailuresByRun(_ context.Context, environment string, runURL string) ([]contracts.ArtifactFailureRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeProwRunsStore) UpsertRawFailures(_ context.Context, rows []contracts.RawFailureRecord) error {
+	return nil
+}
+
+func (f *fakeProwRunsStore) ListRawFailures(_ context.Context) ([]contracts.RawFailureRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeProwRunsStore) ListRawFailureRunKeys(_ context.Context) ([]string, error) {
+	return nil, nil
+}
+
+func (f *fakeProwRunsStore) ListRawFailuresByRun(_ context.Context, environment string, runURL string) ([]contracts.RawFailureRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeProwRunsStore) ListRawFailuresByDate(_ context.Context, environment string, date string) ([]contracts.RawFailureRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeProwRunsStore) UpsertMetricsDaily(_ context.Context, rows []contracts.MetricDailyRecord) error {
+	return nil
+}
+
+func (f *fakeProwRunsStore) ListMetricsDaily(_ context.Context) ([]contracts.MetricDailyRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeProwRunsStore) ListMetricsDailyByDate(_ context.Context, environment string, date string) ([]contracts.MetricDailyRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeProwRunsStore) ListMetricDates(_ context.Context) ([]string, error) {
+	return nil, nil
+}
+
+func (f *fakeProwRunsStore) ListMetricsDailyForDates(_ context.Context, environments []string, dates []string) ([]contracts.MetricDailyRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeProwRunsStore) SumMetricByEnvironmentForDates(_ context.Context, metric string, environments []string, dates []string) (map[string]float64, error) {
+	return nil, nil
+}
+
+func (f *fakeProwRunsStore) UpsertTestMetadataDaily(_ context.Context, rows []contracts.TestMetadataDailyRecord) error {
+	return nil
+}
+
+func (f *fakeProwRunsStore) ListTestMetadataDailyByDate(_ context.Context, environment string, date string) ([]contracts.TestMetadataDailyRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeProwRunsStore) ListTestMetadataDatesByEnvironment(_ context.Context, environment string, period string) ([]string, error) {
+	return nil, nil
+}
+
+func (f *fakeProwRunsStore) ListBelowTargetTestMetadataByDate(_ context.Context, environment string, date string, period string, targetPassRate float64, minRuns int, limit int) ([]contracts.TestMetadataDailyRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeProwRunsStore) UpsertCheckpoints(_ context.Context, rows []contracts.CheckpointRecord) error {
+	for _, row := range rows {
+		f.checkpoints[row.Name] = row
 	}
-	return page, nil
+	return nil
+}
+
+func (f *fakeProwRunsStore) GetCheckpoint(_ context.Context, name string) (contracts.CheckpointRecord, bool, error) {
+	row, found := f.checkpoints[name]
+	return row, found, nil
+}
+
+func (f *fakeProwRunsStore) AppendDeadLetters(_ context.Context, rows []contracts.DeadLetterRecord) error {
+	return nil
+}
+
+func (f *fakeProwRunsStore) ListDeadLetters(_ context.Context, limit int) ([]contracts.DeadLetterRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeProwRunsStore) ReplaceMaterializedWeek(_ context.Context, week contracts.MaterializedWeek) error {
+	return nil
+}
+
+func (f *fakeProwRunsStore) ListFailurePatterns(_ context.Context) ([]semanticcontracts.FailurePatternRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeProwRunsStore) GetSemanticWeekSummary(_ context.Context) (contracts.SemanticWeekSummary, error) {
+	return contracts.SemanticWeekSummary{}, nil
+}
+
+func (f *fakeProwRunsStore) ListReviewQueue(_ context.Context) ([]semanticcontracts.ReviewItemRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeProwRunsStore) Close() error {
+	return nil
+}
+
+func (f *fakeProwRunsStore) runKey(environment string, runURL string) string {
+	return environment + "\x00" + runURL
 }

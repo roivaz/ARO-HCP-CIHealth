@@ -137,17 +137,17 @@ func TestValidateRejectsNegativeArtifactRetryWindow(t *testing.T) {
 	}
 }
 
-func TestProwJobHistoryPathForEnvironment(t *testing.T) {
+func TestProwJobNameForEnvironment(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		environment string
 		want        string
 	}{
-		{environment: "dev", want: "pr-logs/directory/pull-ci-Azure-ARO-HCP-main-e2e-parallel"},
-		{environment: "int", want: "logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel"},
-		{environment: "stg", want: "logs/periodic-ci-Azure-ARO-HCP-main-periodic-stage-e2e-parallel"},
-		{environment: "prod", want: "logs/periodic-ci-Azure-ARO-HCP-main-periodic-prod-e2e-parallel"},
+		{environment: "dev", want: "pull-ci-Azure-ARO-HCP-main-e2e-parallel"},
+		{environment: "int", want: "periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel"},
+		{environment: "stg", want: "periodic-ci-Azure-ARO-HCP-main-periodic-stage-e2e-parallel"},
+		{environment: "prod", want: "periodic-ci-Azure-ARO-HCP-main-periodic-prod-e2e-parallel"},
 	}
 
 	for _, tt := range tests {
@@ -155,12 +155,12 @@ func TestProwJobHistoryPathForEnvironment(t *testing.T) {
 		t.Run(tt.environment, func(t *testing.T) {
 			t.Parallel()
 
-			got, ok := ProwJobHistoryPathForEnvironment(tt.environment)
+			got, ok := ProwJobNameForEnvironment(tt.environment)
 			if !ok {
-				t.Fatalf("expected history path for environment %q", tt.environment)
+				t.Fatalf("expected prow job name for environment %q", tt.environment)
 			}
 			if got != tt.want {
-				t.Fatalf("history path mismatch: got=%q want=%q", got, tt.want)
+				t.Fatalf("prow job name mismatch: got=%q want=%q", got, tt.want)
 			}
 		})
 	}

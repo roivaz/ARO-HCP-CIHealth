@@ -21,7 +21,7 @@ func DefaultOptions() *RawOptions {
 		PostgresOptions: postgresoptions.DefaultCLIOptions(),
 
 		SourceSippyRunsControllerThreads:       1,
-		SourceProwRunsControllerThreads:        1,
+		SourceProwRunsControllerThreads:        0,
 		SourceSippyTestsDailyControllerThreads: 1,
 		SourceGitHubPullRequestsThreads:        1,
 		SourceProwFailuresControllerThreads:    1,
@@ -47,7 +47,7 @@ func BindOptions(opts *RawOptions, cmd *cobra.Command) error {
 	}
 
 	cmd.Flags().IntVar(&opts.SourceSippyRunsControllerThreads, "controllers.source.sippy.runs.threads", opts.SourceSippyRunsControllerThreads, "Number of threads for controller source.sippy.runs.")
-	cmd.Flags().IntVar(&opts.SourceProwRunsControllerThreads, "controllers.source.prow.runs.threads", opts.SourceProwRunsControllerThreads, "Number of threads for controller source.prow.runs.")
+	cmd.Flags().IntVar(&opts.SourceProwRunsControllerThreads, "controllers.source.prow.runs.threads", opts.SourceProwRunsControllerThreads, "Number of threads for controller source.prow.runs. Set to 0 to disable.")
 	cmd.Flags().IntVar(&opts.SourceSippyTestsDailyControllerThreads, "controllers.source.sippy.tests-daily.threads", opts.SourceSippyTestsDailyControllerThreads, "Number of threads for controller source.sippy.tests-daily.")
 	cmd.Flags().IntVar(&opts.SourceGitHubPullRequestsThreads, "controllers.source.github.pull-requests.threads", opts.SourceGitHubPullRequestsThreads, "Number of threads for controller source.github.pull-requests.")
 	cmd.Flags().IntVar(&opts.SourceProwFailuresControllerThreads, "controllers.source.prow.failures.threads", opts.SourceProwFailuresControllerThreads, "Number of threads for controller source.prow.failures.")
@@ -134,8 +134,8 @@ func (o *RawOptions) Validate() (*ValidatedOptions, error) {
 	if o.SourceSippyRunsControllerThreads <= 0 {
 		o.SourceSippyRunsControllerThreads = 1
 	}
-	if o.SourceProwRunsControllerThreads <= 0 {
-		o.SourceProwRunsControllerThreads = 1
+	if o.SourceProwRunsControllerThreads < 0 {
+		o.SourceProwRunsControllerThreads = 0
 	}
 	if o.SourceSippyTestsDailyControllerThreads <= 0 {
 		o.SourceSippyTestsDailyControllerThreads = 1
@@ -236,9 +236,14 @@ func (opts *Options) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	sourceProwRunsController, err := controllers.NewSourceProwRuns(logger, deps)
-	if err != nil {
-		return err
+	var sourceProwRunsController controllers.Controller
+	if opts.SourceProwRunsControllerThreads > 0 {
+		sourceProwRunsController, err = controllers.NewSourceProwRuns(logger, deps)
+		if err != nil {
+			return err
+		}
+	} else {
+		logger.Info("Skipping disabled controller.", "controller", controllers.SourceProwRunsControllerName)
 	}
 	sourceSippyTestsDailyController, err := controllers.NewSourceSippyTestsDaily(logger, deps)
 	if err != nil {
@@ -274,10 +279,6 @@ func (opts *Options) Run(ctx context.Context) error {
 			threads:    opts.SourceSippyRunsControllerThreads,
 		},
 		{
-			controller: sourceProwRunsController,
-			threads:    opts.SourceProwRunsControllerThreads,
-		},
-		{
 			controller: sourceSippyTestsDailyController,
 			threads:    opts.SourceSippyTestsDailyControllerThreads,
 		},
@@ -301,6 +302,15 @@ func (opts *Options) Run(ctx context.Context) error {
 			controller: metricsRollupDailyController,
 			threads:    opts.MetricsRollupDailyControllerThreads,
 		},
+	}
+	if sourceProwRunsController != nil {
+		controllersToRun = append(controllersToRun, struct {
+			controller controllers.Controller
+			threads    int
+		}{
+			controller: sourceProwRunsController,
+			threads:    opts.SourceProwRunsControllerThreads,
+		})
 	}
 
 	var wg sync.WaitGroup

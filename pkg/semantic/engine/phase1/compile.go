@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	failureextractor "ci-failure-atlas/pkg/failurepatterns/extractor"
 	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
 )
 
@@ -132,7 +133,10 @@ func Compile(
 	}
 	if len(missingAssignments) > 0 {
 		sort.Strings(missingAssignments)
-		limit := minInt(len(missingAssignments), 10)
+		limit := len(missingAssignments)
+		if limit > 10 {
+			limit = 10
+		}
 		compileErrors = append(
 			compileErrors,
 			fmt.Sprintf("workset rows missing assignments: %d (sample: %s)", len(missingAssignments), strings.Join(missingAssignments[:limit], ", ")),
@@ -550,7 +554,7 @@ func literalSearchPhraseFromText(text string) string {
 	if raw == "" {
 		return ""
 	}
-	token := safeSearchFromText(raw)
+	token := failureextractor.ChooseSearchPhrase(raw, nil)
 	if token == "" {
 		return ""
 	}
@@ -731,18 +735,18 @@ func isUnsafeFallbackSearchPhrase(value string) bool {
 	if trimmed == "" {
 		return true
 	}
-	return containsPlaceholderToken(trimmed) ||
-		isAssertionTail(trimmed) ||
-		isWrapperNoiseLine(trimmed) ||
-		isStructFieldNoiseLine(trimmed) ||
-		isStatusBannerLine(trimmed) ||
+	return failureextractor.ContainsPlaceholderToken(trimmed) ||
+		failureextractor.AssertionTail(trimmed) ||
+		failureextractor.WrapperNoiseLine(trimmed) ||
+		failureextractor.StructFieldNoiseLine(trimmed) ||
+		failureextractor.StatusBannerLine(trimmed) ||
 		isNoisySearchPhrase(trimmed)
 }
 
 func hasAmbiguousProviderMergeFromRows(rows []semanticcontracts.Phase1WorksetRecord, canonical string, search string) bool {
 	providers := map[string]struct{}{}
 	for _, row := range rows {
-		if provider := providerAnchor(sourceTextForSearch(row)); provider != "" {
+		if provider := failureextractor.ProviderAnchor(sourceTextForSearch(row)); provider != "" {
 			providers[provider] = struct{}{}
 		}
 	}
@@ -977,7 +981,7 @@ func detectHighSampleVarianceForCluster(rows []semanticcontracts.Phase1WorksetRe
 		if raw == "" {
 			continue
 		}
-		code := rootAzureErrorCode(raw)
+		code := failureextractor.RootAzureErrorCode(raw)
 		if code != "" {
 			errorCodes[strings.ToLower(code)] = struct{}{}
 		}

@@ -20,7 +20,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 )
 
-const sourceProwFailuresReconcileInterval = 2 * time.Minute
+const sourceProwFailuresReconcileInterval = 10 * time.Minute
 const sourceProwFailuresListFailuresTimeout = 45 * time.Second
 
 const (

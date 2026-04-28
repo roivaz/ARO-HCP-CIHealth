@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -33,7 +34,24 @@ func TestHTTPClientListFailuresUsesDeterministicPaths(t *testing.T) {
 </testcase>
 </testsuite>`))
 			return
+		case "/gcs/test-bucket/job/12345/artifacts/e2e-parallel/aro-hcp-test-local-run/artifacts/junit.xml":
+			_, _ = w.Write([]byte(`<testsuite name="test-local-run">
+<testcase classname="testlocal.suite" name="test-local-run-test">
+	<failure message="e2e failed">cluster creation timed out</failure>
+</testcase>
+</testsuite>`))
+			return
 		case "/gcs/test-bucket/job/12345/artifacts/e2e-parallel/aro-hcp-test-local/artifacts/junit.xml":
+			http.NotFound(w, r)
+			return
+		case "/gcs/test-bucket/job/12345/artifacts/junit_operator.xml":
+			_, _ = w.Write([]byte(`<testsuite name="operator">
+<testcase name="operator-wrapper">
+	<failure>operator step failed</failure>
+</testcase>
+</testsuite>`))
+			return
+		case "/gcs/test-bucket/job/12345/artifacts/e2e-parallel/aro-hcp-gather-observability/artifacts/junit_alerts.xml":
 			http.NotFound(w, r)
 			return
 		default:
@@ -51,11 +69,13 @@ func TestHTTPClientListFailuresUsesDeterministicPaths(t *testing.T) {
 		t.Fatalf("list failures: %v", err)
 	}
 
-	if len(failures) != 2 {
-		t.Fatalf("unexpected failure count: got=%d want=2", len(failures))
+	if len(failures) != 4 {
+		t.Fatalf("unexpected failure count: got=%d want=4", len(failures))
 	}
-	gotNames := []string{failures[0].TestName, failures[1].TestName}
-	wantNames := []string{"entry-test", "prowjob-wrapper"}
+	gotNames := []string{failures[0].TestName, failures[1].TestName, failures[2].TestName, failures[3].TestName}
+	wantNames := []string{"entry-test", "operator-wrapper", "prowjob-wrapper", "test-local-run-test"}
+	sort.Strings(gotNames)
+	sort.Strings(wantNames)
 	if !reflect.DeepEqual(gotNames, wantNames) {
 		t.Fatalf("test names mismatch: got=%v want=%v", gotNames, wantNames)
 	}
@@ -63,7 +83,10 @@ func TestHTTPClientListFailuresUsesDeterministicPaths(t *testing.T) {
 	wantRequested := []string{
 		"/gcs/test-bucket/job/12345/artifacts/e2e-parallel/aro-hcp-provision-environment/artifacts/junit_entrypoint.xml",
 		"/gcs/test-bucket/job/12345/prowjob_junit.xml",
+		"/gcs/test-bucket/job/12345/artifacts/e2e-parallel/aro-hcp-test-local-run/artifacts/junit.xml",
 		"/gcs/test-bucket/job/12345/artifacts/e2e-parallel/aro-hcp-test-local/artifacts/junit.xml",
+		"/gcs/test-bucket/job/12345/artifacts/junit_operator.xml",
+		"/gcs/test-bucket/job/12345/artifacts/e2e-parallel/aro-hcp-gather-observability/artifacts/junit_alerts.xml",
 	}
 	if !reflect.DeepEqual(requestedPaths, wantRequested) {
 		t.Fatalf("requested paths mismatch: got=%v want=%v", requestedPaths, wantRequested)
@@ -90,6 +113,11 @@ func TestHTTPClientListFailuresUsesEnvironmentMap(t *testing.T) {
 <testcase name="job-wrapper"><failure message="failed">boom</failure></testcase>
 </testsuite>`))
 			return
+		case "/gcs/test-bucket/job/12345/artifacts/junit_operator.xml":
+			_, _ = w.Write([]byte(`<testsuite name="operator">
+<testcase name="operator-wrapper"><failure>operator boom</failure></testcase>
+</testsuite>`))
+			return
 		default:
 			http.NotFound(w, r)
 			return
@@ -104,13 +132,14 @@ func TestHTTPClientListFailuresUsesEnvironmentMap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list failures: %v", err)
 	}
-	if len(failures) != 2 {
-		t.Fatalf("unexpected failure count: got=%d want=2", len(failures))
+	if len(failures) != 3 {
+		t.Fatalf("unexpected failure count: got=%d want=3", len(failures))
 	}
 
 	wantRequested := []string{
 		"/gcs/test-bucket/job/12345/artifacts/integration-e2e-parallel/aro-hcp-test-persistent/artifacts/junit.xml",
 		"/gcs/test-bucket/job/12345/prowjob_junit.xml",
+		"/gcs/test-bucket/job/12345/artifacts/junit_operator.xml",
 	}
 	if !reflect.DeepEqual(requestedPaths, wantRequested) {
 		t.Fatalf("requested paths mismatch: got=%v want=%v", requestedPaths, wantRequested)

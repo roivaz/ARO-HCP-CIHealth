@@ -286,13 +286,26 @@ func expectedRawFailureRows(environment, runURL, occurredAt string, artifactRows
 		if len(rows) > 0 {
 			return rows
 		}
-	}
-	if runMetadataFound {
-		return []contracts.RawFailureRecord{
-			buildSyntheticRawFailureRecord(environment, runURL, occurredAt),
+		if runMetadataFound && containsArtifactMissingMarker(artifactRows) {
+			return []contracts.RawFailureRecord{
+				buildSyntheticRawFailureRecord(environment, runURL, occurredAt),
+			}
 		}
 	}
 	return []contracts.RawFailureRecord{}
+}
+
+func containsArtifactMissingMarker(artifactRows []contracts.ArtifactFailureRecord) bool {
+	for _, row := range artifactRows {
+		if strings.TrimSpace(row.TestSuite) != artifactMissingMarkerTestSuite {
+			continue
+		}
+		if strings.TrimSpace(row.TestName) != artifactMissingMarkerTestName {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func rawFailureRowsMatch(existingRows []contracts.RawFailureRecord, expectedRows []contracts.RawFailureRecord) bool {

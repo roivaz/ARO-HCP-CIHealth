@@ -1,10 +1,13 @@
-package phase1
+package extractor
 
 import (
-	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
 	"strings"
 	"testing"
 )
+
+func extractEvidence(text string) FailurePattern {
+	return Extract(text)
+}
 
 func TestExtractEvidencePrefersPreStructDeadlineLine(t *testing.T) {
 	t.Parallel()
@@ -200,8 +203,6 @@ func TestExtractEvidenceUsesAzureInnerThrottlingCodeAndMessage(t *testing.T) {
 	if !strings.Contains(strings.ToLower(evidence.CanonicalEvidencePhrase), "detail message number of 'read' requests for subscription") {
 		t.Fatalf("expected canonical phrase to include throttling message summary, got=%q", evidence.CanonicalEvidencePhrase)
 	}
-	// Provider is always appended to ERROR CODE patterns; verify it is present
-	// in addition to the richer inner detail (not instead of it).
 	if !strings.Contains(evidence.CanonicalEvidencePhrase, "provider Microsoft.ManagedIdentity") {
 		t.Fatalf("expected provider Microsoft.ManagedIdentity to be included alongside inner detail, got=%q", evidence.CanonicalEvidencePhrase)
 	}
@@ -248,7 +249,6 @@ ERROR CODE: DeploymentFailed
 	if !strings.Contains(evidence.CanonicalEvidencePhrase, "detail code Conflict") {
 		t.Fatalf("expected canonical phrase to keep generic inner conflict code, got=%q", evidence.CanonicalEvidencePhrase)
 	}
-	// Provider is always appended alongside the detail code.
 	if !strings.Contains(strings.ToLower(evidence.CanonicalEvidencePhrase), "provider microsoft.eventgrid") {
 		t.Fatalf("expected provider Microsoft.EventGrid to be appended alongside detail code, got=%q", evidence.CanonicalEvidencePhrase)
 	}
@@ -474,10 +474,6 @@ route host was never found: Get "https://agnhost-e2e-serving-app-9f7x5.apps.aro.
 	}
 }
 
-// --- Regression tests for semantic quality improvements ---
-
-// Finding 1: prow entrypoint JSON lines that differ only by "time" field must
-// produce the same canonical phrase.
 func TestExtractEvidenceProwEntrypointTimestampsMerge(t *testing.T) {
 	t.Parallel()
 
@@ -494,8 +490,6 @@ func TestExtractEvidenceProwEntrypointTimestampsMerge(t *testing.T) {
 	}
 }
 
-// Finding 2: route-host errors that differ only by the raw IP in "dial tcp
-// <IP>:443" must produce the same canonical phrase.
 func TestExtractEvidenceDialTCPAddressNormalized(t *testing.T) {
 	t.Parallel()
 
@@ -516,8 +510,6 @@ func TestExtractEvidenceDialTCPAddressNormalized(t *testing.T) {
 	}
 }
 
-// Finding 3: Gomega "expected N nodes, found M" assertion — the pattern must
-// not be "..." (the Gomega truncation marker).
 func TestExtractEvidenceGomegaEllipsisNotExtracted(t *testing.T) {
 	t.Parallel()
 
@@ -539,8 +531,6 @@ fail [github.com/Azure/ARO-HCP/test/e2e/nodepool_update_nodes.go:262]: Expected 
 	}
 }
 
-// Finding 4: all CreateHCPCluster* timeout variants (FromParam, AndWait,
-// 20251223FromParam, 20251223AndWait) must share a single canonical phrase.
 func TestExtractEvidenceCreateHCPClusterTimeoutVariantsUnify(t *testing.T) {
 	t.Parallel()
 
@@ -576,8 +566,6 @@ func TestExtractEvidenceCreateHCPClusterTimeoutVariantsUnify(t *testing.T) {
 	}
 }
 
-// Finding 5: "Expected success, but got an error:" wrapper must yield the
-// inner error, not the Gomega boilerplate phrase.
 func TestExtractEvidenceGomegaSuccessFailureExtractsInnerError(t *testing.T) {
 	t.Parallel()
 
@@ -597,8 +585,6 @@ Expected success, but got an error:
 	}
 }
 
-// Finding 6: when both a "RESPONSE 404" status line and an "ERROR CODE:" line
-// are present, the ERROR CODE must win.
 func TestExtractEvidenceErrorCodePreferredOverResponse404(t *testing.T) {
 	t.Parallel()
 
@@ -623,9 +609,6 @@ ERROR CODE: NotFound
 	}
 }
 
-// Finding 8: "Internal server error." detail message is generic noise and must
-// not appear in the canonical phrase; patterns with and without it should have
-// the same canonical text.
 func TestExtractEvidenceInternalServerErrorDetailSuppressed(t *testing.T) {
 	t.Parallel()
 
@@ -649,8 +632,6 @@ ERROR CODE: InternalServerError`
 	}
 }
 
-// Finding 11: logfmt-style timestamps (time=<ISO8601>) must be stripped so
-// that the same step error on different runs produces the same canonical phrase.
 func TestExtractEvidenceLogfmtTimestampStripped(t *testing.T) {
 	t.Parallel()
 
@@ -667,8 +648,6 @@ func TestExtractEvidenceLogfmtTimestampStripped(t *testing.T) {
 	}
 }
 
-// Prow entrypoint: the "msg" field must be extracted so the canonical phrase is
-// the human-readable message, not the full JSON object.
 func TestExtractEvidenceProwEntrypointExtractsMsgField(t *testing.T) {
 	t.Parallel()
 
@@ -680,8 +659,6 @@ func TestExtractEvidenceProwEntrypointExtractsMsgField(t *testing.T) {
 	}
 }
 
-// Provider must always be appended to ERROR CODE canonical phrases when a
-// non-ignored resource provider is found in the error text.
 func TestExtractEvidenceErrorCodeIncludesProvider(t *testing.T) {
 	t.Parallel()
 
@@ -698,8 +675,6 @@ ERROR CODE: ResourceCollectionRequestsThrottled`
 	}
 }
 
-// Microsoft.RedHatOpenShift must not be ignored so that our own RP errors are
-// attributed to their source in the canonical phrase.
 func TestExtractEvidenceRedHatOpenShiftProviderIncluded(t *testing.T) {
 	t.Parallel()
 
@@ -713,8 +688,6 @@ ERROR CODE: InternalServerError`
 	}
 }
 
-// OCP candidate version strings must be normalized so different versions that
-// produce the same "doesn't exist" error merge into a single failure pattern.
 func TestExtractEvidenceOCPVersionStringNormalized(t *testing.T) {
 	t.Parallel()
 
@@ -738,8 +711,6 @@ ERROR CODE: InvalidRequestContent
 	}
 }
 
-// Cluster internal IDs (OCM-style 32-char alphanumeric) must be normalized so
-// the same error class for different cluster instances merges into one pattern.
 func TestExtractEvidenceClusterInternalIDNormalized(t *testing.T) {
 	t.Parallel()
 
@@ -763,9 +734,6 @@ ERROR CODE: InvalidRequestContent
 	}
 }
 
-// HCP API hostnames (api.<cluster>.<stamp>.<region>.aroapp-hcp.io) appear in
-// x509 cert-mismatch error text and must be normalized so the same class of
-// cert error merges across different clusters and stamps.
 func TestCleanCanonicalNormalizesHCPApiHostname(t *testing.T) {
 	t.Parallel()
 
@@ -858,20 +826,6 @@ to equal
 	}
 }
 
-func TestBuildFallbackSearchPhraseSkipsPlaceholderOnlyAssertionBlock(t *testing.T) {
-	t.Parallel()
-
-	raw := `fail [github.com/Azure/ARO-HCP/test/e2e/mise_routing.go:89]: Expected
-    <string>: ...
-to equal
-    <string>: ...`
-
-	got := buildFallbackSearchPhrase([]semanticcontracts.Phase1WorksetRecord{{RawText: raw}})
-	if got != "" {
-		t.Fatalf("expected placeholder-only assertion block to produce no fallback search phrase, got=%q", got)
-	}
-}
-
 func TestExtractEvidenceNormalizesTimedOutAfterPrecision(t *testing.T) {
 	t.Parallel()
 
@@ -953,411 +907,5 @@ func TestExtractEvidenceNormalizesCleanupWorkflowDeletionVariants(t *testing.T) 
 	}
 	if strings.Contains(strings.ToLower(gotA), "delete <url>") || strings.Contains(strings.ToLower(gotA), "get <url>") {
 		t.Fatalf("expected transport method before cleanup URL to be normalized away, got=%q", gotA)
-	}
-}
-
-func TestFallbackSearchSourceUsesFailWrapperForPlaceholderOnlyAssertion(t *testing.T) {
-	t.Parallel()
-
-	raw := `fail [github.com/Azure/ARO-HCP/test/e2e/mise_routing.go:89]: Expected
-    <string>: ...
-to equal
-    <string>: ...`
-
-	runURL, signatureID, phrase, found := fallbackSearchSource([]semanticcontracts.Phase1WorksetRecord{{
-		RunURL:      "https://prow.ci.example/view/1",
-		SignatureID: "sig-1",
-		RawText:     raw,
-	}})
-	if !found {
-		t.Fatalf("expected fallback search source to find a literal wrapper line")
-	}
-	if runURL != "https://prow.ci.example/view/1" || signatureID != "sig-1" {
-		t.Fatalf("unexpected search source metadata: runURL=%q signatureID=%q", runURL, signatureID)
-	}
-	if !strings.HasPrefix(strings.ToLower(phrase), "fail [github.com/azure/aro-hcp/test/e2e/mise_routing.go:89]: expected") {
-		t.Fatalf("expected fallback search phrase to use the literal fail wrapper line, got=%q", phrase)
-	}
-}
-
-func TestContextualizeCanonicalWithTestName(t *testing.T) {
-	t.Parallel()
-
-	timeoutGot := contextualizeCanonicalWithTestName("Timed out after <duration>s.", "Engineering should expose expected metrics")
-	timeoutWant := "Engineering should expose expected metrics: Timed out after <duration>s."
-	if timeoutGot != timeoutWant {
-		t.Fatalf("unexpected timeout contextualization: got=%q want=%q", timeoutGot, timeoutWant)
-	}
-
-	assertionGot := contextualizeCanonicalWithTestName("assertion failed: expected values to equal", "MISE routing returns the versioned frontend")
-	assertionWant := "MISE routing returns the versioned frontend: assertion failed: expected values to equal"
-	if assertionGot != assertionWant {
-		t.Fatalf("unexpected assertion contextualization: got=%q want=%q", assertionGot, assertionWant)
-	}
-}
-
-func TestCompileDoesNotFlagSearchSourceNotFoundWhenFallbackSourceSucceeds(t *testing.T) {
-	t.Parallel()
-
-	testName := "MISE Routing routes to the correct frontend based on version header MISE v2 when x-ms-mise-version header is set"
-	groupKey := buildGroupKey("int", "e2e", "periodic-ci", testName)
-	workset := []semanticcontracts.Phase1WorksetRecord{{
-		SchemaVersion: semanticcontracts.CurrentSchemaVersion,
-		Environment:   "int",
-		RowID:         "row-1",
-		GroupKey:      groupKey,
-		Lane:          "e2e",
-		JobName:       "periodic-ci",
-		TestName:      testName,
-		TestSuite:     "e2e",
-		SignatureID:   "sig-1",
-		OccurredAt:    "2026-04-24T10:00:00Z",
-		RunURL:        "https://prow.ci.example/view/1",
-		RawText: `fail [github.com/Azure/ARO-HCP/test/e2e/mise_routing.go:89]: Expected
-    <string>: ...
-to equal
-    <string>: ...`,
-	}}
-	assignments := []semanticcontracts.Phase1AssignmentRecord{{
-		SchemaVersion:                    semanticcontracts.CurrentSchemaVersion,
-		Environment:                      "int",
-		RowID:                            "row-1",
-		GroupKey:                         groupKey,
-		Phase1LocalClusterKey:            "cluster-1",
-		CanonicalEvidencePhraseCandidate: "assertion failed: expected values to equal",
-		Confidence:                       "medium",
-	}}
-
-	clusters, reviewItems, err := Compile(workset, assignments)
-	if err != nil {
-		t.Fatalf("Compile returned error: %v", err)
-	}
-	if len(clusters) != 1 {
-		t.Fatalf("expected one cluster, got=%d", len(clusters))
-	}
-	cluster := clusters[0]
-	if !strings.HasPrefix(strings.ToLower(cluster.SearchQueryPhrase), "fail [github.com/azure/aro-hcp/test/e2e/mise_routing.go:89]: expected") {
-		t.Fatalf("expected fallback search source to provide a literal fail wrapper line, got=%q", cluster.SearchQueryPhrase)
-	}
-	for _, item := range reviewItems {
-		if item.Reason == "search_query_source_not_found" {
-			t.Fatalf("did not expect search_query_source_not_found when fallbackSearchSource succeeds: %+v", item)
-		}
-	}
-}
-
-func TestSeverityForReviewItem(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		reason  string
-		support int
-		want    string
-	}{
-		{"likely_undermerged", 6, "high"},
-		{"likely_undermerged", 2, "medium"},
-		{"high_sample_variance", 5, "high"},
-		{"high_sample_variance", 2, "medium"},
-		{"ambiguous_provider_merge", 4, "high"},
-		{"ambiguous_provider_merge", 1, "medium"},
-		{"insufficient_inner_error", 5, "medium"},
-		{"insufficient_inner_error", 1, "low"},
-		{"low_confidence_evidence", 5, "medium"},
-		{"low_confidence_evidence", 1, "low"},
-		{"placeholder_dominated_canonical", 1, "medium"},
-		{"short_uninformative_canonical", 1, "medium"},
-		{"single_occurrence", 1, "low"},
-		{"search_query_source_not_found", 1, "low"},
-	}
-	for _, tc := range cases {
-		got := severityForReviewItem(tc.reason, tc.support, "some canonical")
-		if got != tc.want {
-			t.Errorf("severityForReviewItem(%q, %d): got=%q want=%q", tc.reason, tc.support, got, tc.want)
-		}
-	}
-}
-
-func TestIsPlaceholderDominatedCanonical(t *testing.T) {
-	t.Parallel()
-
-	dominated := "<cluster> <resource-group> <url> at failed"
-	if !isPlaceholderDominatedCanonical(dominated) {
-		t.Errorf("expected %q to be placeholder-dominated", dominated)
-	}
-	normal := "failed waiting for deployment in resource group <resource-group>"
-	if isPlaceholderDominatedCanonical(normal) {
-		t.Errorf("expected %q to NOT be placeholder-dominated", normal)
-	}
-}
-
-func TestIsShortUninformativeCanonical(t *testing.T) {
-	t.Parallel()
-
-	short := []string{"failed", "error", "timeout"}
-	for _, s := range short {
-		if !isShortUninformativeCanonical(s) {
-			t.Errorf("expected %q to be short/uninformative", s)
-		}
-	}
-	ok := []string{"ERROR CODE: NotFound", "context deadline exceeded", "OAuth timeout waiting for response"}
-	for _, s := range ok {
-		if isShortUninformativeCanonical(s) {
-			t.Errorf("expected %q to NOT be short/uninformative", s)
-		}
-	}
-}
-
-func TestNearDuplicateKeyStripsPlaceholders(t *testing.T) {
-	t.Parallel()
-
-	a := nearDuplicateKey("failed waiting for deployment in <resource-group>")
-	b := nearDuplicateKey("failed waiting for deployment in <cluster>")
-	if a != b {
-		t.Errorf("expected placeholder-stripped keys to match:\n  a=%q\n  b=%q", a, b)
-	}
-}
-
-func TestTokenSetJaccardOverlap(t *testing.T) {
-	t.Parallel()
-
-	if got := tokenSetJaccardOverlap("a b c d e", "a b c d f"); got < 0.60 || got > 0.90 {
-		t.Errorf("expected moderate overlap, got=%f", got)
-	}
-	if got := tokenSetJaccardOverlap("a b c", "a b c"); got != 1.0 {
-		t.Errorf("expected perfect overlap, got=%f", got)
-	}
-	if got := tokenSetJaccardOverlap("a b c", "x y z"); got != 0.0 {
-		t.Errorf("expected zero overlap, got=%f", got)
-	}
-}
-
-// isKnownTerminalCanonical must return true for patterns where no engine
-// improvement can provide a more specific phrase, suppressing noisy signals.
-func TestIsKnownTerminalCanonical(t *testing.T) {
-	t.Parallel()
-
-	terminal := []string{
-		"Interrupted by User",
-		"interrupted by user",
-		"INTERRUPTED BY USER",
-		"Command Error: signal: killed",
-		"command error: signal: killed",
-	}
-	for _, phrase := range terminal {
-		if !isKnownTerminalCanonical(phrase) {
-			t.Errorf("expected %q to be recognized as a known terminal canonical", phrase)
-		}
-	}
-
-	nonTerminal := []string{
-		"Command Error: exit status 1",
-		"context deadline exceeded",
-		"failure",
-		"ERROR CODE: DeploymentFailed; provider Microsoft.Network",
-	}
-	for _, phrase := range nonTerminal {
-		if isKnownTerminalCanonical(phrase) {
-			t.Errorf("expected %q NOT to be recognized as a known terminal canonical", phrase)
-		}
-	}
-}
-
-// Gomega "Expected success, but got an error:" followed by a label line
-// (ending with ':') must look ahead to the next non-empty, non-label line to
-// find the real error detail rather than capturing the label itself.
-func TestExtractGomegaSuccessFailureSkipsLabelLine(t *testing.T) {
-	t.Parallel()
-
-	raw := `Expected success, but got an error:
-    IDMS verification failed:
-        No trust bundle available for cluster`
-
-	got := extractGomegaSuccessFailureContext(raw)
-	if strings.HasSuffix(strings.TrimSpace(got), ":") {
-		t.Fatalf("extractGomegaSuccessFailureContext should skip label lines ending with ':', got=%q", got)
-	}
-	if !strings.Contains(strings.ToLower(got), "no trust bundle") {
-		t.Fatalf("expected the actual error detail line, got=%q", got)
-	}
-}
-
-// When Gomega HaveOccurred() fires, the output ends with the word "occurred"
-// as boilerplate.  The engine must extract the inner error message instead.
-func TestExtractEvidenceGomegaOccurredExtracts(t *testing.T) {
-	t.Parallel()
-
-	raw := `fail [github.com/Azure/ARO-HCP/test/e2e/complete_cluster_create_multiversion.go:75]: Unexpected error:
-    <*errors.errorString | 0xc001051550>: 
-    no graph nodes found for stable-5.2
-    {
-        s: "no graph nodes found for stable-5.2",
-    }
-occurred`
-
-	got := extractEvidence(raw).CanonicalEvidencePhrase
-	if strings.EqualFold(strings.TrimSpace(got), "occurred") {
-		t.Fatalf("canonical should not be the Gomega boilerplate 'occurred', got=%q", got)
-	}
-	if !strings.Contains(strings.ToLower(got), "no graph nodes found") {
-		t.Fatalf("canonical should contain inner error 'no graph nodes found', got=%q", got)
-	}
-}
-
-// When Gomega's struct dump produces "cause: {" as an intermediate line,
-// the engine must extract the inner error rather than structural noise.
-func TestExtractEvidenceGomegaCauseStructExtracts(t *testing.T) {
-	t.Parallel()
-
-	raw := `fail [github.com/Azure/ARO-HCP/test/e2e/control_plane_automated_z_stream_upgrade.go:137]: Unexpected error:
-    <wait.errInterrupted>: 
-    timed out waiting for the condition
-    {
-        cause: <*errors.errorString | 0xc0009c2890>{
-            s: "timed out waiting for the condition",
-        },
-    }
-occurred`
-
-	got := extractEvidence(raw).CanonicalEvidencePhrase
-	if strings.EqualFold(strings.TrimSpace(got), "cause: {") {
-		t.Fatalf("canonical should not be 'cause: {', got=%q", got)
-	}
-	if strings.EqualFold(strings.TrimSpace(got), "occurred") {
-		t.Fatalf("canonical should not be 'occurred', got=%q", got)
-	}
-	if !strings.Contains(strings.ToLower(got), "timed out waiting") {
-		t.Fatalf("canonical should contain 'timed out waiting', got=%q", got)
-	}
-}
-
-// When Gomega joinError produces "occurred", the inner error about managed
-// resource groups left behind should be extracted instead.
-func TestExtractEvidenceGomegaJoinErrorOccurred(t *testing.T) {
-	t.Parallel()
-
-	raw := `fail [github.com/Azure/ARO-HCP/test/util/framework/per_test_framework.go:246]: Unexpected error:
-    <*errors.joinError | 0xc000e4a0f0>: 
-    found 1 managed resource groups left behind HCP clusters in cluster-listing-xk5f98
-    {
-        errs: [
-            <*errors.errorString | 0xc00198c880>{
-                s: "found 1 managed resource groups left behind HCP clusters in cluster-listing-xk5f98",
-            },
-        ],
-    }
-occurred`
-
-	got := extractEvidence(raw).CanonicalEvidencePhrase
-	if strings.EqualFold(strings.TrimSpace(got), "occurred") {
-		t.Fatalf("canonical should not be 'occurred', got=%q", got)
-	}
-	if !strings.Contains(strings.ToLower(got), "managed resource groups left behind") {
-		t.Fatalf("canonical should contain 'managed resource groups left behind', got=%q", got)
-	}
-}
-
-// bestGomegaInnerError must extract the error line between a type annotation
-// and a struct boundary in Gomega output.
-func TestBestGomegaInnerError(t *testing.T) {
-	t.Parallel()
-
-	text := `    <*errors.errorString | 0xc001051550>: 
-    no graph nodes found for stable-5.2
-    {
-        s: "no graph nodes found for stable-5.2",
-    }`
-
-	got := bestGomegaInnerError(text)
-	if !strings.Contains(got, "no graph nodes found") {
-		t.Fatalf("expected inner error, got=%q", got)
-	}
-}
-
-// Near-duplicate suppression: patterns sharing a structured error prefix
-// (e.g. "error code:", "error running helm release deployment step")
-// should not fire likely_undermerged signals.
-func TestSharesStructuredErrorPrefix(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		a, b string
-		want bool
-	}{
-		{
-			a:    "error code: internalservererror; detail code authorizationfailed; detail message microsoft.network/networksecuritygroups/read",
-			b:    "error code: internalservererror; detail code authorizationfailed; detail message microsoft.network/virtualnetworks/read",
-			want: true,
-		},
-		{
-			a:    "error running helm release deployment step, failed to deploy helm release: resource not ready, name: arobit-forwarder",
-			b:    "error running helm release deployment step, failed to deploy helm release: resource not ready, name: aro-hcp-backend",
-			want: true,
-		},
-		{
-			a:    "resource not ready, name: multicluster-engine-operator, kind: Deployment, status: InProgress context deadline exceeded",
-			b:    "resource not ready, name: grc-policy-propagator, kind: Deployment, status: InProgress context deadline exceeded",
-			want: true,
-		},
-		{
-			a:    "failed post-install: resource not ready, name: finalize-mce, kind: Job, status: InProgress context deadline exceeded",
-			b:    "failed post-install: resource not ready, name: finalize-mce-config, kind: Job, status: InProgress context deadline exceeded",
-			want: true,
-		},
-		{
-			a:    `level=error msg="step errored." serviceGroup=Microsoft.Azure.ARO.HCP.ACM step=deploy-mce err="error running helm release deployment step, failed to deploy helm release: resource not ready, name: finalize-mce, kind: job, status: inprogress\ncontext deadline exceeded"`,
-			b:    `level=error msg="step errored." serviceGroup=Microsoft.Azure.ARO.HCP.ACM step=deploy-mce-config err="error running helm release deployment step, failed to deploy helm release: resource not ready, name: grc-policy-propagator, kind: deployment, status: inprogress\ncontext deadline exceeded"`,
-			want: true,
-		},
-		{
-			a:    "timeout during createhcpclusterandwait; context deadline exceeded",
-			b:    "timeout during getadminrestconfigforhcpcluster while waiting for hcpcluster creds",
-			want: false,
-		},
-	}
-	for _, tt := range tests {
-		if got := sharesStructuredErrorPrefix(tt.a, tt.b); got != tt.want {
-			t.Errorf("sharesStructuredErrorPrefix(%q, %q) = %v, want %v", tt.a[:40], tt.b[:40], got, tt.want)
-		}
-	}
-}
-
-// Logfmt step-error lines: the err= field must be extracted as the canonical
-// so the actionable message is not truncated by the boilerplate prefix.
-func TestExtractEvidenceLogfmtStepErrorExtracts(t *testing.T) {
-	t.Parallel()
-
-	raw := `time=2026-04-17T11:04:14.653Z level=INFO msg="Running step." serviceGroup=Microsoft.Azure.ARO.HCP.Management.Infra resourceGroup=management step=delete-non-swift-user-nodepools
-time=2026-04-17T11:04:19.211Z level=ERROR msg="Step errored." serviceGroup=Microsoft.Azure.ARO.HCP.Management.Infra resourceGroup=management step=delete-non-swift-user-nodepools err="failed to prepare kubeconfig: failed to ensure cluster admin role: /me request is only valid with delegated authentication flow."`
-
-	got := extractEvidence(raw).CanonicalEvidencePhrase
-	if strings.Contains(strings.ToLower(got), "step errored") {
-		t.Fatalf("canonical phrase should not contain logfmt boilerplate 'Step errored.', got=%q", got)
-	}
-	if !strings.Contains(strings.ToLower(got), "failed to prepare kubeconfig") {
-		t.Fatalf("canonical phrase should contain the actionable err= value, got=%q", got)
-	}
-}
-
-func TestExtractEvidenceLogfmtImageMirrorPrefersInnerTransferFailure(t *testing.T) {
-	t.Parallel()
-
-	raw := `time=2026-04-20T03:12:18.644Z level=ERROR msg="Step errored." serviceGroup=Microsoft.Azure.ARO.HCP.RP.Frontend resourceGroup=global step=mirror-image err="error running Image Mirror Step, failed to execute shell command: Checking USE_OC_LOGIN_REGISTRIES: registry.build05.ci.openshift.org registry.build05.ci.openshift.org registry.build05.ci.openshift.org registry.build05.ci.openshift.org registry.build05.ci.openshift.org
-Setting up registry authentication for CI source registry.
-info: Using registry public hostname registry.build05.ci.openshift.org
-Saved credentials for registry.build05.ci.openshift.org into /tmp/tmp.w3CTaww54H/containers/auth.json
-Logging into target ACR arohcpsvcdev.
-Login Succeeded
-Mirroring image registry.build05.ci.openshift.org/ci-op-98gxy5d6/pipeline@sha256:94b3bb4a4fb4e0fc3d4dc38328ba5f9dde008d11c9255e631310d86a3a96523f to arohcpsvcdev.azurecr.io/ci-op-98gxy5d6/pipeline:94b3bb4a4fb4e0fc3d4dc38328ba5f9dde008d11c9255e631310d86a3a96523f.
-The image will still be available under it's original digest sha256:94b3bb4a4fb4e0fc3d4dc38328ba5f9dde008d11c9255e631310d86a3a96523f in the target registry.
-Error: Put "https://arohcpsvcdev.azurecr.io/v2/ci-op-98gxy5d6/pipeline/blobs/uploads/2ec77b7f-548b-4f97-9b7f-430a6c8db396?_nouploadcache=false&_state=...": read tcp 172.24.116.8:38578->172.64.66.1:443: read: connection reset by peer
- exit status 1"`
-
-	got := extractEvidence(raw).CanonicalEvidencePhrase
-	lowered := strings.ToLower(got)
-	if strings.Contains(lowered, "checking use_oc_login_registries") {
-		t.Fatalf("expected canonical phrase to skip image-mirror setup preamble, got=%q", got)
-	}
-	if !strings.Contains(lowered, "connection reset by peer") {
-		t.Fatalf("expected canonical phrase to keep the inner transfer failure, got=%q", got)
 	}
 }

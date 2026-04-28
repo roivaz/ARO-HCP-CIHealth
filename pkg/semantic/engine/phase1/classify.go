@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 
+	failureextractor "ci-failure-atlas/pkg/failurepatterns/extractor"
 	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
 )
 
@@ -103,18 +104,18 @@ func Classify(rows []semanticcontracts.Phase1NormalizedRecord) []semanticcontrac
 					break
 				}
 			}
-			searchPhrase := chooseSearchPhrase(representative.RawText, []string{
+			searchPhrase := failureextractor.ChooseSearchPhrase(representative.RawText, []string{
 				representative.SearchQueryPhrase,
 				canonicalPhrase,
 			})
 
-		reasons := map[string]struct{}{}
-		if _, ambiguous := ambiguousLocals[localKey]; ambiguous && !isKnownTerminalCanonical(canonicalPhrase) {
-			reasons["ambiguous_provider_merge"] = struct{}{}
-		}
-		if isWeakCanonical(canonicalPhrase) && !isKnownTerminalCanonical(canonicalPhrase) {
-			reasons["insufficient_inner_error"] = struct{}{}
-		}
+			reasons := map[string]struct{}{}
+			if _, ambiguous := ambiguousLocals[localKey]; ambiguous && !isKnownTerminalCanonical(canonicalPhrase) {
+				reasons["ambiguous_provider_merge"] = struct{}{}
+			}
+			if isWeakCanonical(canonicalPhrase) && !isKnownTerminalCanonical(canonicalPhrase) {
+				reasons["insufficient_inner_error"] = struct{}{}
+			}
 
 			reasonSlice := make([]string, 0, len(reasons))
 			for reason := range reasons {

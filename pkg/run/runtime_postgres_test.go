@@ -47,3 +47,20 @@ func TestCompleteUsesPostgresStoreWhenEnabled(t *testing.T) {
 		t.Fatalf("smoke list runs using postgres store: %v", err)
 	}
 }
+
+func TestDefaultOptionsDisableSourceProwRunsController(t *testing.T) {
+	t.Parallel()
+
+	raw := DefaultOptions()
+	if raw.SourceProwRunsControllerThreads != 0 {
+		t.Fatalf("expected source.prow.runs to default disabled, got threads=%d", raw.SourceProwRunsControllerThreads)
+	}
+
+	validated, err := raw.Validate()
+	if err != nil {
+		t.Fatalf("validate options: %v", err)
+	}
+	if validated.SourceProwRunsControllerThreads != 0 {
+		t.Fatalf("expected validated source.prow.runs threads to remain disabled, got=%d", validated.SourceProwRunsControllerThreads)
+	}
+}

@@ -1,4 +1,4 @@
-package phase1
+package extractor
 
 import (
 	"strings"

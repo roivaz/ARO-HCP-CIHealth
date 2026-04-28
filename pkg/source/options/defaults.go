@@ -40,7 +40,7 @@ var defaultRuntimeDefaults = RuntimeDefaults{
 	GitHubRepoName:          "ARO-HCP",
 	HistoryHorizonWeeks:     4,
 	ProwRecentWindow:        10 * time.Hour,
-	ProwArtifactRetryWindow: 15 * time.Minute,
+	ProwArtifactRetryWindow: 1 * time.Hour,
 	DefaultEnvironments:     []string{"dev"},
 	DefaultJUnitPaths: []string{
 		"prowjob_junit.xml",
@@ -50,6 +50,7 @@ var defaultRuntimeDefaults = RuntimeDefaults{
 			SippyRelease: "Presubmits",
 			SippyJobName: "pull-ci-Azure-ARO-HCP-main-e2e-parallel",
 			DeterministicJUnitPaths: []string{
+				"artifacts/e2e-parallel/aro-hcp-test-local-run/artifacts/junit.xml",
 				"artifacts/e2e-parallel/aro-hcp-provision-environment/artifacts/junit_entrypoint.xml",
 				"prowjob_junit.xml",
 				"artifacts/e2e-parallel/aro-hcp-test-local/artifacts/junit.xml",

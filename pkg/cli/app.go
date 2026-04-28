@@ -19,6 +19,7 @@ func NewAppCommand() (*cobra.Command, error) {
 	listen := "127.0.0.1:8082"
 	defaultWeek := ""
 	historyWeeks := 4
+	failurePatternsEngine := "stored"
 	servePostgresRaw := postgresoptions.DefaultCLIOptions()
 
 	cmd := &cobra.Command{
@@ -34,9 +35,10 @@ func NewAppCommand() (*cobra.Command, error) {
 			defer postgresCompleted.Cleanup()
 
 			handler, err := frontend.NewHandler(frontend.HandlerOptions{
-				DefaultWeek:         defaultWeek,
-				HistoryHorizonWeeks: historyWeeks,
-				PostgresPool:        postgresCompleted.Connection,
+				DefaultWeek:           defaultWeek,
+				HistoryHorizonWeeks:   historyWeeks,
+				FailurePatternsEngine: failurePatternsEngine,
+				PostgresPool:          postgresCompleted.Connection,
 			})
 			if err != nil {
 				return err
@@ -76,6 +78,7 @@ func NewAppCommand() (*cobra.Command, error) {
 	cmd.Flags().StringVar(&listen, "app.listen", listen, "listen address for unified app (host:port)")
 	cmd.Flags().StringVar(&defaultWeek, "week", defaultWeek, "default week to open when no week query is provided (YYYY-MM-DD)")
 	cmd.Flags().IntVar(&historyWeeks, "history.weeks", historyWeeks, "number of most recent semantic weeks used for history scoring")
+	cmd.Flags().StringVar(&failurePatternsEngine, "app.failure-patterns-engine", failurePatternsEngine, "failure-patterns window engine to use (stored|inline)")
 	if err := postgresoptions.BindOptions(servePostgresRaw, cmd); err != nil {
 		return nil, err
 	}

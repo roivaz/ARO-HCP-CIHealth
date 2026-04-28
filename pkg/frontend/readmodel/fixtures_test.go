@@ -22,6 +22,14 @@ type integrationFixture struct {
 }
 
 func newIntegrationFixture(t *testing.T, defaultWeek string) *integrationFixture {
+	return newIntegrationFixtureWithEngine(t, defaultWeek, FailurePatternsEngineStored)
+}
+
+func newIntegrationFixtureWithEngine(
+	t *testing.T,
+	defaultWeek string,
+	failurePatternsEngine string,
+) *integrationFixture {
 	t.Helper()
 
 	server, err := pgtest.StartEmbedded(t.TempDir())
@@ -53,8 +61,9 @@ func newIntegrationFixture(t *testing.T, defaultWeek string) *integrationFixture
 	}
 
 	service, err := New(Options{
-		DefaultWeek:  defaultWeek,
-		PostgresPool: pool,
+		DefaultWeek:           defaultWeek,
+		FailurePatternsEngine: failurePatternsEngine,
+		PostgresPool:          pool,
 	})
 	if err != nil {
 		t.Fatalf("create frontend service: %v", err)

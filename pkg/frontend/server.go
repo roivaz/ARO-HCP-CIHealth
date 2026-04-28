@@ -21,9 +21,10 @@ import (
 )
 
 type HandlerOptions struct {
-	DefaultWeek         string
-	HistoryHorizonWeeks int
-	PostgresPool        *pgxpool.Pool
+	DefaultWeek           string
+	HistoryHorizonWeeks   int
+	FailurePatternsEngine string
+	PostgresPool          *pgxpool.Pool
 }
 
 type handler struct {
@@ -41,9 +42,10 @@ const (
 
 func NewHandler(opts HandlerOptions) (http.Handler, error) {
 	service, err := frontservice.New(frontservice.Options{
-		DefaultWeek:         opts.DefaultWeek,
-		HistoryHorizonWeeks: opts.HistoryHorizonWeeks,
-		PostgresPool:        opts.PostgresPool,
+		DefaultWeek:           opts.DefaultWeek,
+		HistoryHorizonWeeks:   opts.HistoryHorizonWeeks,
+		FailurePatternsEngine: opts.FailurePatternsEngine,
+		PostgresPool:          opts.PostgresPool,
 	})
 	if err != nil {
 		return nil, err

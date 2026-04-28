@@ -7,8 +7,10 @@ import (
 	"strings"
 	"time"
 
+	failurepatternwindow "ci-failure-atlas/pkg/failurepatterns/window"
 	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
 	semhistory "ci-failure-atlas/pkg/semantic/history"
+	semanticquery "ci-failure-atlas/pkg/semantic/query"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 )
 
@@ -91,11 +93,7 @@ type failurePatternsScope struct {
 	DateLabels        []string
 }
 
-type failurePatternsEnvironmentFacts struct {
-	RawFailures []storecontracts.RawFailureRecord
-	RunsByURL   map[string]storecontracts.RunRecord
-	FailedRuns  int
-}
+type failurePatternsEnvironmentFacts = failurepatternwindow.EnvironmentFacts
 
 type failurePatternsMatch struct {
 	FailureCount int
@@ -119,6 +117,19 @@ func (s *Service) BuildFailurePatterns(ctx context.Context, query FailurePattern
 		return FailurePatternsData{}, err
 	}
 	requestedEnvironments := normalizeStringSlice(query.Environments)
+
+	if s.FailurePatternsEngine() == FailurePatternsEngineInline {
+		return s.buildFailurePatternsInline(ctx, query, scope, requestedEnvironments)
+	}
+	return s.buildFailurePatternsStored(ctx, query, scope, requestedEnvironments)
+}
+
+func (s *Service) buildFailurePatternsStored(
+	ctx context.Context,
+	query FailurePatternsQuery,
+	scope presentationWindow,
+	requestedEnvironments []string,
+) (FailurePatternsData, error) {
 
 	allWeeks := scope.SignalHorizonWeeks
 	if len(allWeeks) == 0 {
@@ -292,6 +303,356 @@ func (s *Service) BuildFailurePatterns(ctx context.Context, query FailurePattern
 	}, nil
 }
 
+func (s *Service) buildFailurePatternsInline(
+	ctx context.Context,
+	query FailurePatternsQuery,
+	scope presentationWindow,
+	requestedEnvironments []string,
+) (FailurePatternsData, error) {
+	targetEnvironments, err := s.resolveFailurePatternsTargetEnvironments(ctx, requestedEnvironments, scope.SemanticWeeks)
+	if err != nil {
+		return FailurePatternsData{}, err
+	}
+
+	factsStore, err := s.OpenStoreForWeek(scope.AnchorWeek)
+	if err != nil {
+		return FailurePatternsData{}, err
+	}
+	defer func() {
+		_ = factsStore.Close()
+	}()
+
+	currentResult, err := failurepatternwindow.Compute(ctx, factsStore, failurepatternwindow.ComputeOptions{
+		Environments: targetEnvironments,
+		StartTime:    scope.StartTime,
+		EndTime:      scope.EndTime,
+		IncludeDebug: true,
+	})
+	if err != nil {
+		return FailurePatternsData{}, fmt.Errorf("compute inline failure patterns for window %s..%s: %w", scope.StartDate, scope.EndDate, err)
+	}
+
+	horizonStart := failurePatternsHorizonStart(scope)
+	horizonResult := currentResult
+	if horizonStart.Before(scope.StartTime) {
+		horizonResult, err = failurepatternwindow.Compute(ctx, factsStore, failurepatternwindow.ComputeOptions{
+			Environments: targetEnvironments,
+			StartTime:    horizonStart,
+			EndTime:      scope.EndTime,
+			IncludeDebug: true,
+		})
+		if err != nil {
+			return FailurePatternsData{}, fmt.Errorf("compute inline signal horizon for window %s..%s: %w", scope.StartDate, scope.EndDate, err)
+		}
+	}
+
+	anchorSchemaVersion, err := semanticquery.InferStoreWeekSchemaVersion(ctx, factsStore)
+	if err != nil {
+		return FailurePatternsData{}, fmt.Errorf("infer anchor week schema version: %w", err)
+	}
+	historyResolver, err := s.BuildHistoryResolverForWeek(ctx, scope.AnchorWeek, anchorSchemaVersion)
+	if err != nil {
+		return FailurePatternsData{}, fmt.Errorf("build signal-horizon history resolver: %w", err)
+	}
+
+	metricRunTotals, err := failurePatternReportMetricRunTotalsByEnvironment(
+		ctx,
+		factsStore,
+		targetEnvironments,
+		scope.StartTime,
+		scope.EndTime,
+	)
+	if err != nil {
+		return FailurePatternsData{}, fmt.Errorf("load failure-pattern metric run totals: %w", err)
+	}
+
+	currentClusters := toFailurePatternReportClusters(currentResult.FailurePatterns)
+	signalHorizonRefs := buildSignalHorizonReferencesForClusters(
+		toFailurePatternReportClusters(horizonResult.FailurePatterns),
+	)
+	extractedRowsByKey := inlineExtractedRowsByMatchKey(currentResult.ExtractedRows)
+	trendDays := presentationTrendDays(scope.StartTime, scope.EndTime)
+	trendEndAnchor := scope.EndTime.Add(-time.Nanosecond)
+
+	rowsByEnvironment := make(map[string][]FailurePatternsRow, len(targetEnvironments))
+	phraseEnvironments := map[string]map[string]struct{}{}
+	for _, cluster := range currentClusters {
+		environment := normalizeEnvironment(cluster.Environment)
+		if environment == "" {
+			continue
+		}
+		scoringRefs := signalHorizonRefs.byMergeKey[failurePatternsMergeKeyForCluster(cluster)]
+		row := buildInlineFailurePatternsRow(
+			cluster,
+			historyResolver,
+			trendEndAnchor,
+			trendDays,
+			scope.AnchorWeek,
+			scoringRefs,
+			extractedRowsByKey,
+		)
+		rowsByEnvironment[environment] = append(rowsByEnvironment[environment], row)
+		collectWindowedPhraseEnvironments(row, phraseEnvironments)
+	}
+
+	generatedAt := query.GeneratedAt
+	if generatedAt.IsZero() {
+		generatedAt = time.Now().UTC()
+	}
+
+	environments := make([]FailurePatternsEnvironment, 0, len(targetEnvironments))
+	for _, environment := range targetEnvironments {
+		rows := applyWindowedSeenIn(rowsByEnvironment[environment], phraseEnvironments, environment)
+		totalRuns := metricRunTotals[environment]
+		if totalRuns <= 0 {
+			totalRuns = currentResult.Diagnostics.RunsByEnvironment[environment]
+		}
+		rows = applyWindowedImpact(rows, totalRuns)
+		sortFailurePatternsRows(rows)
+		environments = append(environments, FailurePatternsEnvironment{
+			Environment: environment,
+			Summary:     buildInlineFailurePatternsSummary(currentResult.Diagnostics, environment, rows, totalRuns),
+			Rows:        rows,
+		})
+	}
+
+	return FailurePatternsData{
+		Meta: FailurePatternsMeta{
+			StartDate:    scope.StartDate,
+			EndDate:      scope.EndDate,
+			AnchorWeek:   scope.AnchorWeek,
+			Timezone:     "UTC",
+			GeneratedAt:  generatedAt.UTC().Format(time.RFC3339),
+			Environments: append([]string(nil), targetEnvironments...),
+		},
+		Environments: environments,
+	}, nil
+}
+
+func (s *Service) resolveFailurePatternsTargetEnvironments(
+	ctx context.Context,
+	requestedEnvironments []string,
+	presentationWeeks []string,
+) ([]string, error) {
+	if len(requestedEnvironments) > 0 {
+		return append([]string(nil), requestedEnvironments...), nil
+	}
+	environmentSet := map[string]struct{}{}
+	for _, week := range presentationWeeks {
+		store, err := s.OpenStoreForWeek(week)
+		if err != nil {
+			return nil, err
+		}
+		summary, summaryErr := store.GetSemanticWeekSummary(ctx)
+		_ = store.Close()
+		if summaryErr != nil {
+			return nil, fmt.Errorf("load semantic week summary for %s: %w", week, summaryErr)
+		}
+		for _, environment := range summary.AvailableEnvironments {
+			normalizedEnvironment := normalizeEnvironment(environment)
+			if normalizedEnvironment == "" {
+				continue
+			}
+			environmentSet[normalizedEnvironment] = struct{}{}
+		}
+	}
+	return sortedStringSet(environmentSet), nil
+}
+
+func failurePatternsHorizonStart(scope presentationWindow) time.Time {
+	horizonWeeks := scope.SignalHorizonWeeks
+	if len(horizonWeeks) == 0 {
+		horizonWeeks = scope.SemanticWeeks
+	}
+	if len(horizonWeeks) == 0 {
+		return scope.StartTime
+	}
+	start, err := time.Parse("2006-01-02", strings.TrimSpace(horizonWeeks[0]))
+	if err != nil {
+		return scope.StartTime
+	}
+	return start.UTC()
+}
+
+func buildInlineFailurePatternsRow(
+	cluster FailurePatternReportCluster,
+	historyResolver semhistory.FailurePatternHistoryResolver,
+	trendAnchor time.Time,
+	trendDays int,
+	anchorWeek string,
+	scoringReferences []FailurePatternReportReference,
+	extractedRowsByKey map[string]failurepatternwindow.ExtractedFailureRow,
+) FailurePatternsRow {
+	primary := primaryContributingTestForReport(cluster.ContributingTests)
+	references := append([]FailurePatternReportReference(nil), cluster.References...)
+	sortWindowedReferences(references)
+
+	scoringRefs := append([]FailurePatternReportReference(nil), scoringReferences...)
+	if len(scoringRefs) == 0 {
+		scoringRefs = append([]FailurePatternReportReference(nil), references...)
+	}
+	sortWindowedReferences(scoringRefs)
+
+	row := FailurePatternsRow{
+		Environment:             normalizeEnvironment(cluster.Environment),
+		ClusterID:               strings.TrimSpace(cluster.Phase2ClusterID),
+		CanonicalEvidencePhrase: strings.TrimSpace(cluster.CanonicalEvidencePhrase),
+		SearchQueryPhrase:       strings.TrimSpace(cluster.SearchQueryPhrase),
+		Lane:                    strings.TrimSpace(primary.Lane),
+		JobName:                 strings.TrimSpace(primary.JobName),
+		TestName:                strings.TrimSpace(primary.TestName),
+		TestSuite:               "",
+		WindowFailureCount:      cluster.SupportCount,
+		JobsAffected:            windowedDistinctRunCount(references),
+		FailedRuns:              windowedDistinctRunCount(references),
+		WeeklySupportCount:      cluster.SupportCount,
+		WeeklyPostGoodCount:     windowedPostGoodCount(scoringRefs),
+		ContributingTests:       append([]FailurePatternReportContributingTest(nil), cluster.ContributingTests...),
+		FullErrorSamples:        inlineFailurePatternSamples(references, extractedRowsByKey, failurePatternReportFullErrorExamplesLimit),
+		References:              references,
+		ScoringReferences:       scoringRefs,
+		AnchorWeek:              strings.TrimSpace(anchorWeek),
+		MergeKey:                failurePatternsMergeKeyForCluster(cluster),
+	}
+
+	if historyResolver != nil {
+		presence := historyResolver.PresenceFor(semhistory.FailurePatternKey{
+			Environment: row.Environment,
+			Phrase:      row.CanonicalEvidencePhrase,
+			SearchQuery: row.SearchQueryPhrase,
+		})
+		row.PriorWeeksPresent = presence.PriorWeeksPresent
+		row.PriorWeekStarts = append([]string(nil), presence.PriorWeekStarts...)
+		row.PriorJobsAffected = presence.PriorJobsAffected
+		if !presence.PriorLastSeenAt.IsZero() {
+			row.PriorLastSeenAt = presence.PriorLastSeenAt.UTC().Format(time.RFC3339)
+		}
+	}
+
+	if trendDays > 0 && !trendAnchor.IsZero() {
+		if _, counts, trendRange, ok := DailyDensitySparkline(toWindowedHTMLRunReferences(scoringRefs), trendDays, trendAnchor); ok {
+			row.TrendCounts = append([]int(nil), counts...)
+			row.TrendRange = trendRange
+		}
+	}
+
+	return row
+}
+
+func buildInlineFailurePatternsSummary(
+	diagnostics failurepatternwindow.FailurePatternWindowDiagnostics,
+	environment string,
+	rows []FailurePatternsRow,
+	totalRuns int,
+) FailurePatternsSummary {
+	matchedFailureCount := 0
+	affectedRuns := map[string]struct{}{}
+	for _, row := range rows {
+		matchedFailureCount += row.WindowFailureCount
+		for _, ref := range windowedRowAllReferences(row) {
+			runURL := strings.TrimSpace(ref.RunURL)
+			if runURL == "" {
+				continue
+			}
+			affectedRuns[runURL] = struct{}{}
+		}
+	}
+	return FailurePatternsSummary{
+		TotalRuns:           totalRuns,
+		FailedRuns:          diagnostics.FailedRunsByEnvironment[environment],
+		RawFailureCount:     diagnostics.RawFailuresByEnvironment[environment],
+		MatchedFailureCount: matchedFailureCount,
+		JobsAffected:        len(affectedRuns),
+	}
+}
+
+func buildSignalHorizonReferencesForClusters(
+	clusters []FailurePatternReportCluster,
+) signalHorizonRefSet {
+	byMergeKey := map[string][]FailurePatternReportReference{}
+	for _, cluster := range clusters {
+		key := failurePatternsMergeKeyForCluster(cluster)
+		if key == "" {
+			continue
+		}
+		for _, ref := range cluster.References {
+			byMergeKey[key] = append(byMergeKey[key], FailurePatternReportReference{
+				RowID:          strings.TrimSpace(ref.RowID),
+				RunURL:         strings.TrimSpace(ref.RunURL),
+				OccurredAt:     strings.TrimSpace(ref.OccurredAt),
+				SignatureID:    strings.TrimSpace(ref.SignatureID),
+				PRNumber:       ref.PRNumber,
+				PostGoodCommit: ref.PostGoodCommit,
+			})
+		}
+	}
+	for key := range byMergeKey {
+		byMergeKey[key] = deduplicateSignalHorizonRefs(byMergeKey[key])
+	}
+	return signalHorizonRefSet{byMergeKey: byMergeKey}
+}
+
+func inlineExtractedRowsByMatchKey(
+	rows []failurepatternwindow.ExtractedFailureRow,
+) map[string]failurepatternwindow.ExtractedFailureRow {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make(map[string]failurepatternwindow.ExtractedFailureRow, len(rows)*2)
+	for _, row := range rows {
+		for _, key := range inlineExtractedFailureRowMatchKeys(row) {
+			out[key] = row
+		}
+	}
+	return out
+}
+
+func inlineExtractedFailureRowMatchKeys(row failurepatternwindow.ExtractedFailureRow) []string {
+	keys := make([]string, 0, 2)
+	rowID := strings.TrimSpace(row.RowID)
+	if rowID != "" {
+		keys = append(keys, "row|"+rowID)
+	}
+	if key := failurePatternsReferenceTupleKey(row.RunURL, row.OccurredAt, row.SignatureID); key != "" {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func inlineFailurePatternSamples(
+	references []FailurePatternReportReference,
+	extractedRowsByKey map[string]failurepatternwindow.ExtractedFailureRow,
+	limit int,
+) []string {
+	if len(references) == 0 || limit <= 0 {
+		return nil
+	}
+	ordered := append([]FailurePatternReportReference(nil), references...)
+	sortWindowedReferences(ordered)
+	samples := make([]string, 0, limit)
+	for _, ref := range ordered {
+		for _, key := range failurePatternsReferenceMatchKeys(ref) {
+			row, ok := extractedRowsByKey[key]
+			if !ok {
+				continue
+			}
+			samples = failurePatternReportAppendUniqueLimitedSample(
+				samples,
+				sampleFailureText(storecontracts.RawFailureRecord{
+					RawText:        row.RawText,
+					NormalizedText: row.NormalizedText,
+				}),
+				limit,
+			)
+			break
+		}
+		if len(samples) >= limit {
+			break
+		}
+	}
+	return samples
+}
+
 func resolveFailurePatternsScope(query FailurePatternsQuery) (failurePatternsScope, error) {
 	startLabel, startDate, err := normalizeDateLabel(query.StartDate)
 	if err != nil {
@@ -370,47 +731,11 @@ func loadFailurePatternsFacts(
 	environments []string,
 	scope presentationWindow,
 ) (map[string]failurePatternsEnvironmentFacts, error) {
-	factsByEnvironment := make(map[string]failurePatternsEnvironmentFacts, len(environments))
-	for _, environment := range environments {
-		normalizedEnvironment := normalizeEnvironment(environment)
-		if normalizedEnvironment == "" {
-			continue
-		}
-		facts := failurePatternsEnvironmentFacts{
-			RawFailures: []storecontracts.RawFailureRecord{},
-			RunsByURL:   map[string]storecontracts.RunRecord{},
-		}
-		for _, dateLabel := range scope.DateLabels {
-			rawFailures, err := store.ListRawFailuresByDate(ctx, normalizedEnvironment, dateLabel)
-			if err != nil {
-				return nil, fmt.Errorf("list raw failures for %s on %s: %w", normalizedEnvironment, dateLabel, err)
-			}
-			facts.RawFailures = append(facts.RawFailures, rawFailures...)
-			runs, err := store.ListRunsByDate(ctx, normalizedEnvironment, dateLabel)
-			if err != nil {
-				return nil, fmt.Errorf("list runs for %s on %s: %w", normalizedEnvironment, dateLabel, err)
-			}
-			for _, row := range runs {
-				runURL := strings.TrimSpace(row.RunURL)
-				if runURL == "" {
-					continue
-				}
-				facts.RunsByURL[runURL] = row
-			}
-		}
-		if err := fillMissingRunsForWindowFacts(ctx, store, normalizedEnvironment, &facts); err != nil {
-			return nil, err
-		}
-		facts.FailedRuns = 0
-		for _, row := range facts.RunsByURL {
-			if row.Failed {
-				facts.FailedRuns++
-			}
-		}
-		sortWindowedRawFailures(facts.RawFailures)
-		factsByEnvironment[normalizedEnvironment] = facts
-	}
-	return factsByEnvironment, nil
+	return failurepatternwindow.LoadDateScopedFacts(ctx, store, failurepatternwindow.FactLoadOptions{
+		Environments: environments,
+		StartTime:    scope.StartTime,
+		EndTime:      scope.EndTime,
+	})
 }
 
 func failurePatternsFactsForWeek(
@@ -457,34 +782,6 @@ func failurePatternsFactsForWeek(
 		}
 	}
 	return filtered
-}
-
-func fillMissingRunsForWindowFacts(
-	ctx context.Context,
-	store storecontracts.Store,
-	environment string,
-	facts *failurePatternsEnvironmentFacts,
-) error {
-	if facts == nil {
-		return nil
-	}
-	for _, row := range facts.RawFailures {
-		runURL := strings.TrimSpace(row.RunURL)
-		if runURL == "" {
-			continue
-		}
-		if _, exists := facts.RunsByURL[runURL]; exists {
-			continue
-		}
-		run, found, err := store.GetRun(ctx, environment, runURL)
-		if err != nil {
-			return fmt.Errorf("get run %s for %s: %w", runURL, environment, err)
-		}
-		if found {
-			facts.RunsByURL[runURL] = run
-		}
-	}
-	return nil
 }
 
 func buildFailurePatternsRow(
@@ -1286,4 +1583,3 @@ func enrichRowFromSignalHorizon(
 	}
 	return enriched
 }
-

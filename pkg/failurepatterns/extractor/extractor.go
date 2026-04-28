@@ -187,6 +187,10 @@ type FailurePattern struct {
 	GenericPhrase           bool
 }
 
+type ExtractOptions struct {
+	TestName string
+}
+
 type azureCodeHit struct {
 	Code  string
 	Index int
@@ -200,6 +204,10 @@ func FailurePatternKey(pattern FailurePattern) string {
 }
 
 func Extract(text string) FailurePattern {
+	return ExtractWithOptions(text, ExtractOptions{})
+}
+
+func ExtractWithOptions(text string, opts ExtractOptions) FailurePattern {
 	raw := text
 	lowered := strings.ToLower(raw)
 	provider := ProviderAnchor(raw)
@@ -211,7 +219,7 @@ func Extract(text string) FailurePattern {
 			searchPhrase = ChooseSearchPhrase(raw, []string{assertionContext, canonical})
 		}
 		return FailurePattern{
-			CanonicalEvidencePhrase: canonical,
+			CanonicalEvidencePhrase: contextualizeCanonicalWithTestName(canonical, opts.TestName),
 			SearchQueryPhrase:       searchPhrase,
 			ProviderAnchor:          provider,
 			GenericPhrase:           false,
@@ -376,6 +384,7 @@ func Extract(text string) FailurePattern {
 	if code != "" && isGenericCode(code) {
 		genericPhrase = leafCode == "" && leafMessage == "" && provider == ""
 	}
+	canonical = contextualizeCanonicalWithTestName(canonical, opts.TestName)
 
 	return FailurePattern{
 		CanonicalEvidencePhrase: canonical,
@@ -484,6 +493,26 @@ func normalizeTimedOutAfterDuration(value string) string {
 		return trimmed
 	}
 	return "Timed out after <duration>s."
+}
+
+func contextualizeCanonicalWithTestName(canonical string, testName string) string {
+	current := strings.TrimSpace(canonical)
+	name := strings.TrimSpace(testName)
+	if current == "" || name == "" {
+		return current
+	}
+	if !isGenericAssertionCanonical(current) && !isGenericTimedOutCanonical(current) {
+		return current
+	}
+	return truncateText(collapseWS(name+": "+current), 220)
+}
+
+func isGenericAssertionCanonical(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), "assertion failed: expected values to equal")
+}
+
+func isGenericTimedOutCanonical(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), "Timed out after <duration>s.")
 }
 
 func stripTransportURLPrefixForTLSMismatch(value string) string {

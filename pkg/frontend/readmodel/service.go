@@ -19,21 +19,28 @@ import (
 
 const DefaultHistoryWeeks = 4
 
+const (
+	FailurePatternsEngineStored = "stored"
+	FailurePatternsEngineInline = "inline"
+)
+
 var (
 	ErrNoSemanticWeeks      = errors.New("no semantic weeks found in postgres store")
 	ErrSemanticWeekNotFound = errors.New("semantic week not found in postgres store")
 )
 
 type Options struct {
-	DefaultWeek         string
-	HistoryHorizonWeeks int
-	PostgresPool        *pgxpool.Pool
+	DefaultWeek           string
+	HistoryHorizonWeeks   int
+	FailurePatternsEngine string
+	PostgresPool          *pgxpool.Pool
 }
 
 type Service struct {
-	defaultWeek  string
-	historyWeeks int
-	postgresPool *pgxpool.Pool
+	defaultWeek           string
+	historyWeeks          int
+	failurePatternsEngine string
+	postgresPool          *pgxpool.Pool
 }
 
 type WeekWindow struct {
@@ -56,10 +63,15 @@ func New(opts Options) (*Service, error) {
 	if historyWeeks <= 0 {
 		historyWeeks = DefaultHistoryWeeks
 	}
+	failurePatternsEngine, err := normalizeFailurePatternsEngine(opts.FailurePatternsEngine)
+	if err != nil {
+		return nil, err
+	}
 	return &Service{
-		defaultWeek:  defaultWeek,
-		historyWeeks: historyWeeks,
-		postgresPool: opts.PostgresPool,
+		defaultWeek:           defaultWeek,
+		historyWeeks:          historyWeeks,
+		failurePatternsEngine: failurePatternsEngine,
+		postgresPool:          opts.PostgresPool,
 	}, nil
 }
 
@@ -75,6 +87,13 @@ func (s *Service) HistoryHorizonWeeks() int {
 		return 0
 	}
 	return s.historyWeeks
+}
+
+func (s *Service) FailurePatternsEngine() string {
+	if s == nil {
+		return FailurePatternsEngineStored
+	}
+	return s.failurePatternsEngine
 }
 
 func (s *Service) DiscoverSemanticWeeks(ctx context.Context) ([]string, error) {
@@ -234,4 +253,15 @@ func (s *Service) ensureWeekExists(ctx context.Context, week string) (string, er
 		return "", s.explainUnavailableWeek(ctx, normalizedWeek)
 	}
 	return normalizedWeek, nil
+}
+
+func normalizeFailurePatternsEngine(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", FailurePatternsEngineStored:
+		return FailurePatternsEngineStored, nil
+	case FailurePatternsEngineInline:
+		return FailurePatternsEngineInline, nil
+	default:
+		return "", fmt.Errorf("invalid failure patterns engine %q (expected %s or %s)", strings.TrimSpace(value), FailurePatternsEngineStored, FailurePatternsEngineInline)
+	}
 }

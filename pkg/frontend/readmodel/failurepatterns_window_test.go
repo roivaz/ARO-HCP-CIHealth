@@ -2,9 +2,15 @@ package readmodel
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"reflect"
 	"testing"
+	"time"
 
+	failureextractor "ci-failure-atlas/pkg/failurepatterns/extractor"
 	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
+	sourcelanes "ci-failure-atlas/pkg/source/lanes"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 )
 
@@ -595,4 +601,140 @@ func TestBuildFailurePatternsUsesStoredReferencesWhenClustersShareSignature(t *t
 	if got, want := propagatorRow.FullErrorSamples[0], "resource not ready, name: grc-policy-propagator"; got != want {
 		t.Fatalf("unexpected propagator sample: got=%q want=%q", got, want)
 	}
+}
+
+func TestBuildFailurePatternsInlineMatchesStoredSingleWeekResponse(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	storedFixture := newIntegrationFixtureWithEngine(t, "", FailurePatternsEngineStored)
+	inlineFixture := newIntegrationFixtureWithEngine(t, "", FailurePatternsEngineInline)
+
+	seedComparableFailurePatternsWeek(t, storedFixture)
+	seedComparableFailurePatternsWeek(t, inlineFixture)
+
+	query := FailurePatternsQuery{
+		StartDate:    "2026-03-16",
+		EndDate:      "2026-03-22",
+		Environments: []string{"dev"},
+		GeneratedAt:  time.Date(2026, time.March, 22, 15, 4, 5, 0, time.UTC),
+	}
+
+	storedData, err := storedFixture.service.BuildFailurePatterns(ctx, query)
+	if err != nil {
+		t.Fatalf("build stored failure patterns: %v", err)
+	}
+	inlineData, err := inlineFixture.service.BuildFailurePatterns(ctx, query)
+	if err != nil {
+		t.Fatalf("build inline failure patterns: %v", err)
+	}
+
+	if !reflect.DeepEqual(storedData, inlineData) {
+		t.Fatalf("stored and inline failure-pattern responses diverged\nstored=%#v\ninline=%#v", storedData, inlineData)
+	}
+}
+
+func seedComparableFailurePatternsWeek(t *testing.T, fixture *integrationFixture) {
+	t.Helper()
+
+	ctx := context.Background()
+	store := fixture.openWeekStore(t, "2026-03-16")
+	evidence := failureextractor.Extract("OAuth timeout while waiting for cluster operator")
+	week := storecontracts.MaterializedWeek{
+		FailurePatterns: []semanticcontracts.FailurePatternRecord{
+			{
+				SchemaVersion:                semanticcontracts.CurrentSchemaVersion,
+				Environment:                  "dev",
+				Phase2ClusterID:              comparableFingerprint("dev|phase2|" + failureextractor.FailurePatternKey(evidence)),
+				CanonicalEvidencePhrase:      evidence.CanonicalEvidencePhrase,
+				SearchQueryPhrase:            evidence.SearchQueryPhrase,
+				SearchQuerySourceRunURL:      "https://prow.example.com/view/1",
+				SearchQuerySourceSignatureID: "sig-a",
+				SupportCount:                 2,
+				SeenPostGoodCommit:           true,
+				PostGoodCommitCount:          2,
+				ContributingTestsCount:       1,
+				ContributingTests: []semanticcontracts.ContributingTestRecord{
+					{
+						Lane:         string(sourcelanes.ClassifyLane("dev", "suite-a", "should oauth")),
+						JobName:      "periodic-ci",
+						TestName:     "should oauth",
+						SupportCount: 2,
+					},
+				},
+				MemberPhase1ClusterIDs: []string{"phase1-oauth"},
+				MemberSignatureIDs:     []string{"sig-a"},
+				References: []semanticcontracts.ReferenceRecord{
+					{
+						RowID:          "row-1",
+						RunURL:         "https://prow.example.com/view/1",
+						OccurredAt:     "2026-03-16T08:00:00Z",
+						SignatureID:    "sig-a",
+						PRNumber:       4101,
+						PostGoodCommit: true,
+					},
+					{
+						RowID:          "row-2",
+						RunURL:         "https://prow.example.com/view/1",
+						OccurredAt:     "2026-03-16T08:05:00Z",
+						SignatureID:    "sig-a",
+						PRNumber:       4101,
+						PostGoodCommit: true,
+					},
+				},
+			},
+		},
+	}
+	if err := store.ReplaceMaterializedWeek(ctx, week); err != nil {
+		t.Fatalf("seed comparable materialized week: %v", err)
+	}
+	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
+		{
+			Environment:    "dev",
+			RunURL:         "https://prow.example.com/view/1",
+			JobName:        "periodic-ci",
+			PRNumber:       4101,
+			PostGoodCommit: true,
+			Failed:         true,
+			OccurredAt:     "2026-03-16T08:00:00Z",
+		},
+	}); err != nil {
+		t.Fatalf("seed comparable runs: %v", err)
+	}
+	if err := store.UpsertRawFailures(ctx, []storecontracts.RawFailureRecord{
+		{
+			Environment:    "dev",
+			RowID:          "row-1",
+			RunURL:         "https://prow.example.com/view/1",
+			TestName:       "should oauth",
+			TestSuite:      "suite-a",
+			SignatureID:    "sig-a",
+			OccurredAt:     "2026-03-16T08:00:00Z",
+			RawText:        "OAuth timeout while waiting for cluster operator",
+			NormalizedText: "oauth timeout while waiting for cluster operator",
+		},
+		{
+			Environment:    "dev",
+			RowID:          "row-2",
+			RunURL:         "https://prow.example.com/view/1",
+			TestName:       "should oauth",
+			TestSuite:      "suite-a",
+			SignatureID:    "sig-a",
+			OccurredAt:     "2026-03-16T08:05:00Z",
+			RawText:        "OAuth timeout while waiting for cluster operator",
+			NormalizedText: "oauth timeout while waiting for cluster operator",
+		},
+	}); err != nil {
+		t.Fatalf("seed comparable raw failures: %v", err)
+	}
+	if err := store.UpsertMetricsDaily(ctx, []storecontracts.MetricDailyRecord{
+		{Environment: "dev", Date: "2026-03-16", Metric: "run_count", Value: 1},
+	}); err != nil {
+		t.Fatalf("seed comparable metrics daily: %v", err)
+	}
+}
+
+func comparableFingerprint(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
 }

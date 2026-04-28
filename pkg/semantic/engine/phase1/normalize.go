@@ -11,7 +11,9 @@ import (
 func Normalize(workset []semanticcontracts.Phase1WorksetRecord) []semanticcontracts.Phase1NormalizedRecord {
 	out := make([]semanticcontracts.Phase1NormalizedRecord, 0, len(workset))
 	for _, row := range workset {
-		evidence := failureextractor.Extract(row.RawText)
+		evidence := failureextractor.ExtractWithOptions(row.RawText, failureextractor.ExtractOptions{
+			TestName: row.TestName,
+		})
 		out = append(out, semanticcontracts.Phase1NormalizedRecord{
 			SchemaVersion:           semanticcontracts.CurrentSchemaVersion,
 			Environment:             strings.TrimSpace(row.Environment),

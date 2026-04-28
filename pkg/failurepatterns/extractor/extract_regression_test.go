@@ -9,6 +9,10 @@ func extractEvidence(text string) FailurePattern {
 	return Extract(text)
 }
 
+func extractEvidenceWithTestName(text string, testName string) FailurePattern {
+	return ExtractWithOptions(text, ExtractOptions{TestName: testName})
+}
+
 func TestExtractEvidencePrefersPreStructDeadlineLine(t *testing.T) {
 	t.Parallel()
 
@@ -846,6 +850,36 @@ to be true`
 	}
 	if gotB != want {
 		t.Fatalf("unexpected canonical for second timeout variant: got=%q want=%q", gotB, want)
+	}
+}
+
+func TestExtractEvidenceContextualizesGenericTimedOutCanonicalWithTestName(t *testing.T) {
+	t.Parallel()
+
+	raw := `fail [github.com/Azure/ARO-HCP/test/e2e/exporter_metrics.go:114]: Timed out after 1800.001s.
+Expected
+    <bool>: false
+to be true`
+
+	got := extractEvidenceWithTestName(raw, "Engineering should be able to retrieve expected metrics from the /metrics endpoint").CanonicalEvidencePhrase
+	want := "Engineering should be able to retrieve expected metrics from the /metrics endpoint: Timed out after <duration>s."
+	if got != want {
+		t.Fatalf("unexpected contextualized timeout canonical: got=%q want=%q", got, want)
+	}
+}
+
+func TestExtractEvidenceContextualizesGenericAssertionCanonicalWithTestName(t *testing.T) {
+	t.Parallel()
+
+	raw := `fail [github.com/Azure/ARO-HCP/test/e2e/mise_routing.go:89]: Expected
+    <string>: ...
+to equal
+    <string>: ...`
+
+	got := extractEvidenceWithTestName(raw, "MISE routing returns the versioned frontend").CanonicalEvidencePhrase
+	want := "MISE routing returns the versioned frontend: assertion failed: expected values to equal"
+	if got != want {
+		t.Fatalf("unexpected contextualized assertion canonical: got=%q want=%q", got, want)
 	}
 }
 

@@ -57,6 +57,18 @@ func normalizeDate(value string) (string, error) {
 	return parsed.UTC().Format("2006-01-02"), nil
 }
 
+func normalizeTimestampRange(startTime time.Time, endTime time.Time) (time.Time, time.Time, error) {
+	start := startTime.UTC()
+	end := endTime.UTC()
+	if start.IsZero() || end.IsZero() {
+		return time.Time{}, time.Time{}, fmt.Errorf("start and end times are required")
+	}
+	if !start.Before(end) {
+		return time.Time{}, time.Time{}, fmt.Errorf("start time must be before end time")
+	}
+	return start, end, nil
+}
+
 func dateFromTimestamp(value string) (string, bool) {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {

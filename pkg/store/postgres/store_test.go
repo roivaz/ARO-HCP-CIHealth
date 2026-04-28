@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -262,6 +263,62 @@ func TestListRunsByDateUsesUTCDateProjection(t *testing.T) {
 	}
 }
 
+func TestListRunsByDateRangeUsesTimestampWindow(t *testing.T) {
+	t.Parallel()
+
+	store := newIntegrationStore(t, "")
+	ctx := context.Background()
+
+	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
+		{
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/run/before",
+			OccurredAt:  "2026-03-16T03:59:59Z",
+		},
+		{
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/run/offset-inside",
+			OccurredAt:  "2026-03-15T23:30:00-05:00",
+		},
+		{
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/run/morning",
+			OccurredAt:  "2026-03-16T11:59:59Z",
+		},
+		{
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/run/boundary",
+			OccurredAt:  "2026-03-16T12:00:00Z",
+		},
+		{
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/run/invalid",
+			OccurredAt:  "not-a-timestamp",
+		},
+	}); err != nil {
+		t.Fatalf("upsert runs: %v", err)
+	}
+
+	rows, err := store.ListRunsByDateRange(
+		ctx,
+		"dev",
+		time.Date(2026, time.March, 16, 4, 0, 0, 0, time.UTC),
+		time.Date(2026, time.March, 16, 12, 0, 0, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatalf("list runs by date range: %v", err)
+	}
+	if got, want := len(rows), 2; got != want {
+		t.Fatalf("unexpected runs by date range count: got=%d want=%d", got, want)
+	}
+	if got, want := rows[0].RunURL, "https://prow.example.com/run/offset-inside"; got != want {
+		t.Fatalf("unexpected first run url: got=%q want=%q", got, want)
+	}
+	if got, want := rows[1].RunURL, "https://prow.example.com/run/morning"; got != want {
+		t.Fatalf("unexpected second run url: got=%q want=%q", got, want)
+	}
+}
+
 func TestListRawFailuresByDateUsesUTCDateProjection(t *testing.T) {
 	t.Parallel()
 
@@ -306,6 +363,77 @@ func TestListRawFailuresByDateUsesUTCDateProjection(t *testing.T) {
 	}
 	if got, want := rows[0].RowID, "row-1"; got != want {
 		t.Fatalf("unexpected row id: got=%q want=%q", got, want)
+	}
+}
+
+func TestListRawFailuresByDateRangeUsesTimestampWindow(t *testing.T) {
+	t.Parallel()
+
+	store := newIntegrationStore(t, "")
+	ctx := context.Background()
+
+	if err := store.UpsertRawFailures(ctx, []storecontracts.RawFailureRecord{
+		{
+			Environment: "dev",
+			RowID:       "row-before",
+			RunURL:      "https://prow.example.com/run/before",
+			SignatureID: "sig-before",
+			OccurredAt:  "2026-03-16T06:59:59Z",
+			RawText:     "before failure",
+		},
+		{
+			Environment: "dev",
+			RowID:       "row-1",
+			RunURL:      "https://prow.example.com/run/1",
+			SignatureID: "sig-1",
+			OccurredAt:  "2026-03-15T23:30:00-08:00",
+			RawText:     "offset failure",
+		},
+		{
+			Environment: "dev",
+			RowID:       "row-2",
+			RunURL:      "https://prow.example.com/run/2",
+			SignatureID: "sig-2",
+			OccurredAt:  "2026-03-16T11:59:59Z",
+			RawText:     "morning failure",
+		},
+		{
+			Environment: "dev",
+			RowID:       "row-boundary",
+			RunURL:      "https://prow.example.com/run/boundary",
+			SignatureID: "sig-boundary",
+			OccurredAt:  "2026-03-16T12:00:00Z",
+			RawText:     "boundary failure",
+		},
+		{
+			Environment: "dev",
+			RowID:       "row-invalid",
+			RunURL:      "https://prow.example.com/run/invalid",
+			SignatureID: "sig-invalid",
+			OccurredAt:  "bad-timestamp",
+			RawText:     "ignored failure",
+		},
+	}); err != nil {
+		t.Fatalf("upsert raw failures: %v", err)
+	}
+
+	rows, err := store.ListRawFailuresByDateRange(
+		ctx,
+		"dev",
+		time.Date(2026, time.March, 16, 7, 0, 0, 0, time.UTC),
+		time.Date(2026, time.March, 16, 12, 0, 0, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatalf("list raw failures by date range: %v", err)
+	}
+	if got, want := len(rows), 2; got != want {
+		t.Fatalf("unexpected raw failures by date range count: got=%d want=%d", got, want)
+	}
+	if got, want := rows[0].RowID, "row-1"; got != want {
+		t.Fatalf("unexpected first row id: got=%q want=%q", got, want)
+	}
+	if got, want := rows[1].RowID, "row-2"; got != want {
+		t.Fatalf("unexpected second row id: got=%q want=%q", got, want)
 	}
 }
 

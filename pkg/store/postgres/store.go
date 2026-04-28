@@ -79,6 +79,18 @@ func (s *Store) ListRunsByDate(ctx context.Context, environment string, date str
 	return s.listRunsByDateImpl(ctx, environment, date)
 }
 
+func (s *Store) ListRunsByDateRange(
+	ctx context.Context,
+	environment string,
+	startTime time.Time,
+	endTime time.Time,
+) ([]storecontracts.RunRecord, error) {
+	if err := requireContext(ctx); err != nil {
+		return nil, err
+	}
+	return s.listRunsByDateRangeImpl(ctx, environment, startTime, endTime)
+}
+
 func (s *Store) GetRun(ctx context.Context, environment string, runURL string) (storecontracts.RunRecord, bool, error) {
 	if err := requireContext(ctx); err != nil {
 		return storecontracts.RunRecord{}, false, err
@@ -161,6 +173,18 @@ func (s *Store) ListRawFailuresByDate(ctx context.Context, environment string, d
 		return nil, err
 	}
 	return s.listRawFailuresByDateImpl(ctx, environment, date)
+}
+
+func (s *Store) ListRawFailuresByDateRange(
+	ctx context.Context,
+	environment string,
+	startTime time.Time,
+	endTime time.Time,
+) ([]storecontracts.RawFailureRecord, error) {
+	if err := requireContext(ctx); err != nil {
+		return nil, err
+	}
+	return s.listRawFailuresByDateRangeImpl(ctx, environment, startTime, endTime)
 }
 
 func (s *Store) UpsertMetricsDaily(ctx context.Context, rows []storecontracts.MetricDailyRecord) error {

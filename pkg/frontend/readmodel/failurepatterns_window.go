@@ -322,25 +322,29 @@ func (s *Service) buildFailurePatternsInline(
 		_ = factsStore.Close()
 	}()
 
-	currentResult, err := failurepatternwindow.Compute(ctx, factsStore, failurepatternwindow.ComputeOptions{
+	horizonStart := failurePatternsHorizonStart(scope)
+	prepareStart := scope.StartTime
+	if horizonStart.Before(prepareStart) {
+		prepareStart = horizonStart
+	}
+
+	preparedWindow, err := failurepatternwindow.Prepare(ctx, factsStore, failurepatternwindow.PrepareOptions{
 		Environments: targetEnvironments,
-		StartTime:    scope.StartTime,
+		StartTime:    prepareStart,
 		EndTime:      scope.EndTime,
-		IncludeDebug: true,
 	})
+	if err != nil {
+		return FailurePatternsData{}, fmt.Errorf("prepare inline failure patterns for window %s..%s: %w", scope.StartDate, scope.EndDate, err)
+	}
+
+	currentResult, err := preparedWindow.ResultForWindow(scope.StartTime, scope.EndTime, false)
 	if err != nil {
 		return FailurePatternsData{}, fmt.Errorf("compute inline failure patterns for window %s..%s: %w", scope.StartDate, scope.EndDate, err)
 	}
 
-	horizonStart := failurePatternsHorizonStart(scope)
 	horizonResult := currentResult
-	if horizonStart.Before(scope.StartTime) {
-		horizonResult, err = failurepatternwindow.Compute(ctx, factsStore, failurepatternwindow.ComputeOptions{
-			Environments: targetEnvironments,
-			StartTime:    horizonStart,
-			EndTime:      scope.EndTime,
-			IncludeDebug: true,
-		})
+	if prepareStart.Before(scope.StartTime) {
+		horizonResult, err = preparedWindow.ResultForWindow(prepareStart, scope.EndTime, false)
 		if err != nil {
 			return FailurePatternsData{}, fmt.Errorf("compute inline signal horizon for window %s..%s: %w", scope.StartDate, scope.EndDate, err)
 		}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 
@@ -160,24 +161,57 @@ ORDER BY occurred_date
 }
 
 func (s *Store) listRunsByDateImpl(ctx context.Context, environment string, date string) ([]storecontracts.RunRecord, error) {
-	lookupEnv := normalizeEnvironment(environment)
-	if lookupEnv == "" {
-		return nil, fmt.Errorf("run lookup requires environment")
-	}
 	lookupDate, err := normalizeDate(date)
 	if err != nil {
 		return nil, fmt.Errorf("run lookup requires valid date (YYYY-MM-DD): %w", err)
 	}
+	startTime, err := time.Parse("2006-01-02", lookupDate)
+	if err != nil {
+		return nil, fmt.Errorf("parse normalized run date: %w", err)
+	}
+	return s.listRunsByDateRangeImpl(ctx, environment, startTime.UTC(), startTime.AddDate(0, 0, 1).UTC())
+}
+
+func (s *Store) listRunsByDateRangeImpl(
+	ctx context.Context,
+	environment string,
+	startTime time.Time,
+	endTime time.Time,
+) ([]storecontracts.RunRecord, error) {
+	lookupEnv := normalizeEnvironment(environment)
+	if lookupEnv == "" {
+		return nil, fmt.Errorf("run lookup requires environment")
+	}
+	normalizedStart, normalizedEnd, err := normalizeTimestampRange(startTime, endTime)
+	if err != nil {
+		return nil, fmt.Errorf("run range lookup requires a valid time window: %w", err)
+	}
 
 	rows, err := s.pool.Query(ctx, `
 SELECT environment, run_url, job_name, pr_number, pr_state, pr_sha, final_merged_sha, merged_pr, post_good_commit, failed, occurred_at
-FROM cfa_runs
-WHERE environment = $1
-  AND cfa_parse_rfc3339_utc_date(occurred_at) = $2::DATE
-ORDER BY occurred_at, run_url
-`, lookupEnv, lookupDate)
+FROM (
+  SELECT
+    environment,
+    run_url,
+    job_name,
+    pr_number,
+    pr_state,
+    pr_sha,
+    final_merged_sha,
+    merged_pr,
+    post_good_commit,
+    failed,
+    occurred_at,
+    cfa_parse_rfc3339_utc_timestamp(occurred_at) AS occurred_ts
+  FROM cfa_runs
+  WHERE environment = $1
+) runs
+WHERE occurred_ts >= $2::TIMESTAMPTZ
+  AND occurred_ts < $3::TIMESTAMPTZ
+ORDER BY occurred_ts, occurred_at, run_url
+`, lookupEnv, normalizedStart, normalizedEnd)
 	if err != nil {
-		return nil, fmt.Errorf("query runs by date: %w", err)
+		return nil, fmt.Errorf("query runs by date range: %w", err)
 	}
 	defer rows.Close()
 
@@ -197,7 +231,7 @@ ORDER BY occurred_at, run_url
 			&row.Failed,
 			&row.OccurredAt,
 		); err != nil {
-			return nil, fmt.Errorf("scan run row by date: %w", err)
+			return nil, fmt.Errorf("scan run row by date range: %w", err)
 		}
 		normalized := normalizeRunRecord(row)
 		if normalized.RunURL == "" {
@@ -206,7 +240,7 @@ ORDER BY occurred_at, run_url
 		out = append(out, normalized)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate runs by date: %w", err)
+		return nil, fmt.Errorf("iterate runs by date range: %w", err)
 	}
 	return out, nil
 }
@@ -701,24 +735,56 @@ WHERE environment = $1 AND run_url = $2
 }
 
 func (s *Store) listRawFailuresByDateImpl(ctx context.Context, environment string, date string) ([]storecontracts.RawFailureRecord, error) {
-	lookupEnv := normalizeEnvironment(environment)
-	if lookupEnv == "" {
-		return nil, fmt.Errorf("raw failure lookup requires environment")
-	}
 	lookupDate, err := normalizeDate(date)
 	if err != nil {
 		return nil, fmt.Errorf("raw failure lookup requires valid date (YYYY-MM-DD): %w", err)
 	}
+	startTime, err := time.Parse("2006-01-02", lookupDate)
+	if err != nil {
+		return nil, fmt.Errorf("parse normalized raw failure date: %w", err)
+	}
+	return s.listRawFailuresByDateRangeImpl(ctx, environment, startTime.UTC(), startTime.AddDate(0, 0, 1).UTC())
+}
+
+func (s *Store) listRawFailuresByDateRangeImpl(
+	ctx context.Context,
+	environment string,
+	startTime time.Time,
+	endTime time.Time,
+) ([]storecontracts.RawFailureRecord, error) {
+	lookupEnv := normalizeEnvironment(environment)
+	if lookupEnv == "" {
+		return nil, fmt.Errorf("raw failure lookup requires environment")
+	}
+	normalizedStart, normalizedEnd, err := normalizeTimestampRange(startTime, endTime)
+	if err != nil {
+		return nil, fmt.Errorf("raw failure range lookup requires a valid time window: %w", err)
+	}
 
 	rows, err := s.pool.Query(ctx, `
 SELECT environment, row_id, run_url, non_artifact_backed, test_name, test_suite, signature_id, occurred_at, raw_text, normalized_text
-FROM cfa_raw_failures
-WHERE environment = $1
-  AND cfa_parse_rfc3339_utc_date(occurred_at) = $2::DATE
-ORDER BY occurred_at, run_url, row_id, signature_id
-`, lookupEnv, lookupDate)
+FROM (
+  SELECT
+    environment,
+    row_id,
+    run_url,
+    non_artifact_backed,
+    test_name,
+    test_suite,
+    signature_id,
+    occurred_at,
+    raw_text,
+    normalized_text,
+    cfa_parse_rfc3339_utc_timestamp(occurred_at) AS occurred_ts
+  FROM cfa_raw_failures
+  WHERE environment = $1
+) raw_failures
+WHERE occurred_ts >= $2::TIMESTAMPTZ
+  AND occurred_ts < $3::TIMESTAMPTZ
+ORDER BY occurred_ts, occurred_at, run_url, row_id, signature_id
+`, lookupEnv, normalizedStart, normalizedEnd)
 	if err != nil {
-		return nil, fmt.Errorf("query raw failures by date: %w", err)
+		return nil, fmt.Errorf("query raw failures by date range: %w", err)
 	}
 	defer rows.Close()
 
@@ -737,7 +803,7 @@ ORDER BY occurred_at, run_url, row_id, signature_id
 			&row.RawText,
 			&row.NormalizedText,
 		); err != nil {
-			return nil, fmt.Errorf("scan raw failure by date row: %w", err)
+			return nil, fmt.Errorf("scan raw failure by date range row: %w", err)
 		}
 		normalized := normalizeRawFailureRecord(row)
 		if normalized.RowID == "" || normalized.RunURL == "" || normalized.SignatureID == "" {
@@ -746,7 +812,7 @@ ORDER BY occurred_at, run_url, row_id, signature_id
 		out = append(out, normalized)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate raw failures by date: %w", err)
+		return nil, fmt.Errorf("iterate raw failures by date range: %w", err)
 	}
 	return out, nil
 }

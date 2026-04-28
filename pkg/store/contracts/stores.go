@@ -2,6 +2,7 @@ package contracts
 
 import (
 	"context"
+	"time"
 
 	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
 )
@@ -114,6 +115,7 @@ type RunStore interface {
 	ListRunKeys(ctx context.Context) ([]string, error)
 	ListRunDates(ctx context.Context) ([]string, error)
 	ListRunsByDate(ctx context.Context, environment string, date string) ([]RunRecord, error)
+	ListRunsByDateRange(ctx context.Context, environment string, startTime time.Time, endTime time.Time) ([]RunRecord, error)
 	GetRun(ctx context.Context, environment string, runURL string) (RunRecord, bool, error)
 }
 
@@ -135,6 +137,7 @@ type RawFailureStore interface {
 	ListRawFailureRunKeys(ctx context.Context) ([]string, error)
 	ListRawFailuresByRun(ctx context.Context, environment string, runURL string) ([]RawFailureRecord, error)
 	ListRawFailuresByDate(ctx context.Context, environment string, date string) ([]RawFailureRecord, error)
+	ListRawFailuresByDateRange(ctx context.Context, environment string, startTime time.Time, endTime time.Time) ([]RawFailureRecord, error)
 }
 
 type MetricsStore interface {

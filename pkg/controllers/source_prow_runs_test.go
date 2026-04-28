@@ -437,6 +437,10 @@ func (f *fakeProwRunsStore) ListRunsByDate(_ context.Context, environment string
 	return nil, nil
 }
 
+func (f *fakeProwRunsStore) ListRunsByDateRange(_ context.Context, environment string, startTime time.Time, endTime time.Time) ([]contracts.RunRecord, error) {
+	return nil, nil
+}
+
 func (f *fakeProwRunsStore) GetRun(_ context.Context, environment string, runURL string) (contracts.RunRecord, bool, error) {
 	row, found := f.GetStoredRun(environment, runURL)
 	return row, found, nil
@@ -483,6 +487,10 @@ func (f *fakeProwRunsStore) ListRawFailuresByRun(_ context.Context, environment 
 }
 
 func (f *fakeProwRunsStore) ListRawFailuresByDate(_ context.Context, environment string, date string) ([]contracts.RawFailureRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeProwRunsStore) ListRawFailuresByDateRange(_ context.Context, environment string, startTime time.Time, endTime time.Time) ([]contracts.RawFailureRecord, error) {
 	return nil, nil
 }
 

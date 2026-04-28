@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	failureextractor "ci-failure-atlas/pkg/failurepatterns/extractor"
@@ -21,6 +22,12 @@ type ComputeOptions struct {
 	EndTime       time.Time
 	IncludeReview bool
 	IncludeDebug  bool
+}
+
+type PrepareOptions struct {
+	Environments []string
+	StartTime    time.Time
+	EndTime      time.Time
 }
 
 type FailurePatternWindowStageTimings struct {
@@ -90,54 +97,112 @@ type aggregateBucket struct {
 	rows         []ExtractedFailureRow
 }
 
+const maxEnvironmentLoadConcurrency = 4
+
+type PreparedWindow struct {
+	startTime          time.Time
+	endTime            time.Time
+	environments       []string
+	factsByEnvironment map[string]EnvironmentFacts
+	extractedRows      []ExtractedFailureRow
+	stageTimings       FailurePatternWindowStageTimings
+}
+
 func Compute(
 	ctx context.Context,
 	store storecontracts.Store,
 	opts ComputeOptions,
 ) (FailurePatternWindowResult, error) {
-	if store == nil {
-		return FailurePatternWindowResult{}, fmt.Errorf("store is required")
-	}
-	normalizedEnvironments := normalizeEnvironmentSlice(opts.Environments)
-	if opts.StartTime.IsZero() || opts.EndTime.IsZero() || !opts.StartTime.Before(opts.EndTime) {
-		return FailurePatternWindowResult{}, fmt.Errorf("valid start and end times are required")
-	}
-
-	result := FailurePatternWindowResult{
-		Diagnostics: FailurePatternWindowDiagnostics{
-			RunsByEnvironment:        map[string]int{},
-			FailedRunsByEnvironment:  map[string]int{},
-			RawFailuresByEnvironment: map[string]int{},
-		},
-	}
-
-	loadStarted := time.Now()
-	factsByEnvironment, err := LoadDateScopedFacts(ctx, store, FactLoadOptions{
-		Environments: normalizedEnvironments,
+	prepared, err := Prepare(ctx, store, PrepareOptions{
+		Environments: opts.Environments,
 		StartTime:    opts.StartTime,
 		EndTime:      opts.EndTime,
 	})
 	if err != nil {
 		return FailurePatternWindowResult{}, err
 	}
-	result.Diagnostics.StageTimings.Load = time.Since(loadStarted)
+	return prepared.ResultForWindow(opts.StartTime, opts.EndTime, opts.IncludeReview)
+}
 
-	for environment, facts := range factsByEnvironment {
-		result.Diagnostics.RunsLoaded += len(facts.RunsByURL)
-		result.Diagnostics.RawFailuresLoaded += len(facts.RawFailures)
-		result.Diagnostics.RunsByEnvironment[environment] = len(facts.RunsByURL)
-		result.Diagnostics.FailedRunsByEnvironment[environment] = facts.FailedRuns
-		result.Diagnostics.RawFailuresByEnvironment[environment] = len(facts.RawFailures)
+func Prepare(
+	ctx context.Context,
+	store storecontracts.Store,
+	opts PrepareOptions,
+) (PreparedWindow, error) {
+	if store == nil {
+		return PreparedWindow{}, fmt.Errorf("store is required")
+	}
+	normalizedEnvironments := normalizeEnvironmentSlice(opts.Environments)
+	startTime := opts.StartTime.UTC()
+	endTime := opts.EndTime.UTC()
+	if startTime.IsZero() || endTime.IsZero() || !startTime.Before(endTime) {
+		return PreparedWindow{}, fmt.Errorf("valid start and end times are required")
 	}
 
+	prepared := PreparedWindow{
+		startTime:          startTime,
+		endTime:            endTime,
+		environments:       normalizedEnvironments,
+		factsByEnvironment: map[string]EnvironmentFacts{},
+	}
+
+	loadStarted := time.Now()
+	factsByEnvironment, err := LoadDateScopedFacts(ctx, store, FactLoadOptions{
+		Environments: normalizedEnvironments,
+		StartTime:    startTime,
+		EndTime:      endTime,
+	})
+	if err != nil {
+		return PreparedWindow{}, err
+	}
+	prepared.factsByEnvironment = factsByEnvironment
+	prepared.stageTimings.Load = time.Since(loadStarted)
+
 	extractStarted := time.Now()
-	result.ExtractedRows = buildExtractedFailureRows(factsByEnvironment, &result.Diagnostics)
-	result.Diagnostics.StageTimings.Extract = time.Since(extractStarted)
+	prepared.extractedRows = buildExtractedFailureRows(factsByEnvironment, nil)
+	prepared.stageTimings.Extract = time.Since(extractStarted)
+
+	return prepared, nil
+}
+
+func (prepared PreparedWindow) ResultForWindow(
+	startTime time.Time,
+	endTime time.Time,
+	includeReview bool,
+) (FailurePatternWindowResult, error) {
+	requestStart := startTime.UTC()
+	requestEnd := endTime.UTC()
+	if requestStart.IsZero() || requestEnd.IsZero() || !requestStart.Before(requestEnd) {
+		return FailurePatternWindowResult{}, fmt.Errorf("valid start and end times are required")
+	}
+	if prepared.startTime.IsZero() || prepared.endTime.IsZero() || !prepared.startTime.Before(prepared.endTime) {
+		return FailurePatternWindowResult{}, fmt.Errorf("prepared window is invalid")
+	}
+	if requestStart.Before(prepared.startTime) || requestEnd.After(prepared.endTime) {
+		return FailurePatternWindowResult{}, fmt.Errorf(
+			"requested window %s..%s must be within prepared window %s..%s",
+			requestStart.Format(time.RFC3339),
+			requestEnd.Format(time.RFC3339),
+			prepared.startTime.Format(time.RFC3339),
+			prepared.endTime.Format(time.RFC3339),
+		)
+	}
+
+	result := FailurePatternWindowResult{
+		Diagnostics: newFailurePatternWindowDiagnostics(prepared.environments),
+	}
+	filteredFacts := sliceFactsByWindow(prepared.factsByEnvironment, prepared.environments, requestStart, requestEnd)
+	collectFactDiagnostics(filteredFacts, prepared.environments, &result.Diagnostics)
+	collectSkippedRowDiagnostics(filteredFacts, &result.Diagnostics)
+	result.ExtractedRows = sliceExtractedRowsByWindow(prepared.extractedRows, requestStart, requestEnd)
+	result.Diagnostics.RowsExtracted = len(result.ExtractedRows)
+	result.Diagnostics.StageTimings.Load = prepared.stageTimings.Load
+	result.Diagnostics.StageTimings.Extract = prepared.stageTimings.Extract
 
 	aggregateStarted := time.Now()
 	result.FailurePatterns, result.ReviewItems = aggregateExtractedRows(
 		result.ExtractedRows,
-		opts.IncludeReview,
+		includeReview,
 		&result.Diagnostics,
 	)
 	result.Diagnostics.StageTimings.Aggregate = time.Since(aggregateStarted)
@@ -163,49 +228,233 @@ func LoadDateScopedFacts(
 		return factsByEnvironment, nil
 	}
 
-	dateLabels := dateLabelsFromWindow(opts.StartTime, opts.EndTime)
+	loadCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	workerLimit := maxEnvironmentLoadConcurrency
+	if len(environments) < workerLimit {
+		workerLimit = len(environments)
+	}
+	semaphore := make(chan struct{}, workerLimit)
+	var mu sync.Mutex
+	var firstErr error
+	var wg sync.WaitGroup
 	for _, environment := range environments {
-		facts := EnvironmentFacts{
-			RawFailures: []storecontracts.RawFailureRecord{},
-			RunsByURL:   map[string]storecontracts.RunRecord{},
-		}
-		for _, dateLabel := range dateLabels {
-			runs, err := store.ListRunsByDate(ctx, environment, dateLabel)
-			if err != nil {
-				return nil, fmt.Errorf("list runs for %s on %s: %w", environment, dateLabel, err)
+		environment := environment
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case semaphore <- struct{}{}:
+			case <-loadCtx.Done():
+				return
 			}
-			for _, run := range runs {
-				normalizedRun := normalizeRunRecord(run)
-				if normalizedRun.Environment == "" {
-					normalizedRun.Environment = environment
-				}
-				if normalizedRun.RunURL == "" {
-					continue
-				}
-				facts.RunsByURL[normalizedRun.RunURL] = normalizedRun
-			}
+			defer func() {
+				<-semaphore
+			}()
 
-			rawFailures, err := store.ListRawFailuresByDate(ctx, environment, dateLabel)
+			facts, err := loadEnvironmentFacts(loadCtx, store, environment, opts.StartTime, opts.EndTime)
+			mu.Lock()
+			defer mu.Unlock()
 			if err != nil {
-				return nil, fmt.Errorf("list raw failures for %s on %s: %w", environment, dateLabel, err)
+				if firstErr == nil {
+					firstErr = err
+					cancel()
+				}
+				return
 			}
-			for _, row := range rawFailures {
-				facts.RawFailures = append(facts.RawFailures, normalizeRawFailureRecord(row, environment, ""))
+			if firstErr != nil {
+				return
 			}
-		}
-		if err := fillMissingRuns(ctx, store, environment, &facts); err != nil {
-			return nil, err
-		}
-		for _, run := range facts.RunsByURL {
-			if run.Failed {
-				facts.FailedRuns++
-			}
-		}
-		sortWindowedRawFailures(facts.RawFailures)
-		factsByEnvironment[environment] = facts
+			factsByEnvironment[environment] = facts
+		}()
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return nil, firstErr
 	}
 
 	return factsByEnvironment, nil
+}
+
+func loadEnvironmentFacts(
+	ctx context.Context,
+	store storecontracts.Store,
+	environment string,
+	startTime time.Time,
+	endTime time.Time,
+) (EnvironmentFacts, error) {
+	facts := EnvironmentFacts{
+		RawFailures: []storecontracts.RawFailureRecord{},
+		RunsByURL:   map[string]storecontracts.RunRecord{},
+	}
+	runs, err := store.ListRunsByDateRange(ctx, environment, startTime, endTime)
+	if err != nil {
+		return EnvironmentFacts{}, fmt.Errorf(
+			"list runs for %s in %s..%s: %w",
+			environment,
+			startTime.Format(time.RFC3339),
+			endTime.Format(time.RFC3339),
+			err,
+		)
+	}
+	for _, run := range runs {
+		normalizedRun := normalizeRunRecord(run)
+		if normalizedRun.Environment == "" {
+			normalizedRun.Environment = environment
+		}
+		if normalizedRun.RunURL == "" {
+			continue
+		}
+		facts.RunsByURL[normalizedRun.RunURL] = normalizedRun
+	}
+
+	rawFailures, err := store.ListRawFailuresByDateRange(ctx, environment, startTime, endTime)
+	if err != nil {
+		return EnvironmentFacts{}, fmt.Errorf(
+			"list raw failures for %s in %s..%s: %w",
+			environment,
+			startTime.Format(time.RFC3339),
+			endTime.Format(time.RFC3339),
+			err,
+		)
+	}
+	for _, row := range rawFailures {
+		facts.RawFailures = append(facts.RawFailures, normalizeRawFailureRecord(row, environment, ""))
+	}
+	if err := fillMissingRuns(ctx, store, environment, &facts); err != nil {
+		return EnvironmentFacts{}, err
+	}
+	for _, run := range facts.RunsByURL {
+		if run.Failed {
+			facts.FailedRuns++
+		}
+	}
+	sortWindowedRawFailures(facts.RawFailures)
+	return facts, nil
+}
+
+func newFailurePatternWindowDiagnostics(environments []string) FailurePatternWindowDiagnostics {
+	diagnostics := FailurePatternWindowDiagnostics{
+		RunsByEnvironment:        map[string]int{},
+		FailedRunsByEnvironment:  map[string]int{},
+		RawFailuresByEnvironment: map[string]int{},
+	}
+	for _, environment := range environments {
+		diagnostics.RunsByEnvironment[environment] = 0
+		diagnostics.FailedRunsByEnvironment[environment] = 0
+		diagnostics.RawFailuresByEnvironment[environment] = 0
+	}
+	return diagnostics
+}
+
+func sliceFactsByWindow(
+	factsByEnvironment map[string]EnvironmentFacts,
+	environments []string,
+	startTime time.Time,
+	endTime time.Time,
+) map[string]EnvironmentFacts {
+	filteredByEnvironment := make(map[string]EnvironmentFacts, len(environments))
+	for _, environment := range environments {
+		sourceFacts := factsByEnvironment[environment]
+		filteredFacts := EnvironmentFacts{
+			RawFailures: []storecontracts.RawFailureRecord{},
+			RunsByURL:   map[string]storecontracts.RunRecord{},
+		}
+		for runURL, run := range sourceFacts.RunsByURL {
+			if !timestampWithinWindow(run.OccurredAt, startTime, endTime) {
+				continue
+			}
+			filteredFacts.RunsByURL[runURL] = run
+		}
+		for _, row := range sourceFacts.RawFailures {
+			runURL := strings.TrimSpace(row.RunURL)
+			run, runFound := sourceFacts.RunsByURL[runURL]
+			occurredAt := strings.TrimSpace(row.OccurredAt)
+			if occurredAt == "" && runFound {
+				occurredAt = strings.TrimSpace(run.OccurredAt)
+			}
+			if !timestampWithinWindow(occurredAt, startTime, endTime) {
+				continue
+			}
+			filteredFacts.RawFailures = append(filteredFacts.RawFailures, row)
+			if runURL != "" && runFound {
+				filteredFacts.RunsByURL[runURL] = run
+			}
+		}
+		for _, run := range filteredFacts.RunsByURL {
+			if run.Failed {
+				filteredFacts.FailedRuns++
+			}
+		}
+		sortWindowedRawFailures(filteredFacts.RawFailures)
+		filteredByEnvironment[environment] = filteredFacts
+	}
+	return filteredByEnvironment
+}
+
+func sliceExtractedRowsByWindow(
+	rows []ExtractedFailureRow,
+	startTime time.Time,
+	endTime time.Time,
+) []ExtractedFailureRow {
+	if len(rows) == 0 {
+		return nil
+	}
+	filtered := make([]ExtractedFailureRow, 0, len(rows))
+	for _, row := range rows {
+		if !timestampWithinWindow(row.OccurredAt, startTime, endTime) {
+			continue
+		}
+		filtered = append(filtered, row)
+	}
+	return filtered
+}
+
+func collectFactDiagnostics(
+	factsByEnvironment map[string]EnvironmentFacts,
+	environments []string,
+	diagnostics *FailurePatternWindowDiagnostics,
+) {
+	if diagnostics == nil {
+		return
+	}
+	for _, environment := range environments {
+		facts := factsByEnvironment[environment]
+		diagnostics.RunsLoaded += len(facts.RunsByURL)
+		diagnostics.RawFailuresLoaded += len(facts.RawFailures)
+		diagnostics.RunsByEnvironment[environment] = len(facts.RunsByURL)
+		diagnostics.FailedRunsByEnvironment[environment] = facts.FailedRuns
+		diagnostics.RawFailuresByEnvironment[environment] = len(facts.RawFailures)
+	}
+}
+
+func collectSkippedRowDiagnostics(
+	factsByEnvironment map[string]EnvironmentFacts,
+	diagnostics *FailurePatternWindowDiagnostics,
+) {
+	if diagnostics == nil {
+		return
+	}
+	for _, facts := range factsByEnvironment {
+		for _, rawFailure := range facts.RawFailures {
+			if rawFailure.NonArtifactBacked {
+				diagnostics.RowsSkippedNonArtifact++
+				continue
+			}
+
+			runURL := strings.TrimSpace(rawFailure.RunURL)
+			run, found := facts.RunsByURL[runURL]
+			if !found {
+				diagnostics.RowsSkippedMissingRun++
+				continue
+			}
+
+			issues := validateExtractedFailureRow(rawFailure, run, found)
+			if len(issues) > 0 {
+				diagnostics.RowsSkippedInvalid++
+			}
+		}
+	}
 }
 
 func buildExtractedFailureRows(
@@ -786,17 +1035,6 @@ func normalizeRawFailureRecord(
 	}
 }
 
-func dateLabelsFromWindow(start time.Time, end time.Time) []string {
-	if start.IsZero() || end.IsZero() || !start.Before(end) {
-		return nil
-	}
-	out := make([]string, 0, int(end.Sub(start)/(24*time.Hour)))
-	for date := start.UTC(); date.Before(end.UTC()); date = date.AddDate(0, 0, 1) {
-		out = append(out, date.Format("2006-01-02"))
-	}
-	return out
-}
-
 func normalizeEnvironment(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }
@@ -926,6 +1164,14 @@ func parseTimestamp(raw string) (time.Time, bool) {
 		return parsed.UTC(), true
 	}
 	return time.Time{}, false
+}
+
+func timestampWithinWindow(raw string, startTime time.Time, endTime time.Time) bool {
+	parsed, ok := parseTimestamp(raw)
+	if !ok {
+		return false
+	}
+	return !parsed.Before(startTime) && parsed.Before(endTime)
 }
 
 func sortedKeys[T any](set map[string]T) []string {

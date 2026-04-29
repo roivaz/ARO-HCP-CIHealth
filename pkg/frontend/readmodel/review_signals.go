@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"ci-failure-atlas/pkg/failurepatterns"
-	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
+	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
 )
 
 type ReviewSignalReference struct {
@@ -64,26 +64,34 @@ func (s *Service) BuildReviewSignalsWeek(ctx context.Context, requestedWeek stri
 		return ReviewSignalsWeekSnapshot{}, err
 	}
 	week := window.CurrentWeek
-	store, err := s.OpenStoreForWeek(week)
+	store, err := s.OpenStore()
 	if err != nil {
-		return ReviewSignalsWeekSnapshot{}, fmt.Errorf("open semantic store for semantic week %q: %w", week, err)
+		return ReviewSignalsWeekSnapshot{}, fmt.Errorf("open postgres fact store for week %q: %w", week, err)
 	}
 	defer func() {
 		_ = store.Close()
 	}()
 
-	weekData, err := failurepatterns.LoadStoredWeek(ctx, store, failurepatterns.LoadStoredWeekOptions{})
+	weekStart, weekEnd, err := semanticWeekTimeRange(week)
+	if err != nil {
+		return ReviewSignalsWeekSnapshot{}, err
+	}
+	weekData, err := failurepatterns.LoadRange(ctx, store, failurepatterns.LoadRangeOptions{
+		StartTime:     weekStart,
+		EndTime:       weekEnd,
+		IncludeReview: true,
+	})
 	if err != nil {
 		return ReviewSignalsWeekSnapshot{}, err
 	}
 
-	historyResolver, err := s.BuildHistoryResolverForWeek(ctx, week, weekData.WeekSchemaVersion)
+	historyResolver, err := s.BuildHistoryResolverForWeek(ctx, week, weekData.SchemaVersion)
 	if err != nil {
 		return ReviewSignalsWeekSnapshot{}, fmt.Errorf("build history resolver for review signals: %w", err)
 	}
 
-	sourceClusters := append([]semanticcontracts.FailurePatternRecord(nil), weekData.SourceFailurePatterns...)
-	rows := make([]ReviewSignalRow, 0, len(weekData.ReviewQueue))
+	sourceClusters := append([]failurepatterncontracts.FailurePatternRecord(nil), weekData.SourceFailurePatterns...)
+	rows := make([]ReviewSignalRow, 0, len(weekData.ReviewItems))
 	signalsByReason := map[string]int{}
 
 	newPatternRows := crossWeekNewPatternSignals(weekData.SourceFailurePatterns, historyResolver, window.PreviousWeek)
@@ -95,7 +103,7 @@ func (s *Service) BuildReviewSignalsWeek(ctx context.Context, requestedWeek stri
 		rows = append(rows, newPatternRows[i])
 	}
 
-	for _, item := range weekData.ReviewQueue {
+	for _, item := range weekData.ReviewItems {
 		reason := strings.TrimSpace(item.Reason)
 		if reason != "" {
 			signalsByReason[reason]++
@@ -156,7 +164,7 @@ func (s *Service) BuildReviewSignalsWeek(ctx context.Context, requestedWeek stri
 	}, nil
 }
 
-func reviewSignalReferences(rows []semanticcontracts.ReferenceRecord) []ReviewSignalReference {
+func reviewSignalReferences(rows []failurepatterncontracts.ReferenceRecord) []ReviewSignalReference {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -175,8 +183,8 @@ func reviewSignalReferences(rows []semanticcontracts.ReferenceRecord) []ReviewSi
 }
 
 func reviewSignalMatchedFailurePatterns(
-	item semanticcontracts.ReviewItemRecord,
-	clusters []semanticcontracts.FailurePatternRecord,
+	item failurepatterncontracts.ReviewItemRecord,
+	clusters []failurepatterncontracts.FailurePatternRecord,
 ) []ReviewSignalMatchedFailurePattern {
 	if len(clusters) == 0 {
 		return nil
@@ -239,7 +247,7 @@ func reviewSignalMatchedFailurePatterns(
 func reviewSignalMatchesCluster(
 	sourcePhase1IDs map[string]struct{},
 	referenceKeys map[string]struct{},
-	cluster semanticcontracts.FailurePatternRecord,
+	cluster failurepatterncontracts.FailurePatternRecord,
 ) bool {
 	for _, phase1ID := range cluster.MemberPhase1ClusterIDs {
 		if _, exists := sourcePhase1IDs[strings.TrimSpace(phase1ID)]; exists {
@@ -254,7 +262,7 @@ func reviewSignalMatchesCluster(
 	return false
 }
 
-func reviewSignalReferenceKeys(environment string, references []semanticcontracts.ReferenceRecord) []string {
+func reviewSignalReferenceKeys(environment string, references []failurepatterncontracts.ReferenceRecord) []string {
 	if len(references) == 0 {
 		return nil
 	}
@@ -315,7 +323,7 @@ func reviewSignalSeverityRank(severity string) int {
 // have recurred after a gap (present in history but absent in the
 // immediately previous week).
 func crossWeekNewPatternSignals(
-	currentPatterns []semanticcontracts.FailurePatternRecord,
+	currentPatterns []failurepatterncontracts.FailurePatternRecord,
 	historyResolver failurepatterns.PresenceResolver,
 	previousWeek string,
 ) []ReviewSignalRow {

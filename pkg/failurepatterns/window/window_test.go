@@ -747,7 +747,7 @@ func newWindowIntegrationFixture(t *testing.T) *windowIntegrationFixture {
 func (f *windowIntegrationFixture) openWeekStore(t *testing.T, week string) storecontracts.Store {
 	t.Helper()
 
-	store, err := postgresstore.New(f.pool, postgresstore.Options{Week: week})
+	store, err := postgresstore.New(f.pool, postgresstore.Options{})
 	if err != nil {
 		t.Fatalf("create postgres store for %s: %v", week, err)
 	}

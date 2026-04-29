@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
+	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
 	failureextractor "ci-failure-atlas/pkg/failurepatterns/extractor"
-	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
 	sourcelanes "ci-failure-atlas/pkg/source/lanes"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 )
@@ -52,8 +52,8 @@ type FailurePatternWindowDiagnostics struct {
 
 type FailurePatternWindowResult struct {
 	ExtractedRows   []ExtractedFailureRow
-	FailurePatterns []semanticcontracts.FailurePatternRecord
-	ReviewItems     []semanticcontracts.ReviewItemRecord
+	FailurePatterns []failurepatterncontracts.FailurePatternRecord
+	ReviewItems     []failurepatterncontracts.ReviewItemRecord
 	Diagnostics     FailurePatternWindowDiagnostics
 }
 
@@ -106,6 +106,10 @@ type PreparedWindow struct {
 	factsByEnvironment map[string]EnvironmentFacts
 	extractedRows      []ExtractedFailureRow
 	stageTimings       FailurePatternWindowStageTimings
+}
+
+func (prepared PreparedWindow) FactsByEnvironment() map[string]EnvironmentFacts {
+	return cloneFactsByEnvironment(prepared.factsByEnvironment)
 }
 
 func Compute(
@@ -163,6 +167,29 @@ func Prepare(
 	prepared.stageTimings.Extract = time.Since(extractStarted)
 
 	return prepared, nil
+}
+
+func cloneFactsByEnvironment(source map[string]EnvironmentFacts) map[string]EnvironmentFacts {
+	if len(source) == 0 {
+		return map[string]EnvironmentFacts{}
+	}
+	out := make(map[string]EnvironmentFacts, len(source))
+	for environment, facts := range source {
+		out[environment] = cloneEnvironmentFacts(facts)
+	}
+	return out
+}
+
+func cloneEnvironmentFacts(source EnvironmentFacts) EnvironmentFacts {
+	out := EnvironmentFacts{
+		RawFailures: append([]storecontracts.RawFailureRecord(nil), source.RawFailures...),
+		RunsByURL:   make(map[string]storecontracts.RunRecord, len(source.RunsByURL)),
+		FailedRuns:  source.FailedRuns,
+	}
+	for runURL, run := range source.RunsByURL {
+		out.RunsByURL[runURL] = run
+	}
+	return out
 }
 
 func (prepared PreparedWindow) ResultForWindow(
@@ -561,7 +588,7 @@ func aggregateExtractedRows(
 	rows []ExtractedFailureRow,
 	includeReview bool,
 	diagnostics *FailurePatternWindowDiagnostics,
-) ([]semanticcontracts.FailurePatternRecord, []semanticcontracts.ReviewItemRecord) {
+) ([]failurepatterncontracts.FailurePatternRecord, []failurepatterncontracts.ReviewItemRecord) {
 	if len(rows) == 0 {
 		return nil, nil
 	}
@@ -603,8 +630,8 @@ func aggregateExtractedRows(
 	}
 	sort.Strings(keys)
 
-	failurePatterns := make([]semanticcontracts.FailurePatternRecord, 0, len(keys))
-	reviewItems := make([]semanticcontracts.ReviewItemRecord, 0)
+	failurePatterns := make([]failurepatterncontracts.FailurePatternRecord, 0, len(keys))
+	reviewItems := make([]failurepatterncontracts.ReviewItemRecord, 0)
 	for _, key := range keys {
 		bucket := buckets[key]
 		pattern := compileFailurePattern(bucket)
@@ -626,15 +653,15 @@ func aggregateExtractedRows(
 	return failurePatterns, reviewItems
 }
 
-func compileFailurePattern(bucket *aggregateBucket) semanticcontracts.FailurePatternRecord {
+func compileFailurePattern(bucket *aggregateBucket) failurepatterncontracts.FailurePatternRecord {
 	memberRows := append([]ExtractedFailureRow(nil), bucket.rows...)
 	sortExtractedRowsForAggregation(memberRows)
 
 	canonicalCounts := map[string]int{}
 	searchCounts := map[string]int{}
 	signatureSet := map[string]struct{}{}
-	referencesByKey := map[string]semanticcontracts.ReferenceRecord{}
-	contributingTests := map[string]semanticcontracts.ContributingTestRecord{}
+	referencesByKey := map[string]failurepatterncontracts.ReferenceRecord{}
+	contributingTests := map[string]failurepatterncontracts.ContributingTestRecord{}
 	postGoodCommitCount := 0
 
 	for _, row := range memberRows {
@@ -644,7 +671,7 @@ func compileFailurePattern(bucket *aggregateBucket) semanticcontracts.FailurePat
 		if signatureID := strings.TrimSpace(row.SignatureID); signatureID != "" {
 			signatureSet[signatureID] = struct{}{}
 		}
-		reference := normalizeReference(semanticcontracts.ReferenceRecord{
+		reference := normalizeReference(failurepatterncontracts.ReferenceRecord{
 			RowID:          strings.TrimSpace(row.RowID),
 			RunURL:         strings.TrimSpace(row.RunURL),
 			OccurredAt:     strings.TrimSpace(row.OccurredAt),
@@ -670,13 +697,13 @@ func compileFailurePattern(bucket *aggregateBucket) semanticcontracts.FailurePat
 		contributingTests[testKey] = contributing
 	}
 
-	references := make([]semanticcontracts.ReferenceRecord, 0, len(referencesByKey))
+	references := make([]failurepatterncontracts.ReferenceRecord, 0, len(referencesByKey))
 	for _, reference := range referencesByKey {
 		references = append(references, reference)
 	}
 	sortReferences(references)
 
-	contributingList := make([]semanticcontracts.ContributingTestRecord, 0, len(contributingTests))
+	contributingList := make([]failurepatterncontracts.ContributingTestRecord, 0, len(contributingTests))
 	for _, row := range contributingTests {
 		contributingList = append(contributingList, row)
 	}
@@ -713,8 +740,8 @@ func compileFailurePattern(bucket *aggregateBucket) semanticcontracts.FailurePat
 		searchSourceSignatureID = strings.TrimSpace(references[0].SignatureID)
 	}
 
-	return semanticcontracts.FailurePatternRecord{
-		SchemaVersion:                semanticcontracts.CurrentSchemaVersion,
+	return failurepatterncontracts.FailurePatternRecord{
+		SchemaVersion:                failurepatterncontracts.CurrentSchemaVersion,
 		Environment:                  bucket.environment,
 		Phase2ClusterID:              fingerprint(bucket.environment + "|phase2|" + bucket.identitySeed),
 		CanonicalEvidencePhrase:      strings.TrimSpace(canonical),
@@ -733,14 +760,14 @@ func compileFailurePattern(bucket *aggregateBucket) semanticcontracts.FailurePat
 
 func buildWeakCanonicalReviewItem(
 	bucket *aggregateBucket,
-	pattern semanticcontracts.FailurePatternRecord,
-) semanticcontracts.ReviewItemRecord {
+	pattern failurepatterncontracts.FailurePatternRecord,
+) failurepatterncontracts.ReviewItemRecord {
 	firstRow := ExtractedFailureRow{}
 	if len(bucket.rows) > 0 {
 		firstRow = bucket.rows[0]
 	}
-	return semanticcontracts.ReviewItemRecord{
-		SchemaVersion:                        semanticcontracts.CurrentSchemaVersion,
+	return failurepatterncontracts.ReviewItemRecord{
+		SchemaVersion:                        failurepatterncontracts.CurrentSchemaVersion,
 		Environment:                          bucket.environment,
 		ReviewItemID:                         fingerprint(bucket.environment + "|phase2|weak_canonical_needs_review|" + bucket.identitySeed),
 		Phase:                                "phase2",
@@ -751,14 +778,14 @@ func buildWeakCanonicalReviewItem(
 		ProposedSearchQuerySourceRunURL:      strings.TrimSpace(firstRow.RunURL),
 		ProposedSearchQuerySourceSignatureID: strings.TrimSpace(firstRow.SignatureID),
 		MemberSignatureIDs:                   append([]string(nil), pattern.MemberSignatureIDs...),
-		References:                           append([]semanticcontracts.ReferenceRecord(nil), pattern.References...),
+		References:                           append([]failurepatterncontracts.ReferenceRecord(nil), pattern.References...),
 	}
 }
 
 func buildAmbiguousProviderReviewItem(
 	bucket *aggregateBucket,
-	pattern semanticcontracts.FailurePatternRecord,
-) (semanticcontracts.ReviewItemRecord, bool) {
+	pattern failurepatterncontracts.FailurePatternRecord,
+) (failurepatterncontracts.ReviewItemRecord, bool) {
 	providerSet := map[string]struct{}{}
 	for _, row := range bucket.rows {
 		provider := strings.TrimSpace(row.ProviderAnchor)
@@ -768,10 +795,10 @@ func buildAmbiguousProviderReviewItem(
 		providerSet[provider] = struct{}{}
 	}
 	if len(providerSet) <= 1 {
-		return semanticcontracts.ReviewItemRecord{}, false
+		return failurepatterncontracts.ReviewItemRecord{}, false
 	}
-	return semanticcontracts.ReviewItemRecord{
-		SchemaVersion:                        semanticcontracts.CurrentSchemaVersion,
+	return failurepatterncontracts.ReviewItemRecord{
+		SchemaVersion:                        failurepatterncontracts.CurrentSchemaVersion,
 		Environment:                          bucket.environment,
 		ReviewItemID:                         fingerprint(bucket.environment + "|phase2|ambiguous_provider_anchor|" + bucket.identitySeed),
 		Phase:                                "phase2",
@@ -782,7 +809,7 @@ func buildAmbiguousProviderReviewItem(
 		ProposedSearchQuerySourceRunURL:      strings.TrimSpace(pattern.SearchQuerySourceRunURL),
 		ProposedSearchQuerySourceSignatureID: strings.TrimSpace(pattern.SearchQuerySourceSignatureID),
 		MemberSignatureIDs:                   append([]string(nil), pattern.MemberSignatureIDs...),
-		References:                           append([]semanticcontracts.ReferenceRecord(nil), pattern.References...),
+		References:                           append([]failurepatterncontracts.ReferenceRecord(nil), pattern.References...),
 	}, true
 }
 
@@ -1066,8 +1093,8 @@ func sortExtractedRowsForAggregation(rows []ExtractedFailureRow) {
 	})
 }
 
-func normalizeReference(row semanticcontracts.ReferenceRecord) semanticcontracts.ReferenceRecord {
-	return semanticcontracts.ReferenceRecord{
+func normalizeReference(row failurepatterncontracts.ReferenceRecord) failurepatterncontracts.ReferenceRecord {
+	return failurepatterncontracts.ReferenceRecord{
 		RowID:          strings.TrimSpace(row.RowID),
 		RunURL:         strings.TrimSpace(row.RunURL),
 		OccurredAt:     strings.TrimSpace(row.OccurredAt),
@@ -1077,7 +1104,7 @@ func normalizeReference(row semanticcontracts.ReferenceRecord) semanticcontracts
 	}
 }
 
-func referenceKey(row semanticcontracts.ReferenceRecord) string {
+func referenceKey(row failurepatterncontracts.ReferenceRecord) string {
 	if strings.TrimSpace(row.RowID) != "" {
 		return "row|" + strings.TrimSpace(row.RowID)
 	}
@@ -1087,7 +1114,7 @@ func referenceKey(row semanticcontracts.ReferenceRecord) string {
 	return "ref|" + strings.TrimSpace(row.RunURL) + "|" + strings.TrimSpace(row.OccurredAt) + "|" + strings.TrimSpace(row.SignatureID)
 }
 
-func sortReferences(rows []semanticcontracts.ReferenceRecord) {
+func sortReferences(rows []failurepatterncontracts.ReferenceRecord) {
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].OccurredAt != rows[j].OccurredAt {
 			return rows[i].OccurredAt < rows[j].OccurredAt
@@ -1102,7 +1129,7 @@ func sortReferences(rows []semanticcontracts.ReferenceRecord) {
 	})
 }
 
-func sortFailurePatterns(rows []semanticcontracts.FailurePatternRecord) {
+func sortFailurePatterns(rows []failurepatterncontracts.FailurePatternRecord) {
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].SupportCount != rows[j].SupportCount {
 			return rows[i].SupportCount > rows[j].SupportCount
@@ -1117,7 +1144,7 @@ func sortFailurePatterns(rows []semanticcontracts.FailurePatternRecord) {
 	})
 }
 
-func sortReviewItems(rows []semanticcontracts.ReviewItemRecord) {
+func sortReviewItems(rows []failurepatterncontracts.ReviewItemRecord) {
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].Environment != rows[j].Environment {
 			return rows[i].Environment < rows[j].Environment

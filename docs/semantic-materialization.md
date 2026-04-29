@@ -1,31 +1,24 @@
 # Semantic Materialization
 
-Status: current workflow detail  
-Last updated: 2026-04-19
+Status: historical background for the removed weekly materialization pipeline  
+Last updated: 2026-04-27
 
 ## Purpose
 
-Semantic materialization turns raw CI failure facts already stored in PostgreSQL into one week of operator-facing failure patterns plus a review queue.
+This document describes the older week-based semantic materialization pipeline that previously turned raw CI failure facts already stored in PostgreSQL into one persisted week of failure patterns plus a review queue.
 
-The materialization command does **not** fetch source data directly. Controllers and ingestion jobs are responsible for populating facts first; semantic materialization only reads those facts, derives semantic clusters, and replaces the stored semantic week.
+The active runtime no longer materializes or stores semantic weeks. Today, controllers populate fact tables and the app computes failure patterns inline for the requested date window.
 
-## Materialization Unit
+## Historical Materialization Unit
 
-The canonical unit is one Monday-starting UTC week:
+The historical canonical unit was one Monday-starting UTC week:
 
 - key format: `YYYY-MM-DD`
 - time range: `[week_start, week_start + 7d)`
 - scope: all supported environments together (`dev`, `int`, `stg`, `prod`)
 - replacement model: full week replacement, not partial per-environment updates
 
-The operational entrypoints are:
-
-```bash
-make semantic-materialize SEMANTIC_WEEK=2026-04-13
-make semantic-backfill SEMANTIC_WEEKS=8
-```
-
-`semantic-backfill` just loops over week starts and invokes materialization once per week.
+Those commands and their backing implementation have been removed. Keep the rest of this document only as background when interpreting older code reviews, transcripts, or naming.
 
 ## Inputs
 
@@ -277,17 +270,14 @@ For practical review guidance, see `docs/semantic-materialization-review-agent-p
 ## Useful Commands
 
 ```bash
-# Materialize one week
-make semantic-materialize SEMANTIC_WEEK=2026-04-13
+# Run controllers to keep facts up to date
+make run-controllers
 
-# Backfill multiple weeks
-make semantic-backfill SEMANTIC_WEEKS=8
-
-# Run the local app
+# Run the local app against fact-backed inline loading
 make app
 
-# Focused validation for semantic changes
-go test ./pkg/semantic/...
+# Focused validation for failure-pattern changes
+go test ./pkg/failurepatterns/...
 go test ./pkg/frontend/...
 ```
 

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"testing"
 
-	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 	postgresstore "ci-failure-atlas/pkg/store/postgres"
 	"ci-failure-atlas/pkg/store/postgres/initdb"
@@ -22,7 +21,7 @@ type integrationFixture struct {
 }
 
 func newIntegrationFixture(t *testing.T, defaultWeek string) *integrationFixture {
-	return newIntegrationFixtureWithEngine(t, defaultWeek, FailurePatternsEngineStored)
+	return newIntegrationFixtureWithEngine(t, defaultWeek, FailurePatternsEngineInline)
 }
 
 func newIntegrationFixtureWithEngine(
@@ -77,7 +76,7 @@ func newIntegrationFixtureWithEngine(
 func (f *integrationFixture) openWeekStore(t *testing.T, week string) storeWithClose {
 	t.Helper()
 
-	store, err := postgresstore.New(f.pool, postgresstore.Options{Week: week})
+	store, err := postgresstore.New(f.pool, postgresstore.Options{})
 	if err != nil {
 		t.Fatalf("create postgres store for %s: %v", week, err)
 	}
@@ -89,7 +88,16 @@ func (f *integrationFixture) openWeekStore(t *testing.T, week string) storeWithC
 
 type storeWithClose = storecontracts.Store
 
-func (f *integrationFixture) seedDeprecatedPhase3Links(t *testing.T, rows ...semanticcontracts.Phase3LinkRecord) {
+type deprecatedPhase3LinkRecord struct {
+	SchemaVersion string `json:"schema_version"`
+	IssueID       string `json:"issue_id"`
+	Environment   string `json:"environment"`
+	RunURL        string `json:"run_url"`
+	RowID         string `json:"row_id"`
+	UpdatedAt     string `json:"updated_at,omitempty"`
+}
+
+func (f *integrationFixture) seedDeprecatedPhase3Links(t *testing.T, rows ...deprecatedPhase3LinkRecord) {
 	t.Helper()
 	if len(rows) == 0 {
 		return
@@ -123,107 +131,6 @@ DO UPDATE SET issue_id = EXCLUDED.issue_id, updated_at = EXCLUDED.updated_at, pa
 			t.Fatalf("insert deprecated phase3 link: %v", err)
 		}
 	}
-}
-
-func currentMaterializedWeek() storecontracts.MaterializedWeek {
-	return storecontracts.MaterializedWeek{
-		FailurePatterns: []semanticcontracts.FailurePatternRecord{
-			{
-				SchemaVersion:                semanticcontracts.CurrentSchemaVersion,
-				Environment:                  "dev",
-				Phase2ClusterID:              "cluster-dev-a",
-				CanonicalEvidencePhrase:      "OAuth timeout",
-				SearchQueryPhrase:            "OAuth timeout",
-				SearchQuerySourceRunURL:      "https://prow.example.com/view/1",
-				SearchQuerySourceSignatureID: "sig-a",
-				SupportCount:                 7,
-				SeenPostGoodCommit:           true,
-				PostGoodCommitCount:          2,
-				ContributingTestsCount:       1,
-				ContributingTests: []semanticcontracts.ContributingTestRecord{
-					{
-						Lane:         "upgrade",
-						JobName:      "periodic-ci",
-						TestName:     "should oauth",
-						SupportCount: 7,
-					},
-				},
-				MemberPhase1ClusterIDs: []string{"phase1-sig-a"},
-				MemberSignatureIDs:     []string{"sig-a"},
-				References: []semanticcontracts.ReferenceRecord{
-					{
-						RowID:          "row-1",
-						RunURL:         "https://prow.example.com/view/1",
-						OccurredAt:     "2026-03-16T08:00:00Z",
-						SignatureID:    "sig-a",
-						PostGoodCommit: true,
-					},
-					{
-						RowID:          "row-2",
-						RunURL:         "https://prow.example.com/view/1",
-						OccurredAt:     "2026-03-16T08:05:00Z",
-						SignatureID:    "sig-a",
-						PostGoodCommit: true,
-					},
-				},
-			},
-		},
-	}
-}
-
-func previousMaterializedWeek() storecontracts.MaterializedWeek {
-	return storecontracts.MaterializedWeek{
-		FailurePatterns: []semanticcontracts.FailurePatternRecord{
-			{
-				SchemaVersion:                semanticcontracts.CurrentSchemaVersion,
-				Environment:                  "dev",
-				Phase2ClusterID:              "cluster-dev-old",
-				CanonicalEvidencePhrase:      "OAuth timeout",
-				SearchQueryPhrase:            "OAuth timeout",
-				SearchQuerySourceRunURL:      "https://prow.example.com/view/prev-1",
-				SearchQuerySourceSignatureID: "sig-old",
-				SupportCount:                 4,
-				SeenPostGoodCommit:           false,
-				PostGoodCommitCount:          0,
-				ContributingTestsCount:       1,
-				ContributingTests: []semanticcontracts.ContributingTestRecord{
-					{
-						Lane:         "upgrade",
-						JobName:      "periodic-ci",
-						TestName:     "should oauth",
-						SupportCount: 4,
-					},
-				},
-				MemberPhase1ClusterIDs: []string{"phase1-sig-old"},
-				MemberSignatureIDs:     []string{"sig-old"},
-				References: []semanticcontracts.ReferenceRecord{
-					{
-						RowID:       "prev-row-1",
-						RunURL:      "https://prow.example.com/view/prev-1",
-						OccurredAt:  "2026-03-09T08:00:00Z",
-						SignatureID: "sig-old",
-					},
-				},
-			},
-		},
-	}
-}
-
-func materializedWeekWithSchemaVersion(
-	week storecontracts.MaterializedWeek,
-	version string,
-) storecontracts.MaterializedWeek {
-	out := storecontracts.MaterializedWeek{
-		FailurePatterns: append([]semanticcontracts.FailurePatternRecord(nil), week.FailurePatterns...),
-		ReviewQueue:     append([]semanticcontracts.ReviewItemRecord(nil), week.ReviewQueue...),
-	}
-	for index := range out.FailurePatterns {
-		out.FailurePatterns[index].SchemaVersion = version
-	}
-	for index := range out.ReviewQueue {
-		out.ReviewQueue[index].SchemaVersion = version
-	}
-	return out
 }
 
 func sampleRunsFixture() []storecontracts.RunRecord {
@@ -281,6 +188,35 @@ func sampleRawFailuresFixture() []storecontracts.RawFailureRecord {
 			OccurredAt:     "2026-03-16T09:00:00Z",
 			RawText:        "Installer failed to reach bootstrap machine",
 			NormalizedText: "installer failed to reach bootstrap machine",
+		},
+	}
+}
+
+func previousSampleRunsFixture() []storecontracts.RunRecord {
+	return []storecontracts.RunRecord{
+		{
+			Environment:    "dev",
+			RunURL:         "https://prow.example.com/view/prev-1",
+			JobName:        "periodic-ci",
+			PostGoodCommit: false,
+			Failed:         true,
+			OccurredAt:     "2026-03-09T08:00:00Z",
+		},
+	}
+}
+
+func previousSampleRawFailuresFixture() []storecontracts.RawFailureRecord {
+	return []storecontracts.RawFailureRecord{
+		{
+			Environment:    "dev",
+			RowID:          "prev-row-1",
+			RunURL:         "https://prow.example.com/view/prev-1",
+			TestName:       "should oauth",
+			TestSuite:      "suite-a",
+			SignatureID:    "sig-old",
+			OccurredAt:     "2026-03-09T08:00:00Z",
+			RawText:        "OAuth timeout while waiting for cluster operator",
+			NormalizedText: "oauth timeout while waiting for cluster operator",
 		},
 	}
 }

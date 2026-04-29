@@ -6,19 +6,15 @@ import (
 	"strings"
 	"time"
 
-	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type Options struct {
-	Week string
-}
+type Options struct{}
 
 type Store struct {
 	pool *pgxpool.Pool
-	week string
 }
 
 var _ storecontracts.Store = (*Store)(nil)
@@ -27,20 +23,15 @@ func New(pool *pgxpool.Pool, opts Options) (*Store, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("postgres pool is required")
 	}
-	week, err := NormalizeWeek(opts.Week)
-	if err != nil {
-		return nil, fmt.Errorf("invalid week: %w", err)
-	}
 	return &Store{
 		pool: pool,
-		week: week,
 	}, nil
 }
 
 func (s *Store) Close() error {
 	// The pool lifecycle is owned by postgres options/setup callers.
-	// A Store is a lightweight scoped view (semantic namespace) over that
-	// shared pool, so closing a store must not close the shared pool.
+	// A Store is a lightweight view over that shared pool, so closing a store
+	// must not close the shared pool.
 	return nil
 }
 
@@ -241,34 +232,6 @@ func (s *Store) ListDeadLetters(ctx context.Context, limit int) ([]storecontract
 		return nil, err
 	}
 	return s.listDeadLettersImpl(ctx, limit)
-}
-
-func (s *Store) ReplaceMaterializedWeek(ctx context.Context, week storecontracts.MaterializedWeek) error {
-	if err := requireContext(ctx); err != nil {
-		return err
-	}
-	return s.replaceMaterializedWeekImpl(ctx, week)
-}
-
-func (s *Store) ListFailurePatterns(ctx context.Context) ([]semanticcontracts.FailurePatternRecord, error) {
-	if err := requireContext(ctx); err != nil {
-		return nil, err
-	}
-	return s.listFailurePatternsImpl(ctx)
-}
-
-func (s *Store) ListReviewQueue(ctx context.Context) ([]semanticcontracts.ReviewItemRecord, error) {
-	if err := requireContext(ctx); err != nil {
-		return nil, err
-	}
-	return s.listReviewQueueImpl(ctx)
-}
-
-func (s *Store) GetSemanticWeekSummary(ctx context.Context) (storecontracts.SemanticWeekSummary, error) {
-	if err := requireContext(ctx); err != nil {
-		return storecontracts.SemanticWeekSummary{}, err
-	}
-	return s.getSemanticWeekSummaryImpl(ctx)
 }
 
 func requireContext(ctx context.Context) error {

@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-logr/logr"
 
-	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
 	sourceoptions "ci-failure-atlas/pkg/source/options"
 	"ci-failure-atlas/pkg/source/prowjobs"
 	"ci-failure-atlas/pkg/store/contracts"
@@ -523,22 +522,6 @@ func (f *fakeProwRunsStore) AppendDeadLetters(_ context.Context, rows []contract
 }
 
 func (f *fakeProwRunsStore) ListDeadLetters(_ context.Context, limit int) ([]contracts.DeadLetterRecord, error) {
-	return nil, nil
-}
-
-func (f *fakeProwRunsStore) ReplaceMaterializedWeek(_ context.Context, week contracts.MaterializedWeek) error {
-	return nil
-}
-
-func (f *fakeProwRunsStore) ListFailurePatterns(_ context.Context) ([]semanticcontracts.FailurePatternRecord, error) {
-	return nil, nil
-}
-
-func (f *fakeProwRunsStore) GetSemanticWeekSummary(_ context.Context) (contracts.SemanticWeekSummary, error) {
-	return contracts.SemanticWeekSummary{}, nil
-}
-
-func (f *fakeProwRunsStore) ListReviewQueue(_ context.Context) ([]semanticcontracts.ReviewItemRecord, error) {
 	return nil, nil
 }
 

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"ci-failure-atlas/pkg/failurepatterns"
-	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
+	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 )
 
@@ -120,7 +120,7 @@ func (s *Service) BuildRunLogDay(ctx context.Context, query RunLogDayQuery) (Run
 	}
 	window := scope.window()
 
-	store, err := s.OpenStoreForWeek(window.AnchorWeek)
+	store, err := s.OpenStore()
 	if err != nil {
 		return RunLogDayData{}, err
 	}
@@ -128,9 +128,16 @@ func (s *Service) BuildRunLogDay(ctx context.Context, query RunLogDayQuery) (Run
 		_ = store.Close()
 	}()
 
-	weekData, err := failurepatterns.LoadStoredWeek(ctx, store, failurepatterns.LoadStoredWeekOptions{})
+	weekStart, weekEnd, err := semanticWeekTimeRange(window.AnchorWeek)
 	if err != nil {
-		return RunLogDayData{}, fmt.Errorf("load semantic week data for run history: %w", err)
+		return RunLogDayData{}, err
+	}
+	weekData, err := failurepatterns.LoadRange(ctx, store, failurepatterns.LoadRangeOptions{
+		StartTime: weekStart,
+		EndTime:   weekEnd,
+	})
+	if err != nil {
+		return RunLogDayData{}, fmt.Errorf("load failure-pattern week data for run history: %w", err)
 	}
 
 	targetEnvironments := failurepatterns.ResolveTargetEnvironments(query.Environments, weekData)
@@ -196,29 +203,11 @@ func resolveRunLogDayScope(query RunLogDayQuery) (runLogDayScope, error) {
 }
 
 func (s *Service) resolveRunLogAnchorWeek(ctx context.Context, dateValue time.Time, override string) (string, error) {
+	_ = ctx
 	if strings.TrimSpace(override) != "" {
-		return s.ensureWeekExists(ctx, override)
+		return normalizeWeekLabel(override)
 	}
-
-	weeks, err := s.DiscoverSemanticWeeks(ctx)
-	if err != nil {
-		return "", err
-	}
-	ordered := normalizedWeeks(weeks)
-	if len(ordered) == 0 {
-		return "", ErrNoSemanticWeeks
-	}
-
-	targetWeek := weekStartForDate(dateValue).Format("2006-01-02")
-	if contains(ordered, targetWeek) {
-		return targetWeek, nil
-	}
-
-	index := sort.SearchStrings(ordered, targetWeek)
-	if index > 0 {
-		return ordered[index-1], nil
-	}
-	return ordered[0], nil
+	return weekStartForDate(dateValue).Format("2006-01-02"), nil
 }
 
 func (s runLogDayScope) window() presentationWindow {
@@ -402,7 +391,7 @@ func buildRunLogDaySummary(runs []JobHistoryRunRow) RunLogDaySummary {
 }
 
 func buildJobHistoryReferenceIndex(
-	clusters []semanticcontracts.FailurePatternRecord,
+	clusters []failurepatterncontracts.FailurePatternRecord,
 	historyResolver failurepatterns.PresenceResolver,
 ) map[string]jobHistoryReferenceCluster {
 	index := map[string]jobHistoryReferenceCluster{}
@@ -455,7 +444,7 @@ func buildJobHistoryReferenceIndex(
 	return index
 }
 
-func jobHistoryPhraseEnvironments(clusters []semanticcontracts.FailurePatternRecord) map[string]map[string]struct{} {
+func jobHistoryPhraseEnvironments(clusters []failurepatterncontracts.FailurePatternRecord) map[string]map[string]struct{} {
 	out := map[string]map[string]struct{}{}
 	for _, cluster := range clusters {
 		environment := normalizeEnvironment(cluster.Environment)
@@ -473,7 +462,7 @@ func jobHistoryPhraseEnvironments(clusters []semanticcontracts.FailurePatternRec
 	return out
 }
 
-func jobHistoryRunReferences(rows []semanticcontracts.ReferenceRecord) []RunReference {
+func jobHistoryRunReferences(rows []failurepatterncontracts.ReferenceRecord) []RunReference {
 	out := make([]RunReference, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, RunReference{
@@ -512,7 +501,7 @@ func findJobHistoryClusterForRawFailure(
 	return jobHistoryReferenceCluster{}, false
 }
 
-func jobHistoryReferenceKeys(environment string, references []semanticcontracts.ReferenceRecord) []string {
+func jobHistoryReferenceKeys(environment string, references []failurepatterncontracts.ReferenceRecord) []string {
 	if len(references) == 0 {
 		return nil
 	}

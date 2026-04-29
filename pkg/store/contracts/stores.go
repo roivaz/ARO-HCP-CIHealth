@@ -3,12 +3,10 @@ package contracts
 import (
 	"context"
 	"time"
-
-	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
 )
 
 // RunRecord is the currently collected run-level fact used by weekly metrics,
-// windowed/day run history views, and semantic-reference joins.
+// windowed/day run history views, and failure-pattern reference joins.
 //
 // Today it intentionally remains small: run URL, job identity, basic PR
 // metadata, pass/fail state, and occurred-at timestamp.
@@ -150,14 +148,6 @@ type TestMetadataDailyStore interface {
 	ListBelowTargetTestMetadataByDate(ctx context.Context, environment string, date string, period string, targetPassRate float64, minRuns int, limit int) ([]TestMetadataDailyRecord, error)
 }
 
-type SemanticWeekSummary struct {
-	TestClusterCountsByEnv    map[string]int
-	ReviewQueueCountsByEnv    map[string]int
-	FailurePatternCountsByEnv map[string]int
-	OccurrenceTotalsByEnv     map[string]int
-	AvailableEnvironments     []string
-}
-
 type CheckpointStore interface {
 	UpsertCheckpoints(ctx context.Context, rows []CheckpointRecord) error
 	GetCheckpoint(ctx context.Context, name string) (CheckpointRecord, bool, error)
@@ -166,19 +156,6 @@ type CheckpointStore interface {
 type DeadLetterStore interface {
 	AppendDeadLetters(ctx context.Context, rows []DeadLetterRecord) error
 	ListDeadLetters(ctx context.Context, limit int) ([]DeadLetterRecord, error)
-}
-
-type MaterializedWeek struct {
-	FailurePatterns []semanticcontracts.FailurePatternRecord
-	ReviewQueue     []semanticcontracts.ReviewItemRecord
-}
-
-type SemanticStore interface {
-	ReplaceMaterializedWeek(ctx context.Context, week MaterializedWeek) error
-	ListFailurePatterns(ctx context.Context) ([]semanticcontracts.FailurePatternRecord, error)
-	GetSemanticWeekSummary(ctx context.Context) (SemanticWeekSummary, error)
-
-	ListReviewQueue(ctx context.Context) ([]semanticcontracts.ReviewItemRecord, error)
 }
 
 type Store interface {
@@ -190,7 +167,6 @@ type Store interface {
 	TestMetadataDailyStore
 	CheckpointStore
 	DeadLetterStore
-	SemanticStore
 
 	Close() error
 }

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
 	frontservice "ci-failure-atlas/pkg/frontend/readmodel"
-	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 	postgresstore "ci-failure-atlas/pkg/store/postgres"
 	"ci-failure-atlas/pkg/store/postgres/initdb"
@@ -122,9 +122,6 @@ func TestHandleAPIFailurePatternsReturnsJSON(t *testing.T) {
 	ctx := context.Background()
 	fixture := newHandlerFixture(t)
 	store := fixture.openWeekStore(t, "2026-03-16")
-	if err := store.ReplaceMaterializedWeek(ctx, reviewAPIMaterializedWeek()); err != nil {
-		t.Fatalf("seed materialized week: %v", err)
-	}
 	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
 		{
 			Environment: "dev",
@@ -197,7 +194,7 @@ func TestHandleAPIFailurePatternsReturnsJSON(t *testing.T) {
 	var linkedRow *frontservice.FailurePatternsRow
 	for index := range payload.Environments[0].Rows {
 		row := &payload.Environments[0].Rows[index]
-		if row.ClusterID == "cluster-dev-linked" {
+		if len(row.FullErrorSamples) == 1 && row.FullErrorSamples[0] == reviewAPILongRawFailureText() {
 			linkedRow = row
 			break
 		}
@@ -247,13 +244,6 @@ func TestHandleFailurePatternsPageWindowRendersHTML(t *testing.T) {
 	ctx := context.Background()
 	fixture := newHandlerFixture(t)
 	targetStore := fixture.openWeekStore(t, "2026-03-16")
-	laterStore := fixture.openWeekStore(t, "2026-03-23")
-	if err := targetStore.ReplaceMaterializedWeek(ctx, reviewAPIMaterializedWeek()); err != nil {
-		t.Fatalf("seed target materialized week: %v", err)
-	}
-	if err := laterStore.ReplaceMaterializedWeek(ctx, reviewAPIMaterializedWeek()); err != nil {
-		t.Fatalf("seed later materialized week: %v", err)
-	}
 	if err := targetStore.UpsertRuns(ctx, []storecontracts.RunRecord{
 		{
 			Environment: "dev",
@@ -300,7 +290,7 @@ func TestHandleFailurePatternsPageWindowRendersHTML(t *testing.T) {
 	if strings.Contains(body, "Runs affected, run impact, and seen-in are recomputed across the selected window") {
 		t.Fatalf("did not expect failure-pattern guidance in body, got %q", body)
 	}
-	if !strings.Contains(body, "OAuth timeout") {
+	if !strings.Contains(body, "CreateNodePool timeout after 45 minutes") {
 		t.Fatalf("expected failure-pattern row phrase in body, got %q", body)
 	}
 	if !strings.Contains(body, "Single Day: Mar 16") {
@@ -339,33 +329,7 @@ func TestHandleFailurePatternsPageWindowRendersHTML(t *testing.T) {
 }
 
 func TestHandleFailurePatternsPageDefaultsToRollingWindow(t *testing.T) {
-	ctx := context.Background()
 	fixture := newHandlerFixture(t)
-	store := fixture.openWeekStore(t, "2026-03-16")
-	if err := store.ReplaceMaterializedWeek(ctx, reviewAPIMaterializedWeek()); err != nil {
-		t.Fatalf("seed materialized week: %v", err)
-	}
-	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
-		{
-			Environment: "dev",
-			RunURL:      "https://prow.example.com/view/1",
-			JobName:     "periodic-ci",
-			Failed:      true,
-			OccurredAt:  "2026-03-16T08:00:00Z",
-		},
-		{
-			Environment: "dev",
-			RunURL:      "https://prow.example.com/view/2",
-			JobName:     "periodic-ci-nodepool",
-			Failed:      true,
-			OccurredAt:  "2026-03-16T09:00:00Z",
-		},
-	}); err != nil {
-		t.Fatalf("seed runs: %v", err)
-	}
-	if err := store.UpsertRawFailures(ctx, reviewAPIRawFailures()); err != nil {
-		t.Fatalf("seed raw failures: %v", err)
-	}
 
 	handler, err := NewHandler(HandlerOptions{
 		PostgresPool: fixture.pool,
@@ -382,10 +346,13 @@ func TestHandleFailurePatternsPageDefaultsToRollingWindow(t *testing.T) {
 		t.Fatalf("unexpected status code: got=%d want=%d body=%s", got, want, recorder.Body.String())
 	}
 	body := recorder.Body.String()
-	if !strings.Contains(body, `name="start_date" value="2026-03-16"`) {
+	now := time.Now().UTC()
+	startDate := now.AddDate(0, 0, -6).Format("2006-01-02")
+	endDate := now.Format("2006-01-02")
+	if !strings.Contains(body, `name="start_date" value="`+startDate+`"`) {
 		t.Fatalf("expected default start_date in body, got %q", body)
 	}
-	if !strings.Contains(body, `name="end_date" value="2026-03-22"`) {
+	if !strings.Contains(body, `name="end_date" value="`+endDate+`"`) {
 		t.Fatalf("expected default end_date in body, got %q", body)
 	}
 	if !strings.Contains(body, "Last 7 Days") {
@@ -402,9 +369,6 @@ func TestHandleFailurePatternsPageWeekQueryUsesFullWeekWindow(t *testing.T) {
 	ctx := context.Background()
 	fixture := newHandlerFixture(t)
 	store := fixture.openWeekStore(t, "2026-03-16")
-	if err := store.ReplaceMaterializedWeek(ctx, reviewAPIMaterializedWeek()); err != nil {
-		t.Fatalf("seed materialized week: %v", err)
-	}
 	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
 		{
 			Environment: "dev",
@@ -462,9 +426,6 @@ func TestHandleAPIRunsDayReturnsJSON(t *testing.T) {
 	ctx := context.Background()
 	fixture := newHandlerFixture(t)
 	store := fixture.openWeekStore(t, "2026-03-16")
-	if err := store.ReplaceMaterializedWeek(ctx, jobHistoryAPIMaterializedWeek()); err != nil {
-		t.Fatalf("seed materialized week: %v", err)
-	}
 	if err := store.UpsertRuns(ctx, jobHistoryAPIRuns()); err != nil {
 		t.Fatalf("seed runs: %v", err)
 	}
@@ -472,16 +433,16 @@ func TestHandleAPIRunsDayReturnsJSON(t *testing.T) {
 		t.Fatalf("seed raw failures: %v", err)
 	}
 	fixture.seedDeprecatedPhase3Links(t,
-		semanticcontracts.Phase3LinkRecord{
-			SchemaVersion: semanticcontracts.CurrentSchemaVersion,
+		deprecatedPhase3LinkRecord{
+			SchemaVersion: failurepatterncontracts.CurrentSchemaVersion,
 			IssueID:       "QE-999",
 			Environment:   "dev",
 			RunURL:        "https://prow.example.com/view/job-history-1",
 			RowID:         "job-history-row-1",
 			UpdatedAt:     "2026-03-16T12:00:00Z",
 		},
-		semanticcontracts.Phase3LinkRecord{
-			SchemaVersion: semanticcontracts.CurrentSchemaVersion,
+		deprecatedPhase3LinkRecord{
+			SchemaVersion: failurepatterncontracts.CurrentSchemaVersion,
 			IssueID:       "QE-999",
 			Environment:   "dev",
 			RunURL:        "https://prow.example.com/view/job-history-1",
@@ -533,7 +494,7 @@ func TestHandleAPIRunsDayReturnsJSON(t *testing.T) {
 	if got, want := environment.Summary.FailedRunsWithoutRawRows, 1; got != want {
 		t.Fatalf("unexpected failed runs without raw rows: got=%d want=%d", got, want)
 	}
-	if got, want := environment.Summary.RunsUnmatchedSignatures, 1; got != want {
+	if got, want := environment.Summary.RunsUnmatchedSignatures, 0; got != want {
 		t.Fatalf("unexpected unmatched signature runs: got=%d want=%d", got, want)
 	}
 
@@ -569,10 +530,10 @@ func TestHandleAPIRunsDayReturnsJSON(t *testing.T) {
 	if got, want := len(multipleRun.Lanes), 1; got != want {
 		t.Fatalf("unexpected multiple run lane count: got=%d want=%d", got, want)
 	}
-	if got, want := multipleRun.Lanes[0], "upgrade"; got != want {
+	if got, want := multipleRun.Lanes[0], "unknown"; got != want {
 		t.Fatalf("unexpected multiple run lane: got=%q want=%q", got, want)
 	}
-	if got, want := unmatchedRun.SemanticRollups.AttachmentSummary, "unmatched_only"; got != want {
+	if got, want := unmatchedRun.SemanticRollups.AttachmentSummary, "single_clustered"; got != want {
 		t.Fatalf("unexpected unmatched run summary: got=%q want=%q", got, want)
 	}
 	if got, want := unmatchedRun.FailedTestCount, 1; got != want {
@@ -617,9 +578,6 @@ func TestHandleRunsPageRendersHTML(t *testing.T) {
 	ctx := context.Background()
 	fixture := newHandlerFixture(t)
 	store := fixture.openWeekStore(t, "2026-03-16")
-	if err := store.ReplaceMaterializedWeek(ctx, jobHistoryAPIMaterializedWeek()); err != nil {
-		t.Fatalf("seed materialized week: %v", err)
-	}
 	if err := store.UpsertRuns(ctx, jobHistoryAPIRuns()); err != nil {
 		t.Fatalf("seed runs: %v", err)
 	}
@@ -702,7 +660,7 @@ func TestHandleRunsPageRendersHTML(t *testing.T) {
 	if !strings.Contains(body, "Show raw failure") {
 		t.Fatalf("expected raw failure toggle in body, got %q", body)
 	}
-	if !strings.Contains(body, ">upgrade<") {
+	if !strings.Contains(body, ">unknown<") {
 		t.Fatalf("expected lane value in body, got %q", body)
 	}
 	if !strings.Contains(body, `class="job-link" href="https://prow.example.com/view/job-history-1"`) {
@@ -734,9 +692,6 @@ func TestHandleRunsPageDefaultsWhenDateIsOmitted(t *testing.T) {
 	ctx := context.Background()
 	fixture := newHandlerFixture(t)
 	store := fixture.openWeekStore(t, "2026-03-16")
-	if err := store.ReplaceMaterializedWeek(ctx, jobHistoryAPIMaterializedWeek()); err != nil {
-		t.Fatalf("seed materialized week: %v", err)
-	}
 	if err := store.UpsertRuns(ctx, jobHistoryAPIRuns()); err != nil {
 		t.Fatalf("seed runs: %v", err)
 	}
@@ -774,8 +729,11 @@ func TestHandleAPIReviewSignalsWeekReturnsJSON(t *testing.T) {
 	ctx := context.Background()
 	fixture := newHandlerFixture(t)
 	store := fixture.openWeekStore(t, "2026-03-16")
-	if err := store.ReplaceMaterializedWeek(ctx, reviewAPIMaterializedWeek()); err != nil {
-		t.Fatalf("seed materialized week: %v", err)
+	if err := store.UpsertRuns(ctx, append(reviewSignalsAPIRunsCurrent(), reviewSignalsAPIRunsPrevious()...)); err != nil {
+		t.Fatalf("seed runs: %v", err)
+	}
+	if err := store.UpsertRawFailures(ctx, append(reviewSignalsAPIRawFailuresCurrent(), reviewSignalsAPIRawFailuresPrevious()...)); err != nil {
+		t.Fatalf("seed raw failures: %v", err)
 	}
 
 	handler, err := NewHandler(HandlerOptions{
@@ -806,16 +764,10 @@ func TestHandleAPIReviewSignalsWeekReturnsJSON(t *testing.T) {
 	if got, want := payload.Timezone, "UTC"; got != want {
 		t.Fatalf("unexpected review-signals timezone: got=%q want=%q", got, want)
 	}
-	if got, want := payload.TotalSignals, 4; got != want {
+	if got, want := payload.TotalSignals, 1; got != want {
 		t.Fatalf("unexpected total signal count: got=%d want=%d", got, want)
 	}
-	if got, want := payload.SignalsByReason["low_confidence_evidence"], 1; got != want {
-		t.Fatalf("unexpected low-confidence signal count: got=%d want=%d", got, want)
-	}
-	if got, want := payload.SignalsByReason["ambiguous_provider_merge"], 1; got != want {
-		t.Fatalf("unexpected ambiguous-provider signal count: got=%d want=%d", got, want)
-	}
-	if got, want := payload.SignalsByReason["new_pattern"], 2; got != want {
+	if got, want := payload.SignalsByReason["new_pattern"], 1; got != want {
 		t.Fatalf("unexpected new_pattern signal count: got=%d want=%d", got, want)
 	}
 
@@ -824,31 +776,26 @@ func TestHandleAPIReviewSignalsWeekReturnsJSON(t *testing.T) {
 		rowsByReason[row.Reason] = row
 	}
 
-	lowConfidence, ok := rowsByReason["low_confidence_evidence"]
+	newPattern, ok := rowsByReason["new_pattern"]
 	if !ok {
-		t.Fatalf("missing low_confidence_evidence row: %+v", payload.Rows)
+		t.Fatalf("missing new_pattern row: %+v", payload.Rows)
 	}
-	if got, want := len(lowConfidence.MatchedFailurePatterns), 1; got != want {
-		t.Fatalf("unexpected low-confidence matched failure-pattern count: got=%d want=%d", got, want)
-	}
-	if got, want := lowConfidence.MatchedFailurePatterns[0].FailurePatternID, "cluster-dev-linked"; got != want {
-		t.Fatalf("unexpected low-confidence matched failure-pattern id: got=%q want=%q", got, want)
-	}
-
-	ambiguousProvider, ok := rowsByReason["ambiguous_provider_merge"]
-	if !ok {
-		t.Fatalf("missing ambiguous_provider_merge row: %+v", payload.Rows)
-	}
-	if got, want := len(ambiguousProvider.MatchedFailurePatterns), 1; got != want {
-		t.Fatalf("unexpected ambiguous-provider matched failure-pattern count: got=%d want=%d", got, want)
-	}
-	if got, want := ambiguousProvider.MatchedFailurePatterns[0].FailurePatternID, "cluster-dev-unlinked"; got != want {
-		t.Fatalf("unexpected ambiguous-provider matched failure-pattern id: got=%q want=%q", got, want)
+	if got, want := newPattern.ProposedFailurePattern, "Installer failed to reach bootstrap machine"; got != want {
+		t.Fatalf("unexpected new-pattern phrase: got=%q want=%q", got, want)
 	}
 }
 
 type handlerFixture struct {
 	pool *pgxpool.Pool
+}
+
+type deprecatedPhase3LinkRecord struct {
+	SchemaVersion string `json:"schema_version"`
+	IssueID       string `json:"issue_id"`
+	Environment   string `json:"environment"`
+	RunURL        string `json:"run_url"`
+	RowID         string `json:"row_id"`
+	UpdatedAt     string `json:"updated_at,omitempty"`
 }
 
 func newHandlerFixture(t *testing.T) *handlerFixture {
@@ -885,7 +832,7 @@ func newHandlerFixture(t *testing.T) *handlerFixture {
 	return &handlerFixture{pool: pool}
 }
 
-func (f *handlerFixture) seedDeprecatedPhase3Links(t *testing.T, rows ...semanticcontracts.Phase3LinkRecord) {
+func (f *handlerFixture) seedDeprecatedPhase3Links(t *testing.T, rows ...deprecatedPhase3LinkRecord) {
 	t.Helper()
 	if len(rows) == 0 {
 		return
@@ -924,7 +871,7 @@ DO UPDATE SET issue_id = EXCLUDED.issue_id, updated_at = EXCLUDED.updated_at, pa
 func (f *handlerFixture) openWeekStore(t *testing.T, week string) storeWithClose {
 	t.Helper()
 
-	store, err := postgresstore.New(f.pool, postgresstore.Options{Week: week})
+	store, err := postgresstore.New(f.pool, postgresstore.Options{})
 	if err != nil {
 		t.Fatalf("create postgres store for %s: %v", week, err)
 	}
@@ -935,120 +882,10 @@ func (f *handlerFixture) openWeekStore(t *testing.T, week string) storeWithClose
 }
 
 type storeWithClose interface {
-	ReplaceMaterializedWeek(context.Context, storecontracts.MaterializedWeek) error
 	UpsertRuns(context.Context, []storecontracts.RunRecord) error
 	UpsertRawFailures(context.Context, []storecontracts.RawFailureRecord) error
 	UpsertMetricsDaily(context.Context, []storecontracts.MetricDailyRecord) error
 	Close() error
-}
-
-func reviewAPIMaterializedWeek() storecontracts.MaterializedWeek {
-	return storecontracts.MaterializedWeek{
-		FailurePatterns: []semanticcontracts.FailurePatternRecord{
-			{
-				SchemaVersion:                semanticcontracts.CurrentSchemaVersion,
-				Environment:                  "dev",
-				Phase2ClusterID:              "cluster-dev-linked",
-				CanonicalEvidencePhrase:      "OAuth timeout",
-				SearchQueryPhrase:            "OAuth timeout",
-				SearchQuerySourceRunURL:      "https://prow.example.com/view/1",
-				SearchQuerySourceSignatureID: "sig-linked",
-				SupportCount:                 2,
-				ContributingTestsCount:       1,
-				ContributingTests: []semanticcontracts.ContributingTestRecord{
-					{
-						Lane:         "upgrade",
-						JobName:      "periodic-ci",
-						TestName:     "should oauth",
-						SupportCount: 2,
-					},
-				},
-				MemberPhase1ClusterIDs: []string{"phase1-linked"},
-				MemberSignatureIDs:     []string{"sig-linked"},
-				References: []semanticcontracts.ReferenceRecord{
-					{
-						RowID:       "row-1",
-						RunURL:      "https://prow.example.com/view/1",
-						OccurredAt:  "2026-03-16T08:00:00Z",
-						SignatureID: "sig-linked",
-					},
-				},
-			},
-			{
-				SchemaVersion:                semanticcontracts.CurrentSchemaVersion,
-				Environment:                  "dev",
-				Phase2ClusterID:              "cluster-dev-unlinked",
-				CanonicalEvidencePhrase:      "CreateNodePool timeout 45 min",
-				SearchQueryPhrase:            "CreateNodePool timeout 45 min",
-				SearchQuerySourceRunURL:      "https://prow.example.com/view/2",
-				SearchQuerySourceSignatureID: "sig-unlinked",
-				SupportCount:                 1,
-				ContributingTestsCount:       1,
-				ContributingTests: []semanticcontracts.ContributingTestRecord{
-					{
-						Lane:         "install",
-						JobName:      "periodic-ci-nodepool",
-						TestName:     "should create nodepool",
-						SupportCount: 1,
-					},
-				},
-				MemberPhase1ClusterIDs: []string{"phase1-unlinked"},
-				MemberSignatureIDs:     []string{"sig-unlinked"},
-				References: []semanticcontracts.ReferenceRecord{
-					{
-						RowID:       "row-2",
-						RunURL:      "https://prow.example.com/view/2",
-						OccurredAt:  "2026-03-16T09:00:00Z",
-						SignatureID: "sig-unlinked",
-					},
-				},
-			},
-		},
-		ReviewQueue: []semanticcontracts.ReviewItemRecord{
-			{
-				SchemaVersion:                        semanticcontracts.CurrentSchemaVersion,
-				Environment:                          "dev",
-				ReviewItemID:                         "review-low-confidence",
-				Phase:                                "phase1",
-				Reason:                               "low_confidence_evidence",
-				ProposedCanonicalEvidencePhrase:      "OAuth timeout",
-				ProposedSearchQueryPhrase:            "OAuth timeout",
-				ProposedSearchQuerySourceRunURL:      "https://prow.example.com/view/1",
-				ProposedSearchQuerySourceSignatureID: "sig-linked",
-				SourcePhase1ClusterIDs:               []string{"phase1-linked"},
-				MemberSignatureIDs:                   []string{"sig-linked"},
-				References: []semanticcontracts.ReferenceRecord{
-					{
-						RowID:       "row-1",
-						RunURL:      "https://prow.example.com/view/1",
-						OccurredAt:  "2026-03-16T08:00:00Z",
-						SignatureID: "sig-linked",
-					},
-				},
-			},
-			{
-				SchemaVersion:                        semanticcontracts.CurrentSchemaVersion,
-				Environment:                          "dev",
-				ReviewItemID:                         "review-ambiguous-provider",
-				Phase:                                "phase2",
-				Reason:                               "ambiguous_provider_merge",
-				ProposedCanonicalEvidencePhrase:      "CreateNodePool timeout 45 min",
-				ProposedSearchQueryPhrase:            "CreateNodePool timeout 45 min",
-				ProposedSearchQuerySourceRunURL:      "https://prow.example.com/view/2",
-				ProposedSearchQuerySourceSignatureID: "sig-unlinked",
-				SourcePhase1ClusterIDs:               []string{"phase1-unlinked"},
-				MemberSignatureIDs:                   []string{"sig-unlinked"},
-				References: []semanticcontracts.ReferenceRecord{
-					{
-						RowID:       "row-2",
-						RunURL:      "https://prow.example.com/view/2",
-						OccurredAt:  "2026-03-16T09:00:00Z",
-						SignatureID: "sig-unlinked",
-					},
-				},
-			},
-		},
-	}
 }
 
 func reviewAPIRawFailures() []storecontracts.RawFailureRecord {
@@ -1086,69 +923,76 @@ func reviewAPILongRawFailureText() string {
 	}, "\n")
 }
 
-func jobHistoryAPIMaterializedWeek() storecontracts.MaterializedWeek {
-	return storecontracts.MaterializedWeek{
-		FailurePatterns: []semanticcontracts.FailurePatternRecord{
-			{
-				SchemaVersion:                semanticcontracts.CurrentSchemaVersion,
-				Environment:                  "dev",
-				Phase2ClusterID:              "cluster-dev-oauth",
-				CanonicalEvidencePhrase:      "OAuth timeout",
-				SearchQueryPhrase:            "OAuth timeout",
-				SearchQuerySourceRunURL:      "https://prow.example.com/view/job-history-1",
-				SearchQuerySourceSignatureID: "sig-oauth",
-				SupportCount:                 4,
-				ContributingTestsCount:       1,
-				ContributingTests: []semanticcontracts.ContributingTestRecord{
-					{
-						Lane:         "upgrade",
-						JobName:      "periodic-ci",
-						TestName:     "should oauth",
-						SupportCount: 4,
-					},
-				},
-				MemberPhase1ClusterIDs: []string{"phase1-oauth"},
-				MemberSignatureIDs:     []string{"sig-oauth"},
-				References: []semanticcontracts.ReferenceRecord{
-					{
-						RowID:       "job-history-row-1",
-						RunURL:      "https://prow.example.com/view/job-history-1",
-						OccurredAt:  "2026-03-16T08:00:00Z",
-						SignatureID: "sig-oauth",
-						PRNumber:    123,
-					},
-				},
-			},
-			{
-				SchemaVersion:                semanticcontracts.CurrentSchemaVersion,
-				Environment:                  "dev",
-				Phase2ClusterID:              "cluster-dev-api-throttle",
-				CanonicalEvidencePhrase:      "API throttling",
-				SearchQueryPhrase:            "API throttling",
-				SearchQuerySourceRunURL:      "https://prow.example.com/view/job-history-1",
-				SearchQuerySourceSignatureID: "sig-throttle",
-				SupportCount:                 2,
-				ContributingTestsCount:       1,
-				ContributingTests: []semanticcontracts.ContributingTestRecord{
-					{
-						Lane:         "upgrade",
-						JobName:      "periodic-ci",
-						TestName:     "should throttle",
-						SupportCount: 2,
-					},
-				},
-				MemberPhase1ClusterIDs: []string{"phase1-throttle"},
-				MemberSignatureIDs:     []string{"sig-throttle"},
-				References: []semanticcontracts.ReferenceRecord{
-					{
-						RowID:       "job-history-row-2",
-						RunURL:      "https://prow.example.com/view/job-history-1",
-						OccurredAt:  "2026-03-16T08:05:00Z",
-						SignatureID: "sig-throttle",
-						PRNumber:    123,
-					},
-				},
-			},
+func reviewSignalsAPIRunsCurrent() []storecontracts.RunRecord {
+	return []storecontracts.RunRecord{
+		{
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/view/review-current-1",
+			JobName:     "periodic-ci",
+			Failed:      true,
+			OccurredAt:  "2026-03-16T08:00:00Z",
+		},
+		{
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/view/review-current-2",
+			JobName:     "periodic-ci-install",
+			Failed:      true,
+			OccurredAt:  "2026-03-16T09:00:00Z",
+		},
+	}
+}
+
+func reviewSignalsAPIRawFailuresCurrent() []storecontracts.RawFailureRecord {
+	return []storecontracts.RawFailureRecord{
+		{
+			Environment:    "dev",
+			RowID:          "review-current-row-1",
+			RunURL:         "https://prow.example.com/view/review-current-1",
+			TestName:       "should oauth",
+			TestSuite:      "suite-a",
+			SignatureID:    "sig-oauth",
+			OccurredAt:     "2026-03-16T08:00:00Z",
+			RawText:        "OAuth timeout while waiting for cluster operator",
+			NormalizedText: "oauth timeout while waiting for cluster operator",
+		},
+		{
+			Environment:    "dev",
+			RowID:          "review-current-row-2",
+			RunURL:         "https://prow.example.com/view/review-current-2",
+			TestName:       "should install",
+			TestSuite:      "suite-b",
+			SignatureID:    "sig-install",
+			OccurredAt:     "2026-03-16T09:00:00Z",
+			RawText:        "Installer failed to reach bootstrap machine",
+			NormalizedText: "installer failed to reach bootstrap machine",
+		},
+	}
+}
+
+func reviewSignalsAPIRunsPrevious() []storecontracts.RunRecord {
+	return []storecontracts.RunRecord{
+		{
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/view/review-prev-1",
+			JobName:     "periodic-ci",
+			Failed:      true,
+			OccurredAt:  "2026-03-09T08:00:00Z",
+		},
+	}
+}
+
+func reviewSignalsAPIRawFailuresPrevious() []storecontracts.RawFailureRecord {
+	return []storecontracts.RawFailureRecord{
+		{
+			Environment:    "dev",
+			RowID:          "review-prev-row-1",
+			RunURL:         "https://prow.example.com/view/review-prev-1",
+			TestName:       "should oauth",
+			TestSuite:      "suite-a",
+			SignatureID:    "sig-oauth-prev",
+			OccurredAt:     "2026-03-09T08:00:00Z",
+			RawText:        "OAuth timeout while waiting for cluster operator",
+			NormalizedText: "oauth timeout while waiting for cluster operator",
 		},
 	}
 }

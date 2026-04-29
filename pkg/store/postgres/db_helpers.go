@@ -26,10 +26,6 @@ func (s *Store) withTx(ctx context.Context, fn func(tx pgx.Tx) error) error {
 	return nil
 }
 
-func weekScope(value string) string {
-	return value
-}
-
 func marshalPayload(value any) ([]byte, error) {
 	payload, err := json.Marshal(value)
 	if err != nil {

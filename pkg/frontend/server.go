@@ -81,7 +81,7 @@ func (h *handler) handleRoot(w http.ResponseWriter, r *http.Request) {
 	href, err := h.currentRollingReportHref(r.Context())
 	if err != nil {
 		statusCode := http.StatusBadRequest
-		if errors.Is(err, frontservice.ErrNoSemanticWeeks) || errors.Is(err, frontservice.ErrSemanticWeekNotFound) {
+		if errors.Is(err, frontservice.ErrNoAvailableWeeks) || errors.Is(err, frontservice.ErrWeekNotFound) {
 			statusCode = http.StatusNotFound
 		}
 		http.Error(w, err.Error(), statusCode)
@@ -145,7 +145,7 @@ func (h *handler) handleRunsPage(w http.ResponseWriter, r *http.Request) {
 	query, err := h.resolveRunLogPageQuery(r.Context(), runLogDayQueryFromRequest(r))
 	if err != nil {
 		statusCode := http.StatusBadRequest
-		if errors.Is(err, frontservice.ErrNoSemanticWeeks) || errors.Is(err, frontservice.ErrSemanticWeekNotFound) {
+		if errors.Is(err, frontservice.ErrNoAvailableWeeks) || errors.Is(err, frontservice.ErrWeekNotFound) {
 			statusCode = http.StatusNotFound
 		}
 		http.Error(w, err.Error(), statusCode)
@@ -154,7 +154,7 @@ func (h *handler) handleRunsPage(w http.ResponseWriter, r *http.Request) {
 	reportHTML, err := h.generateDayRunHistoryPage(r.Context(), query)
 	if err != nil {
 		statusCode := http.StatusBadRequest
-		if errors.Is(err, frontservice.ErrNoSemanticWeeks) || errors.Is(err, frontservice.ErrSemanticWeekNotFound) {
+		if errors.Is(err, frontservice.ErrNoAvailableWeeks) || errors.Is(err, frontservice.ErrWeekNotFound) {
 			statusCode = http.StatusNotFound
 		}
 		http.Error(w, err.Error(), statusCode)
@@ -184,7 +184,7 @@ func (h *handler) handleReportPage(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		statusCode := http.StatusBadRequest
-		if errors.Is(err, frontservice.ErrNoSemanticWeeks) || errors.Is(err, frontservice.ErrSemanticWeekNotFound) {
+		if errors.Is(err, frontservice.ErrNoAvailableWeeks) || errors.Is(err, frontservice.ErrWeekNotFound) {
 			statusCode = http.StatusNotFound
 		}
 		http.Error(w, err.Error(), statusCode)
@@ -207,7 +207,7 @@ func (h *handler) handleAPIFailurePatterns(w http.ResponseWriter, r *http.Reques
 	response, err := h.service.BuildFailurePatterns(r.Context(), failurePatternsQueryFromRequest(r))
 	if err != nil {
 		statusCode := http.StatusBadRequest
-		if errors.Is(err, frontservice.ErrNoSemanticWeeks) || errors.Is(err, frontservice.ErrSemanticWeekNotFound) {
+		if errors.Is(err, frontservice.ErrNoAvailableWeeks) || errors.Is(err, frontservice.ErrWeekNotFound) {
 			statusCode = http.StatusNotFound
 		}
 		writeJSONError(w, statusCode, err)
@@ -224,7 +224,7 @@ func (h *handler) handleAPIReviewSignalsWeek(w http.ResponseWriter, r *http.Requ
 	response, err := h.service.BuildReviewSignalsWeek(r.Context(), strings.TrimSpace(r.URL.Query().Get("week")))
 	if err != nil {
 		statusCode := http.StatusBadRequest
-		if errors.Is(err, frontservice.ErrNoSemanticWeeks) || errors.Is(err, frontservice.ErrSemanticWeekNotFound) {
+		if errors.Is(err, frontservice.ErrNoAvailableWeeks) || errors.Is(err, frontservice.ErrWeekNotFound) {
 			statusCode = http.StatusNotFound
 		}
 		writeJSONError(w, statusCode, err)
@@ -241,7 +241,7 @@ func (h *handler) handleAPIRunsDay(w http.ResponseWriter, r *http.Request) {
 	response, err := h.service.BuildRunLogDay(r.Context(), runLogDayQueryFromRequest(r))
 	if err != nil {
 		statusCode := http.StatusBadRequest
-		if errors.Is(err, frontservice.ErrNoSemanticWeeks) || errors.Is(err, frontservice.ErrSemanticWeekNotFound) {
+		if errors.Is(err, frontservice.ErrNoAvailableWeeks) || errors.Is(err, frontservice.ErrWeekNotFound) {
 			statusCode = http.StatusNotFound
 		}
 		writeJSONError(w, statusCode, err)
@@ -1061,26 +1061,6 @@ func anchorWeekDateRange(anchorWeek string, fallbackStart string, fallbackEnd st
 		return start, end
 	}
 	return fallbackStart, fallbackEnd
-}
-
-func semanticWeekForDateWindow(startDate string, endDate string) (string, error) {
-	startValue, err := parseDateInputValue("start_date", startDate)
-	if err != nil {
-		return "", err
-	}
-	endValue, err := parseDateInputValue("end_date", endDate)
-	if err != nil {
-		return "", err
-	}
-	if endValue.Before(startValue) {
-		return "", fmt.Errorf("end_date %s must be on or after start_date %s", endValue.Format("2006-01-02"), startValue.Format("2006-01-02"))
-	}
-	startWeek := startValue.AddDate(0, 0, -int((startValue.Weekday()+6)%7)).Format("2006-01-02")
-	endWeek := endValue.AddDate(0, 0, -int((endValue.Weekday()+6)%7)).Format("2006-01-02")
-	if startWeek != endWeek {
-		return "", fmt.Errorf("window %s..%s crosses semantic week boundaries (%s vs %s)", startValue.Format("2006-01-02"), endValue.Format("2006-01-02"), startWeek, endWeek)
-	}
-	return startWeek, nil
 }
 
 func parseDateInputValue(fieldName string, value string) (time.Time, error) {

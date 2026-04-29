@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"ci-failure-atlas/pkg/failurepatterns"
-	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
+	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 	postgresstore "ci-failure-atlas/pkg/store/postgres"
 
@@ -19,13 +19,12 @@ import (
 const DefaultHistoryWeeks = 4
 
 const (
-	FailurePatternsEngineStored = "stored"
 	FailurePatternsEngineInline = "inline"
 )
 
 var (
-	ErrNoSemanticWeeks      = errors.New("no semantic weeks found in postgres store")
-	ErrSemanticWeekNotFound = errors.New("semantic week not found in postgres store")
+	ErrNoAvailableWeeks = errors.New("no available weeks found in postgres fact store")
+	ErrWeekNotFound     = errors.New("week not found in postgres fact store")
 )
 
 type Options struct {
@@ -36,10 +35,9 @@ type Options struct {
 }
 
 type Service struct {
-	defaultWeek           string
-	historyWeeks          int
-	failurePatternsEngine string
-	postgresPool          *pgxpool.Pool
+	defaultWeek  string
+	historyWeeks int
+	postgresPool *pgxpool.Pool
 }
 
 type WeekWindow struct {
@@ -62,15 +60,13 @@ func New(opts Options) (*Service, error) {
 	if historyWeeks <= 0 {
 		historyWeeks = DefaultHistoryWeeks
 	}
-	failurePatternsEngine, err := normalizeFailurePatternsEngine(opts.FailurePatternsEngine)
-	if err != nil {
+	if _, err := normalizeFailurePatternsEngine(opts.FailurePatternsEngine); err != nil {
 		return nil, err
 	}
 	return &Service{
-		defaultWeek:           defaultWeek,
-		historyWeeks:          historyWeeks,
-		failurePatternsEngine: failurePatternsEngine,
-		postgresPool:          opts.PostgresPool,
+		defaultWeek:  defaultWeek,
+		historyWeeks: historyWeeks,
+		postgresPool: opts.PostgresPool,
 	}, nil
 }
 
@@ -89,10 +85,7 @@ func (s *Service) HistoryHorizonWeeks() int {
 }
 
 func (s *Service) FailurePatternsEngine() string {
-	if s == nil {
-		return FailurePatternsEngineStored
-	}
-	return s.failurePatternsEngine
+	return FailurePatternsEngineInline
 }
 
 func (s *Service) DiscoverSemanticWeeks(ctx context.Context) ([]string, error) {
@@ -104,47 +97,57 @@ func (s *Service) DiscoverSemanticWeeks(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	if len(weeks) == 0 {
-		return nil, ErrNoSemanticWeeks
-	}
-	loadableWeeks := make([]string, 0, len(weeks))
-	for _, week := range weeks {
-		weekSchemaVersion, err := s.semanticWeekSchemaVersion(ctx, week)
-		if err != nil {
-			return nil, err
-		}
-		if !semanticcontracts.IsCurrentOrUnsetSchemaVersion(weekSchemaVersion) {
-			continue
-		}
-		loadableWeeks = append(loadableWeeks, week)
-	}
-	if len(loadableWeeks) == 0 {
-		return nil, ErrNoSemanticWeeks
-	}
-	return loadableWeeks, nil
-}
-
-func (s *Service) discoverAllSemanticWeeks(ctx context.Context) ([]string, error) {
-	if s == nil {
-		return nil, fmt.Errorf("service is required")
-	}
-	weeks, err := postgresstore.ListWeeks(ctx, s.postgresPool)
-	if err != nil {
-		return nil, fmt.Errorf("list semantic weeks from postgres: %w", err)
+		return nil, ErrNoAvailableWeeks
 	}
 	return weeks, nil
 }
 
-func (s *Service) semanticWeekSchemaVersion(ctx context.Context, week string) (string, error) {
-	store, err := s.OpenStoreForWeek(week)
+func (s *Service) discoverAllSemanticWeeks(ctx context.Context) ([]string, error) {
+	store, err := s.OpenStore()
 	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = store.Close()
+	}()
+
+	runDates, err := store.ListRunDates(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list run dates from postgres: %w", err)
+	}
+	metricDates, err := store.ListMetricDates(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list metric dates from postgres: %w", err)
+	}
+
+	weekSet := map[string]struct{}{}
+	for _, dateLabel := range append(append([]string(nil), runDates...), metricDates...) {
+		dateLabel, dateValue, parseErr := normalizeDateLabel(dateLabel)
+		if parseErr != nil {
+			continue
+		}
+		_ = dateLabel
+		weekSet[weekStartForDate(dateValue).Format("2006-01-02")] = struct{}{}
+	}
+	if len(weekSet) == 0 {
+		return nil, nil
+	}
+	weeks := make([]string, 0, len(weekSet))
+	for week := range weekSet {
+		weeks = append(weeks, week)
+	}
+	sort.Strings(weeks)
+	return weeks, nil
+}
+
+func (s *Service) semanticWeekSchemaVersion(ctx context.Context, week string) (string, error) {
+	if s == nil {
+		return "", fmt.Errorf("service is required")
+	}
+	if _, err := s.ensureWeekExists(ctx, week); err != nil {
 		return "", err
 	}
-	weekSchemaVersion, inferErr := failurepatterns.InferStoredWeekSchemaVersion(ctx, store)
-	_ = store.Close()
-	if inferErr != nil {
-		return "", fmt.Errorf("inspect semantic week %s schema version: %w", week, inferErr)
-	}
-	return weekSchemaVersion, nil
+	return failurepatterncontracts.CurrentSchemaVersion, nil
 }
 
 func (s *Service) explainUnavailableWeek(ctx context.Context, week string) error {
@@ -154,19 +157,9 @@ func (s *Service) explainUnavailableWeek(ctx context.Context, week string) error
 	}
 	index := sort.SearchStrings(rawWeeks, week)
 	if index >= len(rawWeeks) || rawWeeks[index] != week {
-		return fmt.Errorf("%w: %s", ErrSemanticWeekNotFound, week)
+		return fmt.Errorf("%w: %s", ErrWeekNotFound, week)
 	}
-	weekSchemaVersion, err := s.semanticWeekSchemaVersion(ctx, week)
-	if err != nil {
-		return err
-	}
-	if err := semanticcontracts.RequireCurrentSchemaVersion(
-		weekSchemaVersion,
-		fmt.Sprintf("semantic week %s", week),
-	); err != nil {
-		return err
-	}
-	return fmt.Errorf("%w: %s", ErrSemanticWeekNotFound, week)
+	return fmt.Errorf("%w: %s", ErrWeekNotFound, week)
 }
 
 func (s *Service) ResolveWeekWindow(ctx context.Context, requestedWeek string, now time.Time) (WeekWindow, error) {
@@ -179,7 +172,7 @@ func (s *Service) ResolveWeekWindow(ctx context.Context, requestedWeek string, n
 	}
 	week, previousWeek, nextWeek, index := ResolveWindow(weeks, strings.TrimSpace(requestedWeek), s.defaultWeek, now.UTC())
 	if strings.TrimSpace(week) == "" {
-		return WeekWindow{}, ErrNoSemanticWeeks
+		return WeekWindow{}, ErrNoAvailableWeeks
 	}
 	return WeekWindow{
 		Weeks:        append([]string(nil), weeks...),
@@ -190,22 +183,13 @@ func (s *Service) ResolveWeekWindow(ctx context.Context, requestedWeek string, n
 	}, nil
 }
 
-func (s *Service) OpenStoreForWeek(week string) (storecontracts.Store, error) {
+func (s *Service) OpenStore() (storecontracts.Store, error) {
 	if s == nil {
 		return nil, fmt.Errorf("service is required")
 	}
-	normalizedWeek, err := postgresstore.NormalizeWeek(week)
+	store, err := postgresstore.New(s.postgresPool, postgresstore.Options{})
 	if err != nil {
-		return nil, fmt.Errorf("invalid semantic week %q: %w", strings.TrimSpace(week), err)
-	}
-	if normalizedWeek == "" {
-		return nil, fmt.Errorf("week is required")
-	}
-	store, err := postgresstore.New(s.postgresPool, postgresstore.Options{
-		Week: normalizedWeek,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("open postgres store for week %q: %w", normalizedWeek, err)
+		return nil, fmt.Errorf("open postgres store: %w", err)
 	}
 	return store, nil
 }
@@ -222,16 +206,17 @@ func (s *Service) BuildHistoryResolverForWeek(
 	if s == nil {
 		return nil, fmt.Errorf("service is required")
 	}
+	store, err := s.OpenStore()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = store.Close()
+	}()
 	return failurepatterns.BuildPresenceResolver(ctx, failurepatterns.BuildPresenceOptions{
-		CurrentWeek:          strings.TrimSpace(week),
-		CurrentSchemaVersion: currentSchemaVersion,
-		LookbackWeeks:        s.historyWeeks,
-		ListWeeks: func(ctx context.Context) ([]string, error) {
-			return s.DiscoverSemanticWeeks(ctx)
-		},
-		OpenStore: func(_ context.Context, week string) (storecontracts.Store, error) {
-			return s.OpenStoreForWeek(week)
-		},
+		Store:         store,
+		AnchorWeek:    strings.TrimSpace(week),
+		LookbackWeeks: s.historyWeeks,
 	})
 }
 
@@ -256,11 +241,9 @@ func (s *Service) ensureWeekExists(ctx context.Context, week string) (string, er
 
 func normalizeFailurePatternsEngine(value string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", FailurePatternsEngineStored:
-		return FailurePatternsEngineStored, nil
-	case FailurePatternsEngineInline:
+	case "", FailurePatternsEngineInline:
 		return FailurePatternsEngineInline, nil
 	default:
-		return "", fmt.Errorf("invalid failure patterns engine %q (expected %s or %s)", strings.TrimSpace(value), FailurePatternsEngineStored, FailurePatternsEngineInline)
+		return "", fmt.Errorf("invalid failure patterns engine %q (expected inline)", strings.TrimSpace(value))
 	}
 }

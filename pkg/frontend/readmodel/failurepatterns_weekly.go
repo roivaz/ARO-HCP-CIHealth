@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"ci-failure-atlas/pkg/failurepatterns"
-	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
+	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 	postgresstore "ci-failure-atlas/pkg/store/postgres"
 )
@@ -76,11 +76,11 @@ func BuildFailurePatternReportData(ctx context.Context, store storecontracts.Sto
 
 	metricWindowStart, metricWindowEnd := failurePatternReportMetricWindowBounds(opts.Week)
 	windowStartRaw, windowEndRaw := failurePatternReportMetricWindowStrings(metricWindowStart, metricWindowEnd)
-	weekData, err := failurepatterns.LoadStoredWeek(ctx, store, failurepatterns.LoadStoredWeekOptions{
-		IncludeRawFailures:     true,
-		RawFailureWindowStart:  metricWindowStart,
-		RawFailureWindowEnd:    metricWindowEnd,
-		RawFailureEnvironments: append([]string(nil), opts.Environments...),
+	weekData, err := failurepatterns.LoadRange(ctx, store, failurepatterns.LoadRangeOptions{
+		Environments:       append([]string(nil), opts.Environments...),
+		StartTime:          metricWindowStart,
+		EndTime:            metricWindowEnd,
+		IncludeRawFailures: true,
 	})
 	if err != nil {
 		return FailurePatternReportData{}, err
@@ -108,9 +108,10 @@ func BuildFailurePatternReportData(ctx context.Context, store storecontracts.Sto
 			lookbackWeeks = DefaultHistoryWeeks
 		}
 		historyResolver, err = failurepatterns.BuildPresenceResolver(ctx, failurepatterns.BuildPresenceOptions{
-			CurrentWeek:          strings.TrimSpace(opts.Week),
-			CurrentSchemaVersion: weekData.WeekSchemaVersion,
-			LookbackWeeks:        lookbackWeeks,
+			Store:         store,
+			AnchorWeek:    strings.TrimSpace(opts.Week),
+			LookbackWeeks: lookbackWeeks,
+			Environments:  targetEnvironments,
 		})
 		if err != nil {
 			return FailurePatternReportData{}, fmt.Errorf("build failure-pattern history resolver: %w", err)
@@ -120,7 +121,7 @@ func BuildFailurePatternReportData(ctx context.Context, store storecontracts.Sto
 	failurePatternRows := failurePatternReportAttachFullErrorSamples(reportRows, failurePatternReportFullErrorExamplesLimit, rawFailuresByRun)
 
 	return FailurePatternReportData{
-		WeekSchemaVersion:              weekData.WeekSchemaVersion,
+		WeekSchemaVersion:              weekData.SchemaVersion,
 		FailurePatternClusters:         failurePatternRows,
 		TargetEnvironments:             append([]string(nil), targetEnvironments...),
 		OverallJobsByEnvironment:       cloneIntMap(overallJobsByEnvironment),
@@ -129,7 +130,7 @@ func BuildFailurePatternReportData(ctx context.Context, store storecontracts.Sto
 		HistoryResolver:                historyResolver,
 		GeneratedAt:                    time.Now().UTC(),
 		TestClusterCountsByEnvironment: cloneIntMap(weekData.TestClusterCountsByEnv),
-		ReviewItemCountsByEnvironment:  cloneIntMap(weekData.ReviewQueueCountsByEnv),
+		ReviewItemCountsByEnvironment:  cloneIntMap(weekData.ReviewItemCountsByEnv),
 	}, nil
 }
 
@@ -183,7 +184,7 @@ func failurePatternReportMetricRunTotalsByEnvironment(
 	return sumMetricByEnvironmentForDates(ctx, store, "run_count", normalizedEnvironments, metricDates)
 }
 
-func toFailurePatternReportClusters(rows []semanticcontracts.FailurePatternRecord) []FailurePatternReportCluster {
+func toFailurePatternReportClusters(rows []failurepatterncontracts.FailurePatternRecord) []FailurePatternReportCluster {
 	out := make([]FailurePatternReportCluster, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, FailurePatternReportCluster{
@@ -205,7 +206,7 @@ func toFailurePatternReportClusters(rows []semanticcontracts.FailurePatternRecor
 	return out
 }
 
-func toFailurePatternReportContributingTests(rows []semanticcontracts.ContributingTestRecord) []FailurePatternReportContributingTest {
+func toFailurePatternReportContributingTests(rows []failurepatterncontracts.ContributingTestRecord) []FailurePatternReportContributingTest {
 	out := make([]FailurePatternReportContributingTest, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, FailurePatternReportContributingTest{
@@ -218,7 +219,7 @@ func toFailurePatternReportContributingTests(rows []semanticcontracts.Contributi
 	return out
 }
 
-func toFailurePatternReportReferences(rows []semanticcontracts.ReferenceRecord) []FailurePatternReportReference {
+func toFailurePatternReportReferences(rows []failurepatterncontracts.ReferenceRecord) []FailurePatternReportReference {
 	out := make([]FailurePatternReportReference, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, FailurePatternReportReference{

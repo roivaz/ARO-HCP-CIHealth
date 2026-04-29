@@ -170,25 +170,12 @@ func (s *Service) resolvePresentationWindow(
 	startTime := time.Date(startValue.Year(), startValue.Month(), startValue.Day(), 0, 0, 0, 0, time.UTC)
 	endInclusive := time.Date(endValue.Year(), endValue.Month(), endValue.Day(), 0, 0, 0, 0, time.UTC)
 	semanticWeeks := intersectingSemanticWeeks(startTime, endInclusive)
-	if len(semanticWeeks) == 0 {
-		return presentationWindow{}, fmt.Errorf("no semantic weeks intersect window %s..%s", startLabel, endLabel)
-	}
-
-	availableWeeks, err := s.DiscoverSemanticWeeks(ctx)
-	if err != nil {
-		return presentationWindow{}, err
-	}
-	loadableWeeks := filterAvailableWeeks(semanticWeeks, availableWeeks)
-	if len(loadableWeeks) == 0 {
-		return presentationWindow{}, s.explainUnavailableWeek(ctx, semanticWeeks[0])
-	}
-	if gap := interiorGap(loadableWeeks); gap != "" {
-		return presentationWindow{}, s.explainUnavailableWeek(ctx, gap)
-	}
-
 	endTime := endInclusive.AddDate(0, 0, 1).UTC()
-
-	signalHorizonWeeks := computeSignalHorizonWeeks(loadableWeeks, availableWeeks, endInclusive)
+	anchorWeek := ""
+	if len(semanticWeeks) > 0 {
+		anchorWeek = semanticWeeks[len(semanticWeeks)-1]
+	}
+	signalHorizonWeeks := computeSignalHorizonWeeks(anchorWeek, endInclusive)
 
 	return presentationWindow{
 		StartDate:          startLabel,
@@ -196,8 +183,8 @@ func (s *Service) resolvePresentationWindow(
 		StartTime:          startTime,
 		EndTime:            endTime,
 		DateLabels:         metricDateLabelsFromWindow(startTime, endTime),
-		SemanticWeeks:      loadableWeeks,
-		AnchorWeek:         loadableWeeks[len(loadableWeeks)-1],
+		SemanticWeeks:      semanticWeeks,
+		AnchorWeek:         anchorWeek,
 		SignalHorizonWeeks: signalHorizonWeeks,
 	}, nil
 }
@@ -257,19 +244,16 @@ func interiorGap(weeks []string) string {
 	return ""
 }
 
-// computeSignalHorizonWeeks returns the set of semantic weeks needed for
-// signal computation. It extends the presentation weeks backwards to cover
-// at least signalHorizonMinWeeks, filtered to weeks that are actually
-// available in the store. Gaps in the signal horizon are tolerated (unlike
-// the presentation window) because partial history is better than none.
-func computeSignalHorizonWeeks(presentationWeeks []string, availableWeeks []string, endInclusive time.Time) []string {
-	if len(presentationWeeks) == 0 {
+// computeSignalHorizonWeeks returns the set of calendar weeks needed for
+// signal computation. It extends the anchor week backwards to cover at least
+// signalHorizonMinWeeks of history and does not depend on stored week tables.
+func computeSignalHorizonWeeks(anchorWeek string, endInclusive time.Time) []string {
+	if strings.TrimSpace(anchorWeek) == "" {
 		return nil
 	}
-	anchorWeek := presentationWeeks[len(presentationWeeks)-1]
 	anchorTime, err := time.Parse("2006-01-02", anchorWeek)
 	if err != nil {
-		return append([]string(nil), presentationWeeks...)
+		return []string{anchorWeek}
 	}
 	horizonStart := anchorTime.UTC().AddDate(0, 0, -(signalHorizonMinWeeks * 7))
 	if !endInclusive.IsZero() {
@@ -279,26 +263,7 @@ func computeSignalHorizonWeeks(presentationWeeks []string, availableWeeks []stri
 			horizonStart = candidate
 		}
 	}
-
-	candidateWeeks := intersectingSemanticWeeks(horizonStart, anchorTime.UTC().AddDate(0, 0, 6))
-	horizonWeeks := filterAvailableWeeks(candidateWeeks, availableWeeks)
-
-	presentationSet := make(map[string]struct{}, len(presentationWeeks))
-	for _, w := range presentationWeeks {
-		presentationSet[w] = struct{}{}
-	}
-	for _, w := range horizonWeeks {
-		if _, exists := presentationSet[w]; !exists {
-			presentationSet[w] = struct{}{}
-		}
-	}
-
-	merged := make([]string, 0, len(presentationSet))
-	for w := range presentationSet {
-		merged = append(merged, w)
-	}
-	sort.Strings(merged)
-	return merged
+	return intersectingSemanticWeeks(horizonStart, anchorTime.UTC().AddDate(0, 0, 6))
 }
 
 func semanticWeekDateRange(week string) (string, string) {
@@ -312,4 +277,20 @@ func semanticWeekDateRange(week string) (string, string) {
 	}
 	startDate = startDate.UTC()
 	return startDate.Format("2006-01-02"), startDate.AddDate(0, 0, 6).Format("2006-01-02")
+}
+
+func semanticWeekTimeRange(week string) (time.Time, time.Time, error) {
+	normalizedWeek, err := normalizeWeekLabel(week)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	if normalizedWeek == "" {
+		return time.Time{}, time.Time{}, fmt.Errorf("week is required")
+	}
+	startDate, err := time.Parse("2006-01-02", normalizedWeek)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	startDate = startDate.UTC()
+	return startDate, startDate.AddDate(0, 0, 7).UTC(), nil
 }

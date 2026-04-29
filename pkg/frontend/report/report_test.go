@@ -22,7 +22,7 @@ func TestGenerateHTMLWithComparisonLinksLaneOutcomeDatesToRunsPage(t *testing.T)
 
 	ctx := context.Background()
 	pool := newWeeklyTestPool(t)
-	store, err := postgresstore.New(pool, postgresstore.Options{Week: "2026-03-16"})
+	store, err := postgresstore.New(pool, postgresstore.Options{})
 	if err != nil {
 		t.Fatalf("open week store: %v", err)
 	}
@@ -30,9 +30,6 @@ func TestGenerateHTMLWithComparisonLinksLaneOutcomeDatesToRunsPage(t *testing.T)
 		_ = store.Close()
 	})
 
-	if err := store.ReplaceMaterializedWeek(ctx, storecontracts.MaterializedWeek{}); err != nil {
-		t.Fatalf("seed empty materialized week: %v", err)
-	}
 	if err := store.UpsertMetricsDaily(ctx, []storecontracts.MetricDailyRecord{
 		{Environment: "dev", Date: "2026-03-16", Metric: "run_count", Value: 10},
 		{Environment: "dev", Date: "2026-03-16", Metric: "run_success_count", Value: 7},

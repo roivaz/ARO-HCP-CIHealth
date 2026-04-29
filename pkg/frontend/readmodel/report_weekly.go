@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"ci-failure-atlas/pkg/failurepatterns"
-	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
+	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
 	sourceoptions "ci-failure-atlas/pkg/source/options"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 )
@@ -180,18 +180,18 @@ func BuildWeeklyReportData(
 
 	currentStart := opts.StartDate.UTC()
 	currentEnd := currentStart.AddDate(0, 0, weeklyWindowDays)
-	currentWeekData, err := failurepatterns.LoadStoredWeek(ctx, store, failurepatterns.LoadStoredWeekOptions{
-		IncludeRawFailures:     true,
-		RawFailureWindowStart:  currentStart,
-		RawFailureWindowEnd:    currentEnd,
-		RawFailureEnvironments: append([]string(nil), weeklyReportEnvironments...),
+	currentWeekData, err := failurepatterns.LoadRange(ctx, store, failurepatterns.LoadRangeOptions{
+		Environments:       append([]string(nil), weeklyReportEnvironments...),
+		StartTime:          currentStart,
+		EndTime:            currentEnd,
+		IncludeRawFailures: true,
 	})
 	if err != nil {
-		return WeeklyReportData{}, fmt.Errorf("load current semantic inputs: %w", err)
+		return WeeklyReportData{}, fmt.Errorf("load current failure-pattern inputs: %w", err)
 	}
 	currentSemantic, err := loadSemanticSnapshot(currentWeekData)
 	if err != nil {
-		return WeeklyReportData{}, fmt.Errorf("load current semantic week: %w", err)
+		return WeeklyReportData{}, fmt.Errorf("load current failure-pattern range: %w", err)
 	}
 	loadSignatureFullErrorSamplesByEnvironment(
 		currentDates,
@@ -215,20 +215,17 @@ func BuildWeeklyReportData(
 
 	var previousSemantic semanticSnapshot
 	if previousSemanticStore != nil {
-		previousWeekData, loadErr := failurepatterns.LoadStoredWeek(ctx, previousSemanticStore, failurepatterns.LoadStoredWeekOptions{})
+		previousWeekData, loadErr := failurepatterns.LoadRange(ctx, previousSemanticStore, failurepatterns.LoadRangeOptions{
+			Environments: append([]string(nil), weeklyReportEnvironments...),
+			StartTime:    previousStart,
+			EndTime:      currentStart,
+		})
 		if loadErr != nil {
-			return WeeklyReportData{}, fmt.Errorf("load previous semantic inputs: %w", loadErr)
-		}
-		if err := semanticcontracts.RequireCompatibleWeekSchemas(
-			currentWeekData.WeekSchemaVersion,
-			previousWeekData.WeekSchemaVersion,
-			"weekly report comparison",
-		); err != nil {
-			return WeeklyReportData{}, err
+			return WeeklyReportData{}, fmt.Errorf("load previous failure-pattern inputs: %w", loadErr)
 		}
 		previousSemantic, err = loadSemanticSnapshot(previousWeekData)
 		if err != nil {
-			return WeeklyReportData{}, fmt.Errorf("load previous semantic week: %w", err)
+			return WeeklyReportData{}, fmt.Errorf("load previous failure-pattern range: %w", err)
 		}
 	}
 
@@ -239,9 +236,10 @@ func BuildWeeklyReportData(
 			lookbackWeeks = DefaultHistoryWeeks
 		}
 		historyResolver, err = failurepatterns.BuildPresenceResolver(ctx, failurepatterns.BuildPresenceOptions{
-			CurrentWeek:          strings.TrimSpace(opts.Week),
-			CurrentSchemaVersion: currentWeekData.WeekSchemaVersion,
-			LookbackWeeks:        lookbackWeeks,
+			Store:         store,
+			AnchorWeek:    strings.TrimSpace(opts.Week),
+			LookbackWeeks: lookbackWeeks,
+			Environments:  append([]string(nil), weeklyReportEnvironments...),
 		})
 		if err != nil {
 			return WeeklyReportData{}, fmt.Errorf("build signature history resolver: %w", err)
@@ -333,7 +331,7 @@ func loadMetricsDailyByEnvironmentDate(
 	return out, nil
 }
 
-func loadSemanticSnapshot(weekData failurepatterns.StoredWeekData) (semanticSnapshot, error) {
+func loadSemanticSnapshot(weekData failurepatterns.RangeData) (semanticSnapshot, error) {
 	out := semanticSnapshot{
 		ByEnvironment:                    map[string]semanticEnvSummary{},
 		ClusterSignaturesByEnv:           map[string][]topSignature{},
@@ -473,7 +471,7 @@ func loadSemanticSnapshot(weekData failurepatterns.StoredWeekData) (semanticSnap
 		out.ByEnvironment[environment] = summary
 	}
 
-	for _, row := range weekData.ReviewQueue {
+	for _, row := range weekData.ReviewItems {
 		environment := normalizeReportEnvironment(row.Environment)
 		if environment == "" {
 			continue
@@ -844,7 +842,7 @@ func sortTopSignatures(rows []topSignature) {
 	})
 }
 
-func topSignaturesFromFailurePatternClusters(rows []semanticcontracts.FailurePatternRecord) []topSignature {
+func topSignaturesFromFailurePatternClusters(rows []failurepatterncontracts.FailurePatternRecord) []topSignature {
 	out := make([]topSignature, 0, len(rows))
 	for _, row := range rows {
 		environment := normalizeReportEnvironment(row.Environment)
@@ -891,7 +889,7 @@ func topSignaturesFromFailurePatternClusters(rows []semanticcontracts.FailurePat
 	return out
 }
 
-func toFailurePatternRunReferences(rows []semanticcontracts.ReferenceRecord) []RunReference {
+func toFailurePatternRunReferences(rows []failurepatterncontracts.ReferenceRecord) []RunReference {
 	out := make([]RunReference, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, RunReference{
@@ -904,7 +902,7 @@ func toFailurePatternRunReferences(rows []semanticcontracts.ReferenceRecord) []R
 	return out
 }
 
-func toFailurePatternContributingTests(rows []semanticcontracts.ContributingTestRecord) []ContributingTest {
+func toFailurePatternContributingTests(rows []failurepatterncontracts.ContributingTestRecord) []ContributingTest {
 	out := make([]ContributingTest, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, ContributingTest{
@@ -1026,7 +1024,7 @@ func mergePhraseReferenceKeys(
 	byEnvironment map[string]map[string]map[string]struct{},
 	environment string,
 	phrase string,
-	references []semanticcontracts.ReferenceRecord,
+	references []failurepatterncontracts.ReferenceRecord,
 ) {
 	if byEnvironment == nil {
 		return

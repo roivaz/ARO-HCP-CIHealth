@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
+	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 )
 
@@ -37,9 +37,9 @@ func normalizeWeekLabel(value string) (string, error) {
 	return parsed.UTC().Format("2006-01-02"), nil
 }
 
-func primaryContributingTest(rows []semanticcontracts.ContributingTestRecord) semanticcontracts.ContributingTestRecord {
+func primaryContributingTest(rows []failurepatterncontracts.ContributingTestRecord) failurepatterncontracts.ContributingTestRecord {
 	if len(rows) == 0 {
-		return semanticcontracts.ContributingTestRecord{}
+		return failurepatterncontracts.ContributingTestRecord{}
 	}
 	best := rows[0]
 	for _, row := range rows[1:] {

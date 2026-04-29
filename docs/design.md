@@ -5,7 +5,7 @@ Last updated: 2026-04-19
 
 ## Purpose
 
-CI Failure Atlas ingests CI run/failure data, materializes semantic failure clusters by week, and serves operator-facing report, failure-patterns, run-log, and review workflows.
+CI Failure Atlas ingests CI run/failure data, derives failure patterns inline from stored facts over arbitrary UTC windows, and serves operator-facing report, failure-patterns, run-log, and review workflows.
 
 The important architectural point is that the Go app + PostgreSQL runtime is the current architecture, not a future target state.
 
@@ -18,10 +18,10 @@ The runtime has three main planes:
    - Main entrypoint: `cfa run`
    - Supporting debug helpers: `cfa run-once`, `cfa sync-once`
 
-2. **Semantic materialization**
-   - Builds one semantic week from facts already stored in PostgreSQL.
-   - Main entrypoint: `cfa semantic materialize`
-   - Phase1 and phase2 execute in memory; the stored week contains phase2 failure patterns plus the review queue.
+2. **Inline failure-pattern engine**
+   - Loads fact rows from PostgreSQL for the requested UTC time range.
+   - Extracts row-level failure patterns and aggregates them deterministically in memory.
+   - Computes history and review signals from fact-backed lookback windows instead of stored semantic-week snapshots.
    - Legacy Phase3 link tables may still exist, but the runtime no longer reapplies them in read models.
 
 3. **Product surfaces**
@@ -39,11 +39,10 @@ The architecture maps to the repository roughly like this:
   - `pkg/run`
   - `pkg/controllers`
   - `pkg/source`
-- Semantic materialization and read models:
-  - `pkg/semantic/engine`
-  - `pkg/semantic/workflow`
-  - `pkg/semantic/query`
-  - `pkg/semantic/history`
+- Failure-pattern extraction and range loading:
+  - `pkg/failurepatterns`
+  - `pkg/failurepatterns/extractor`
+  - `pkg/failurepatterns/window`
 - Product-facing HTTP, read-model, and HTML surfaces:
   - `pkg/frontend`
   - `pkg/frontend/readmodel`
@@ -59,54 +58,48 @@ The architecture maps to the repository roughly like this:
   - `Dockerfile`
   - `infra/azure/`
 
-## Semantic Week Contract
+## Week Compatibility Contract
 
-The semantic partitioning contract is explicit:
+The public week contract is now a compatibility layer, not a persisted storage model:
 
-- one stored semantic partition equals one UTC week
-- a week is keyed by a Monday-starting `YYYY-MM-DD`
-- materialization replaces the full stored week, not partial per-environment slices
-- supported environments are materialized together
-- history/navigation in the app is composed from these stored weeks
+- a week is still keyed by a Monday-starting `YYYY-MM-DD`
+- week-shaped routes and CLI flags expand to concrete UTC `[start_date, end_date]` windows
+- history and navigation still reason in calendar-week units where that improves presentation
+- no stored semantic-week snapshot is required to serve report, failure-patterns, run-log, or review APIs
 
-This avoids the old ambiguity around ad hoc semantic subdirectories or free-form persisted windows.
+## Inline Failure-Pattern Model
 
-## Semantic Materialization Model
+The active workflow is:
 
-The semantic workflow is logically split into two runtime phases plus one diagnostic output:
+1. **Fact loading**
+   - Read `RunRecord`, `RawFailureRecord`, and metric rows from PostgreSQL for the requested UTC range.
+   - Expand week-shaped requests into date windows before data loading.
 
-1. **Phase1: enrichment, extraction, and test-scoped clustering**
-   - Read fact tables from PostgreSQL for the requested week window.
-   - Build enriched failure rows with lane/test/run/PR context.
-   - Extract `failure_pattern` text and a search-query phrase from raw failure text.
-   - Classify failures into deterministic test-scoped clusters.
+2. **Row-level extraction and deterministic aggregation**
+   - Extract `failure_pattern` text and a search-query phrase per raw failure row.
+   - Aggregate rows into environment-scoped failure patterns in memory.
+   - Derive references, contributing tests, impact, seen-in, and sampling data from the loaded facts.
 
-2. **Phase2: environment-scoped merge**
-   - Merge phase1 test clusters into cross-test failure patterns.
-   - Produce the stored failure-pattern rows used by report/failure-patterns/run-log.
-   - Emit review items when heuristics detect an ambiguous merge or extraction outcome.
+3. **History and review diagnostics**
+   - Compute prior-week presence and lookback signals from fact-backed history windows.
+   - Emit review items as diagnostic output for extraction/merge quality, not as persisted semantic truth.
+   - Improvements happen by changing extraction or merge logic and rerunning against the same facts.
 
-3. **Review queue and diagnostics**
-   - Review items are quality-improvement hints, not a source of semantic truth.
-   - The runtime exposes them through an internal JSON endpoint for agent/operator analysis.
-   - Improvements happen by changing extraction or merge logic and rematerializing affected weeks.
+For the detailed historical background and terminology drift, see `docs/semantic-materialization.md`.
 
-For the detailed workflow and invariants, see `docs/semantic-materialization.md`.
+## Failure-Pattern Identity V2
 
-## Semantic Identity V2
-
-The current semantic contract is schema version `v2`.
+The current failure-pattern contract is schema version `v2`.
 
 Key rules:
 
-- semantic identity is driven by extracted `failure_pattern` text, not by the raw `signature_id`
+- failure-pattern identity is driven by extracted `failure_pattern` text, not by the raw `signature_id`
 - `signature_id` is still retained as provenance/debug context and as one possible search pivot
-- durable raw-to-semantic joins use stored row/run anchors, especially `(environment, run_url, row_id)`
-- materialized weeks carry an explicit `schema_version`
-- window/history composition only combines schema-compatible weeks
-- the app only loads current-schema weeks; legacy `v1` weeks must be rematerialized/backfilled before they reappear in weekly navigation or cross-week operator views
+- durable raw-to-failure-pattern joins use row/run anchors, especially `(environment, run_url, row_id)`
+- inline loads carry an explicit `schema_version`
+- history/window composition only combines schema-compatible ranges
 
-This matters because semantic quality problems now tend to fall into three classes:
+This matters because failure-pattern quality problems now tend to fall into three classes:
 
 - extraction is too generic, so distinct failures overmerge
 - extraction is too noisy or instance-specific, so identical failures undermerge
@@ -114,9 +107,9 @@ This matters because semantic quality problems now tend to fall into three class
 
 ## Terminology And Search Notes
 
-User-facing docs and UI now use "failure patterns" and "run log" for the operator surfaces layered on top of semantic weeks.
+User-facing docs and UI now use "failure patterns" and "run log" for the operator surfaces layered on top of fact-backed windows.
 
-Some internal files, symbols, or helper names may still retain phase-oriented terminology such as `global` or `signature` where they describe the semantic pipeline itself. That does not usually indicate a different product surface. When searching the repo, check both the user-facing and semantic terms unless you are specifically working on phase2 failure-pattern merge semantics.
+Some internal files, symbols, or helper names may still retain phase-oriented terminology such as `global`, `signature`, or `semantic` from the removed weekly materialization pipeline. That does not usually indicate a different product surface. When searching the repo, check both the user-facing and legacy terms unless you are specifically working on failure-pattern merge semantics.
 
 ## UI Terminology
 
@@ -166,7 +159,7 @@ PostgreSQL is the active runtime store behind `pkg/store/contracts` and `pkg/sto
 The current persisted model is:
 
 - facts/state tables such as `cfa_runs`, `cfa_raw_failures`, `cfa_metrics_daily`, and related checkpoints/metadata
-- semantic week tables for:
+- legacy semantic tables that may still exist in PostgreSQL but are no longer used by the active runtime:
   - `cfa_sem_global_clusters`
   - `cfa_sem_review_queue`
 - older schemas created legacy Phase3 tables that current migrations now drop:
@@ -176,28 +169,29 @@ The current persisted model is:
 
 Important persistence rule:
 
-- `ReplaceMaterializedWeek` deletes and replaces the phase2 failure-pattern rows plus review queue rows for the target week
-- read models load the stored week directly; legacy Phase3 rows are ignored by the runtime
+- the active runtime persists facts, checkpoints, and test metadata only
+- read models derive failure patterns and review signals inline from the fact tables
+- legacy semantic/Phase3 rows are ignored by the runtime
 
 NDJSON is no longer part of the runtime architecture. It remains only as a legacy import format for `cfa migrate import-legacy-data`.
 
 ## Presentation Windows
 
-User-facing report surfaces resolve a presentation window independently from the persisted semantic partitioning:
+User-facing report surfaces resolve a presentation window independently from the underlying fact storage:
 
 - `/report` accepts either `week=YYYY-MM-DD` or `start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`
 - `/` redirects to a rolling 7-day `/report` window
 - `/failure-patterns` and `/run-log` use the same shared window resolver for navigation and range normalization
 
-The important invariant is that this does **not** change semantic storage:
+The important invariant is that this does **not** change the underlying fact store:
 
-- weekly semantic materialization remains the only canonical persisted semantic partition
-- the app loads every stored semantic week that intersects the requested UTC date window
+- the app expands week-shaped requests into explicit UTC date windows
+- the app loads fact rows directly for the requested window and lookback horizon
 - cross-week operator views are composed in memory at query/render time
 
-Identity across weeks follows explicit rules:
+Identity across windows follows explicit rules:
 
-- use the environment plus extracted semantic text/search query from the stored phase2 rows
+- use the environment plus extracted failure-pattern text/search query from the inline aggregated rows
 - never treat `signature_id` alone as semantic identity
 
 The field contract also stays explicit:
@@ -211,7 +205,7 @@ Local operation defaults to embedded PostgreSQL with initialization and migratio
 
 In practice:
 
-- `cfa run`, `cfa semantic materialize`, and `cfa app` all operate against PostgreSQL
+- `cfa run` and `cfa app` operate against PostgreSQL
 - embedded Postgres is the default local transport
 - switching to remote PostgreSQL is a configuration detail via `--storage.postgres.*`, not a different runtime model
 
@@ -225,7 +219,7 @@ In practice:
 - failure-patterns view
 - day-scoped run history view (`/run-log`, `/api/run-log/day`)
 - internal review-signals endpoint (`/api/review/signals/week`)
-- cross-week history lookups based on stored semantic weeks
+- cross-week history lookups based on fact-backed lookback windows
 
 ### Day run history view and current fact gap
 
@@ -233,7 +227,7 @@ The run-history surface is intentionally day-scoped and run-centric:
 
 - it loads the requested UTC day of `RunRecord` + `RawFailureRecord` facts
 - resolves the requested day through the shared presentation-window rules used by the other report surfaces
-- enriches each raw failure row by matching its stored anchors against the contributing semantic clusters for that day
+- enriches each raw failure row by matching it against the contributing inline failure patterns for that day
 
 This gives a Prow-like operator view, but it is not yet a full Prow-history data model.
 
@@ -253,14 +247,13 @@ The remaining Azure Storage publishing step is intentionally narrow:
 - upload that redirect page to the storage account's static website container
 - hand users off to the hosted app URL
 
-It is not part of semantic materialization or report rendering; it only preserves an existing access path while hosted operation is being hardened.
+It is not part of failure-pattern generation or report rendering; it only preserves an existing access path while hosted operation is being hardened.
 
 ## Current Command Surface
 
 Primary commands:
 
 - `cfa run`
-- `cfa semantic materialize`
 - `cfa app`
 
 Secondary maintenance/debug commands:
@@ -274,17 +267,17 @@ Secondary maintenance/debug commands:
 1. **App + DB is the primary runtime**
    - Report, failure-patterns, run-log, and diagnostics all read from PostgreSQL-backed state.
 
-2. **Semantic weeks are canonical**
-   - The UI, materialization contract, and storage schema all agree on Monday-starting week partitions.
+2. **Week semantics are compatibility-only**
+   - The UI and APIs may still present Monday-starting week labels, but the runtime loads concrete date windows from fact tables.
 
-3. **Semantic identity is text-first**
+3. **Failure-pattern identity is text-first**
    - Extracted failure-pattern text drives merge semantics; `signature_id` remains provenance only.
 
-4. **Only phase2 user-facing outputs are persisted by default**
-   - Phase1 internals remain in memory unless future debugging needs justify additional persistence.
+4. **Derived outputs are computed inline**
+   - Failure patterns, history signals, and review rows are recomputed from facts for the requested range instead of being persisted as weekly snapshots.
 
 5. **Review queue drives improvement loops**
-   - Semantic quality is improved by inspecting review signals, refining phase1/2 behavior, and rematerializing weeks.
+   - Failure-pattern quality is improved by inspecting review signals and refining extraction/merge behavior against the same fact inputs.
 
 6. **Storage-account publishing is redirect-only compatibility**
    - It preserves an existing entrypoint without duplicating the report surface outside the live app.
@@ -294,7 +287,7 @@ Secondary maintenance/debug commands:
 For a new coding session, the default validation loop is:
 
 - `make check` for broad repo validation
-- `go test ./pkg/semantic/...` for semantic/materialization work
+- `go test ./pkg/failurepatterns/...` for extraction, merge, or history-window work
 - `go test ./pkg/frontend/...` for app/report work
 - `go test ./pkg/store/postgres/...` for store or migration work
 
@@ -308,8 +301,8 @@ That work includes:
 
 - deploying the Go app in a hosted environment
 - running against managed PostgreSQL
-- scheduling controllers and semantic materialization/backfill
+- scheduling controllers and other fact-producing maintenance flows
 - adding auth, deployment automation, backups, and runbooks
 - operating the storage-account redirect and hosted app path together until the redirect is no longer needed
 
-The architecture refactor is largely complete; the next work is operationalization and continuous semantic-quality improvement.
+The architecture refactor is largely complete; the next work is operationalization and continuous failure-pattern quality improvement.

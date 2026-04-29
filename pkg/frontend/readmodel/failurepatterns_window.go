@@ -9,7 +9,7 @@ import (
 
 	"ci-failure-atlas/pkg/failurepatterns"
 	failurepatternwindow "ci-failure-atlas/pkg/failurepatterns/window"
-	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
+	sourceoptions "ci-failure-atlas/pkg/source/options"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 )
 
@@ -81,17 +81,6 @@ type FailurePatternsRow struct {
 	MergeKey                string                                 `json:"-"`
 }
 
-type failurePatternsScope struct {
-	StartDate         string
-	EndDate           string
-	StartTime         time.Time
-	EndTime           time.Time
-	ResolvedWeek      string
-	SemanticWeekStart time.Time
-	SemanticWeekEnd   time.Time
-	DateLabels        []string
-}
-
 type failurePatternsEnvironmentFacts = failurepatternwindow.EnvironmentFacts
 
 type failurePatternsMatch struct {
@@ -116,190 +105,7 @@ func (s *Service) BuildFailurePatterns(ctx context.Context, query FailurePattern
 		return FailurePatternsData{}, err
 	}
 	requestedEnvironments := normalizeStringSlice(query.Environments)
-
-	if s.FailurePatternsEngine() == FailurePatternsEngineInline {
-		return s.buildFailurePatternsInline(ctx, query, scope, requestedEnvironments)
-	}
-	return s.buildFailurePatternsStored(ctx, query, scope, requestedEnvironments)
-}
-
-func (s *Service) buildFailurePatternsStored(
-	ctx context.Context,
-	query FailurePatternsQuery,
-	scope presentationWindow,
-	requestedEnvironments []string,
-) (FailurePatternsData, error) {
-
-	allWeeks := scope.SignalHorizonWeeks
-	if len(allWeeks) == 0 {
-		allWeeks = scope.SemanticWeeks
-	}
-	presentationWeekSet := make(map[string]struct{}, len(scope.SemanticWeeks))
-	for _, w := range scope.SemanticWeeks {
-		presentationWeekSet[w] = struct{}{}
-	}
-
-	weeklyDataByWeek := make(map[string]FailurePatternReportData, len(allWeeks))
-	targetEnvironmentSet := map[string]struct{}{}
-	windowSchemaVersion := ""
-	for _, week := range allWeeks {
-		store, err := s.OpenStoreForWeek(week)
-		if err != nil {
-			return FailurePatternsData{}, err
-		}
-		weeklyData, err := BuildFailurePatternReportData(ctx, store, FailurePatternReportBuildOptions{
-			Week:         week,
-			Environments: requestedEnvironments,
-		})
-		if err == nil {
-			err = semanticcontracts.RequireCompatibleWeekSchemas(
-				windowSchemaVersion,
-				weeklyData.WeekSchemaVersion,
-				fmt.Sprintf("failure-pattern window %s..%s", scope.StartDate, scope.EndDate),
-			)
-		}
-		if err == nil && strings.TrimSpace(windowSchemaVersion) == "" {
-			windowSchemaVersion = weeklyData.WeekSchemaVersion
-		}
-		_ = store.Close()
-		if err != nil {
-			return FailurePatternsData{}, fmt.Errorf("build weekly failure-pattern data for window week %s: %w", week, err)
-		}
-		weeklyDataByWeek[week] = weeklyData
-		if _, inPresentation := presentationWeekSet[week]; !inPresentation {
-			continue
-		}
-		if len(requestedEnvironments) > 0 {
-			for _, environment := range requestedEnvironments {
-				targetEnvironmentSet[environment] = struct{}{}
-			}
-			continue
-		}
-		for _, environment := range weeklyData.TargetEnvironments {
-			targetEnvironmentSet[normalizeEnvironment(environment)] = struct{}{}
-		}
-	}
-
-	anchorWeek := scope.AnchorWeek
-	anchorSchemaVersion := windowSchemaVersion
-	if data, ok := weeklyDataByWeek[anchorWeek]; ok {
-		anchorSchemaVersion = data.WeekSchemaVersion
-	}
-	historyResolver, err := s.BuildHistoryResolverForWeek(ctx, anchorWeek, anchorSchemaVersion)
-	if err != nil {
-		return FailurePatternsData{}, fmt.Errorf("build signal-horizon history resolver: %w", err)
-	}
-
-	signalHorizonRefs := buildSignalHorizonReferences(allWeeks, weeklyDataByWeek)
-	trendDays := presentationTrendDays(scope.StartTime, scope.EndTime)
-	trendEndAnchor := scope.EndTime.Add(-time.Nanosecond)
-
-	targetEnvironments := sortedStringSet(targetEnvironmentSet)
-	if len(targetEnvironments) == 0 {
-		targetEnvironments = append([]string(nil), requestedEnvironments...)
-	}
-
-	factsStore, err := s.OpenStoreForWeek(scope.AnchorWeek)
-	if err != nil {
-		return FailurePatternsData{}, err
-	}
-	defer func() {
-		_ = factsStore.Close()
-	}()
-
-	factsByEnvironment, err := loadFailurePatternsFacts(ctx, factsStore, targetEnvironments, scope)
-	if err != nil {
-		return FailurePatternsData{}, err
-	}
-	metricRunTotals, err := failurePatternReportMetricRunTotalsByEnvironment(
-		ctx,
-		factsStore,
-		targetEnvironments,
-		scope.StartTime,
-		scope.EndTime,
-	)
-	if err != nil {
-		return FailurePatternsData{}, fmt.Errorf("load failure-pattern metric run totals: %w", err)
-	}
-
-	rowsByEnvironment := make(map[string]map[string]FailurePatternsRow, len(targetEnvironments))
-	for _, week := range scope.SemanticWeeks {
-		weeklyData := weeklyDataByWeek[week]
-		trendAnchor := failurePatternsTrendAnchor(week)
-		for _, cluster := range weeklyData.FailurePatternClusters {
-			environment := normalizeEnvironment(cluster.Environment)
-			if environment == "" {
-				continue
-			}
-			facts := failurePatternsFactsForWeek(factsByEnvironment[environment], week)
-			row, ok := buildFailurePatternsRow(cluster, facts, historyResolver, trendAnchor, week)
-			if !ok {
-				continue
-			}
-			if rowsByEnvironment[environment] == nil {
-				rowsByEnvironment[environment] = map[string]FailurePatternsRow{}
-			}
-			existing, exists := rowsByEnvironment[environment][row.MergeKey]
-			if !exists {
-				rowsByEnvironment[environment][row.MergeKey] = cloneFailurePatternsRow(row)
-				continue
-			}
-			rowsByEnvironment[environment][row.MergeKey] = mergeFailurePatternsRows(existing, row, facts.RunsByURL)
-		}
-	}
-
-	for environment, rowMap := range rowsByEnvironment {
-		for mergeKey, row := range rowMap {
-			enriched := enrichRowFromSignalHorizon(row, signalHorizonRefs, trendEndAnchor, trendDays)
-			rowMap[mergeKey] = enriched
-			_ = environment
-		}
-	}
-
-	finalRowsByEnvironment := make(map[string][]FailurePatternsRow, len(rowsByEnvironment))
-	phraseEnvironments := map[string]map[string]struct{}{}
-	for _, environment := range targetEnvironments {
-		rowMap := rowsByEnvironment[environment]
-		rows := make([]FailurePatternsRow, 0, len(rowMap))
-		for _, row := range rowMap {
-			rows = append(rows, row)
-			collectWindowedPhraseEnvironments(row, phraseEnvironments)
-		}
-		finalRowsByEnvironment[environment] = rows
-	}
-
-	generatedAt := query.GeneratedAt
-	if generatedAt.IsZero() {
-		generatedAt = time.Now().UTC()
-	}
-
-	environments := make([]FailurePatternsEnvironment, 0, len(targetEnvironments))
-	for _, environment := range targetEnvironments {
-		rows := applyWindowedSeenIn(finalRowsByEnvironment[environment], phraseEnvironments, environment)
-		totalRuns := metricRunTotals[environment]
-		if totalRuns <= 0 {
-			totalRuns = len(factsByEnvironment[environment].RunsByURL)
-		}
-		rows = applyWindowedImpact(rows, totalRuns)
-		sortFailurePatternsRows(rows)
-		environments = append(environments, FailurePatternsEnvironment{
-			Environment: environment,
-			Summary:     buildFailurePatternsSummary(factsByEnvironment[environment], rows, totalRuns),
-			Rows:        rows,
-		})
-	}
-
-	return FailurePatternsData{
-		Meta: FailurePatternsMeta{
-			StartDate:    scope.StartDate,
-			EndDate:      scope.EndDate,
-			AnchorWeek:   scope.AnchorWeek,
-			Timezone:     "UTC",
-			GeneratedAt:  generatedAt.UTC().Format(time.RFC3339),
-			Environments: append([]string(nil), targetEnvironments...),
-		},
-		Environments: environments,
-	}, nil
+	return s.buildFailurePatternsInline(ctx, query, scope, requestedEnvironments)
 }
 
 func (s *Service) buildFailurePatternsInline(
@@ -308,12 +114,9 @@ func (s *Service) buildFailurePatternsInline(
 	scope presentationWindow,
 	requestedEnvironments []string,
 ) (FailurePatternsData, error) {
-	targetEnvironments, err := s.resolveFailurePatternsTargetEnvironments(ctx, requestedEnvironments, scope.SemanticWeeks)
-	if err != nil {
-		return FailurePatternsData{}, err
-	}
+	targetEnvironments := s.resolveFailurePatternsTargetEnvironments(requestedEnvironments)
 
-	factsStore, err := s.OpenStoreForWeek(scope.AnchorWeek)
+	factsStore, err := s.OpenStore()
 	if err != nil {
 		return FailurePatternsData{}, err
 	}
@@ -349,11 +152,7 @@ func (s *Service) buildFailurePatternsInline(
 		}
 	}
 
-	anchorSchemaVersion, err := failurepatterns.InferStoredWeekSchemaVersion(ctx, factsStore)
-	if err != nil {
-		return FailurePatternsData{}, fmt.Errorf("infer anchor week schema version: %w", err)
-	}
-	historyResolver, err := s.BuildHistoryResolverForWeek(ctx, scope.AnchorWeek, anchorSchemaVersion)
+	historyResolver, err := s.BuildHistoryResolverForWeek(ctx, scope.AnchorWeek, "")
 	if err != nil {
 		return FailurePatternsData{}, fmt.Errorf("build signal-horizon history resolver: %w", err)
 	}
@@ -403,8 +202,13 @@ func (s *Service) buildFailurePatternsInline(
 		generatedAt = time.Now().UTC()
 	}
 
-	environments := make([]FailurePatternsEnvironment, 0, len(targetEnvironments))
-	for _, environment := range targetEnvironments {
+	finalEnvironments := targetEnvironments
+	if len(requestedEnvironments) == 0 {
+		finalEnvironments = availableFailurePatternEnvironments(targetEnvironments, currentResult, currentClusters)
+	}
+
+	environments := make([]FailurePatternsEnvironment, 0, len(finalEnvironments))
+	for _, environment := range finalEnvironments {
 		rows := applyWindowedSeenIn(rowsByEnvironment[environment], phraseEnvironments, environment)
 		totalRuns := metricRunTotals[environment]
 		if totalRuns <= 0 {
@@ -426,40 +230,19 @@ func (s *Service) buildFailurePatternsInline(
 			AnchorWeek:   scope.AnchorWeek,
 			Timezone:     "UTC",
 			GeneratedAt:  generatedAt.UTC().Format(time.RFC3339),
-			Environments: append([]string(nil), targetEnvironments...),
+			Environments: append([]string(nil), finalEnvironments...),
 		},
 		Environments: environments,
 	}, nil
 }
 
 func (s *Service) resolveFailurePatternsTargetEnvironments(
-	ctx context.Context,
 	requestedEnvironments []string,
-	presentationWeeks []string,
-) ([]string, error) {
+) []string {
 	if len(requestedEnvironments) > 0 {
-		return append([]string(nil), requestedEnvironments...), nil
+		return append([]string(nil), requestedEnvironments...)
 	}
-	environmentSet := map[string]struct{}{}
-	for _, week := range presentationWeeks {
-		store, err := s.OpenStoreForWeek(week)
-		if err != nil {
-			return nil, err
-		}
-		summary, summaryErr := store.GetSemanticWeekSummary(ctx)
-		_ = store.Close()
-		if summaryErr != nil {
-			return nil, fmt.Errorf("load semantic week summary for %s: %w", week, summaryErr)
-		}
-		for _, environment := range summary.AvailableEnvironments {
-			normalizedEnvironment := normalizeEnvironment(environment)
-			if normalizedEnvironment == "" {
-				continue
-			}
-			environmentSet[normalizedEnvironment] = struct{}{}
-		}
-	}
-	return sortedStringSet(environmentSet), nil
+	return normalizeStringSlice(sourceoptions.SupportedEnvironments())
 }
 
 func failurePatternsHorizonStart(scope presentationWindow) time.Time {
@@ -569,6 +352,36 @@ func buildInlineFailurePatternsSummary(
 	}
 }
 
+func availableFailurePatternEnvironments(
+	targetEnvironments []string,
+	result failurepatternwindow.FailurePatternWindowResult,
+	clusters []FailurePatternReportCluster,
+) []string {
+	set := map[string]struct{}{}
+	for _, environment := range targetEnvironments {
+		if result.Diagnostics.RunsByEnvironment[environment] > 0 ||
+			result.Diagnostics.RawFailuresByEnvironment[environment] > 0 ||
+			result.Diagnostics.FailedRunsByEnvironment[environment] > 0 {
+			set[environment] = struct{}{}
+		}
+	}
+	for _, cluster := range clusters {
+		environment := normalizeEnvironment(cluster.Environment)
+		if environment != "" {
+			set[environment] = struct{}{}
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for environment := range set {
+		out = append(out, environment)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func buildSignalHorizonReferencesForClusters(
 	clusters []FailurePatternReportCluster,
 ) signalHorizonRefSet {
@@ -654,78 +467,6 @@ func inlineFailurePatternSamples(
 		}
 	}
 	return samples
-}
-
-func resolveFailurePatternsScope(query FailurePatternsQuery) (failurePatternsScope, error) {
-	startLabel, startDate, err := normalizeDateLabel(query.StartDate)
-	if err != nil {
-		return failurePatternsScope{}, fmt.Errorf("invalid start_date: %w", err)
-	}
-	endLabel, endDate, err := normalizeDateLabel(query.EndDate)
-	if err != nil {
-		return failurePatternsScope{}, fmt.Errorf("invalid end_date: %w", err)
-	}
-	startTime := time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, time.UTC)
-	endInclusive := time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 0, 0, 0, 0, time.UTC)
-	if endInclusive.Before(startTime) {
-		return failurePatternsScope{}, fmt.Errorf("end_date %s must be on or after start_date %s", endLabel, startLabel)
-	}
-	endTime := endInclusive.AddDate(0, 0, 1).UTC()
-
-	resolvedWeek, err := resolveFailurePatternsWeekLabel(startTime, endInclusive, query.Week)
-	if err != nil {
-		return failurePatternsScope{}, err
-	}
-	semanticWeekStart, err := time.Parse("2006-01-02", resolvedWeek)
-	if err != nil {
-		return failurePatternsScope{}, fmt.Errorf("parse resolved week %q: %w", resolvedWeek, err)
-	}
-	semanticWeekStart = semanticWeekStart.UTC()
-	semanticWeekEnd := semanticWeekStart.AddDate(0, 0, 7).UTC()
-	if startTime.Before(semanticWeekStart) || !endInclusive.Before(semanticWeekEnd) {
-		return failurePatternsScope{}, fmt.Errorf(
-			"window %s..%s must fall within one semantic week (%s..%s)",
-			startLabel,
-			endLabel,
-			semanticWeekStart.Format("2006-01-02"),
-			semanticWeekEnd.AddDate(0, 0, -1).Format("2006-01-02"),
-		)
-	}
-
-	return failurePatternsScope{
-		StartDate:         startLabel,
-		EndDate:           endLabel,
-		StartTime:         startTime,
-		EndTime:           endTime,
-		ResolvedWeek:      resolvedWeek,
-		SemanticWeekStart: semanticWeekStart,
-		SemanticWeekEnd:   semanticWeekEnd,
-		DateLabels:        metricDateLabelsFromWindow(startTime, endTime),
-	}, nil
-}
-
-func resolveFailurePatternsWeekLabel(startDate time.Time, endDate time.Time, override string) (string, error) {
-	trimmedOverride := strings.TrimSpace(override)
-	if trimmedOverride != "" {
-		weekStart, err := normalizeWeekLabel(trimmedOverride)
-		if err != nil {
-			return "", err
-		}
-		weekDate, _ := time.Parse("2006-01-02", weekStart)
-		weekStartTime := weekDate.UTC()
-		weekEndTime := weekStartTime.AddDate(0, 0, 7).UTC()
-		if startDate.Before(weekStartTime) || !endDate.Before(weekEndTime) {
-			return "", fmt.Errorf("window %s..%s does not fall within semantic week %s", startDate.Format("2006-01-02"), endDate.Format("2006-01-02"), weekStart)
-		}
-		return weekStart, nil
-	}
-
-	startWeek := startDate.AddDate(0, 0, -int((startDate.Weekday()+6)%7)).UTC().Format("2006-01-02")
-	endWeek := endDate.AddDate(0, 0, -int((endDate.Weekday()+6)%7)).UTC().Format("2006-01-02")
-	if startWeek != endWeek {
-		return "", fmt.Errorf("window %s..%s crosses semantic week boundaries (%s vs %s)", startDate.Format("2006-01-02"), endDate.Format("2006-01-02"), startWeek, endWeek)
-	}
-	return startWeek, nil
 }
 
 func loadFailurePatternsFacts(

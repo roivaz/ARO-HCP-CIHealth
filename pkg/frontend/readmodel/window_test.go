@@ -2,7 +2,7 @@ package readmodel
 
 import (
 	"context"
-	"strings"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -99,195 +99,57 @@ func TestInteriorGap(t *testing.T) {
 	}
 }
 
-func TestResolveWindowTrailingEdgeWeekMissing(t *testing.T) {
+func TestResolveWindowUsesCalendarWeeksForAnyRange(t *testing.T) {
 	t.Parallel()
 
-	ctx := context.Background()
 	fixture := newIntegrationFixture(t, "")
-
-	store := fixture.openWeekStore(t, "2026-03-16")
-	if err := store.ReplaceMaterializedWeek(ctx, currentMaterializedWeek()); err != nil {
-		t.Fatalf("seed materialized week: %v", err)
+	scope, err := fixture.service.ResolveWindow(context.Background(), WindowRequest{
+		StartDate: "2026-03-10",
+		EndDate:   "2026-03-26",
+	})
+	if err != nil {
+		t.Fatalf("resolve window: %v", err)
 	}
+	if got, want := scope.SemanticWeeks, []string{"2026-03-09", "2026-03-16", "2026-03-23"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected semantic weeks: got=%v want=%v", got, want)
+	}
+	if got, want := scope.AnchorWeek, "2026-03-23"; got != want {
+		t.Fatalf("unexpected anchor week: got=%q want=%q", got, want)
+	}
+}
 
-	scope, err := fixture.service.ResolveWindow(ctx, WindowRequest{
+func TestResolveWindowDoesNotRequireStoredWeeks(t *testing.T) {
+	t.Parallel()
+
+	fixture := newIntegrationFixture(t, "")
+	scope, err := fixture.service.ResolveWindow(context.Background(), WindowRequest{
 		StartDate: "2026-03-16",
 		EndDate:   "2026-03-22",
 	})
 	if err != nil {
-		t.Fatalf("expected trailing-edge tolerance: %v", err)
+		t.Fatalf("resolve window without fact weeks: %v", err)
 	}
-	if got, want := len(scope.SemanticWeeks), 1; got != want {
-		t.Fatalf("semantic weeks: got=%d want=%d", got, want)
-	}
-	if got, want := scope.SemanticWeeks[0], "2026-03-16"; got != want {
-		t.Fatalf("semantic week: got=%q want=%q", got, want)
-	}
-	if got, want := scope.StartDate, "2026-03-16"; got != want {
-		t.Fatalf("start date should be preserved: got=%q want=%q", got, want)
-	}
-	if got, want := scope.EndDate, "2026-03-22"; got != want {
-		t.Fatalf("end date should be preserved: got=%q want=%q", got, want)
+	if got, want := scope.SemanticWeeks, []string{"2026-03-16"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected semantic weeks: got=%v want=%v", got, want)
 	}
 }
 
-func TestResolveWindowLeadingEdgeWeekMissing(t *testing.T) {
+func TestResolveWindowSprintLikeRangeKeepsCalendarWeekBoundaries(t *testing.T) {
 	t.Parallel()
 
-	ctx := context.Background()
 	fixture := newIntegrationFixture(t, "")
-
-	store := fixture.openWeekStore(t, "2026-03-23")
-	if err := store.ReplaceMaterializedWeek(ctx, currentMaterializedWeek()); err != nil {
-		t.Fatalf("seed materialized week: %v", err)
-	}
-
-	scope, err := fixture.service.ResolveWindow(ctx, WindowRequest{
-		StartDate: "2026-03-16",
-		EndDate:   "2026-03-28",
-	})
-	if err != nil {
-		t.Fatalf("expected leading-edge tolerance: %v", err)
-	}
-	if got, want := len(scope.SemanticWeeks), 1; got != want {
-		t.Fatalf("semantic weeks: got=%d want=%d", got, want)
-	}
-	if got, want := scope.SemanticWeeks[0], "2026-03-23"; got != want {
-		t.Fatalf("semantic week: got=%q want=%q", got, want)
-	}
-	if got, want := scope.StartDate, "2026-03-16"; got != want {
-		t.Fatalf("start date should be preserved: got=%q want=%q", got, want)
-	}
-	if got, want := scope.EndDate, "2026-03-28"; got != want {
-		t.Fatalf("end date should be preserved: got=%q want=%q", got, want)
-	}
-}
-
-func TestResolveWindowInteriorGapFails(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	fixture := newIntegrationFixture(t, "")
-
-	firstStore := fixture.openWeekStore(t, "2026-03-09")
-	thirdStore := fixture.openWeekStore(t, "2026-03-23")
-	if err := firstStore.ReplaceMaterializedWeek(ctx, previousMaterializedWeek()); err != nil {
-		t.Fatalf("seed first week: %v", err)
-	}
-	if err := thirdStore.ReplaceMaterializedWeek(ctx, currentMaterializedWeek()); err != nil {
-		t.Fatalf("seed third week: %v", err)
-	}
-
-	_, err := fixture.service.ResolveWindow(ctx, WindowRequest{
-		StartDate: "2026-03-08",
-		EndDate:   "2026-03-28",
-	})
-	if err == nil {
-		t.Fatalf("expected interior gap to cause failure")
-	}
-	if !strings.Contains(err.Error(), "2026-03-16") {
-		t.Fatalf("expected error to mention missing interior week 2026-03-16, got=%v", err)
-	}
-}
-
-func TestResolveWindowAllWeeksMissingFails(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	fixture := newIntegrationFixture(t, "")
-
-	_, err := fixture.service.ResolveWindow(ctx, WindowRequest{
-		StartDate: "2026-03-16",
-		EndDate:   "2026-03-22",
-	})
-	if err == nil {
-		t.Fatalf("expected all-missing weeks to cause failure")
-	}
-}
-
-func TestResolveWindowSprintWithTrailingFutureWeek(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	fixture := newIntegrationFixture(t, "")
-
-	store := fixture.openWeekStore(t, "2026-03-16")
-	if err := store.ReplaceMaterializedWeek(ctx, currentMaterializedWeek()); err != nil {
-		t.Fatalf("seed materialized week: %v", err)
-	}
-
-	scope, err := fixture.service.ResolveWindow(ctx, WindowRequest{
+	scope, err := fixture.service.ResolveWindow(context.Background(), WindowRequest{
 		StartDate: "2026-03-13",
 		EndDate:   "2026-03-26",
 		Now:       time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC),
 	})
 	if err != nil {
-		t.Fatalf("expected sprint-like window to tolerate trailing missing: %v", err)
+		t.Fatalf("resolve sprint-like window: %v", err)
 	}
-	if got, want := len(scope.SemanticWeeks), 1; got != want {
-		t.Fatalf("semantic weeks: got=%d want=%d", got, want)
-	}
-	if got, want := scope.EndDate, "2026-03-26"; got != want {
-		t.Fatalf("end date should be preserved: got=%q want=%q", got, want)
-	}
-}
-
-func TestResolveWindowBothEdgesMissing(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	fixture := newIntegrationFixture(t, "")
-
-	store := fixture.openWeekStore(t, "2026-03-16")
-	if err := store.ReplaceMaterializedWeek(ctx, currentMaterializedWeek()); err != nil {
-		t.Fatalf("seed materialized week: %v", err)
-	}
-
-	scope, err := fixture.service.ResolveWindow(ctx, WindowRequest{
-		StartDate: "2026-03-10",
-		EndDate:   "2026-03-26",
-	})
-	if err != nil {
-		t.Fatalf("expected both-edge tolerance: %v", err)
-	}
-	if got, want := len(scope.SemanticWeeks), 1; got != want {
-		t.Fatalf("semantic weeks: got=%d want=%d", got, want)
-	}
-	if got, want := scope.StartDate, "2026-03-10"; got != want {
-		t.Fatalf("start date should be preserved: got=%q want=%q", got, want)
+	if got, want := scope.SemanticWeeks, []string{"2026-03-09", "2026-03-16", "2026-03-23"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected semantic weeks: got=%v want=%v", got, want)
 	}
 	if got, want := scope.EndDate, "2026-03-26"; got != want {
 		t.Fatalf("end date should be preserved: got=%q want=%q", got, want)
-	}
-}
-
-func TestResolveWindowMultipleAvailableWeeksNoClamping(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	fixture := newIntegrationFixture(t, "")
-
-	for _, week := range []string{"2026-03-09", "2026-03-16"} {
-		store := fixture.openWeekStore(t, week)
-		if err := store.ReplaceMaterializedWeek(ctx, currentMaterializedWeek()); err != nil {
-			t.Fatalf("seed %s: %v", week, err)
-		}
-	}
-
-	scope, err := fixture.service.ResolveWindow(ctx, WindowRequest{
-		StartDate: "2026-03-10",
-		EndDate:   "2026-03-20",
-	})
-	if err != nil {
-		t.Fatalf("expected success: %v", err)
-	}
-	if got, want := len(scope.SemanticWeeks), 2; got != want {
-		t.Fatalf("semantic weeks: got=%d want=%d (%v)", got, want, scope.SemanticWeeks)
-	}
-	if got, want := scope.StartDate, "2026-03-10"; got != want {
-		t.Fatalf("start date should not be clamped: got=%q want=%q", got, want)
-	}
-	if got, want := scope.EndDate, "2026-03-20"; got != want {
-		t.Fatalf("end date should not be clamped: got=%q want=%q", got, want)
 	}
 }

@@ -37,8 +37,6 @@ HISTORY_WEEKS ?= 4
 SITE_REDIRECT_URL ?= https://cihealth.tools.hcpsvc.osadev.cloud/
 
 SOURCE_ENVS ?= dev,int,stg,prod
-SEMANTIC_WEEK ?=
-SEMANTIC_ARGS ?=
 CONTROLLER_ENVS ?= $(SOURCE_ENVS)
 CONTROLLER_HISTORY_WEEKS ?= $(HISTORY_WEEKS)
 CONTROLLER_ARGS ?=
@@ -59,7 +57,7 @@ AZ_STATIC_WEBSITE_ENABLED ?= true
 AZ_STATIC_INDEX_DOCUMENT ?= index.html
 AZ_STATIC_ERROR_DOCUMENT ?= 404.html
 
-.PHONY: help fmt fmt-check vet test test-race test-cover build image build-and-push show-image run tidy check clean clean-site distclean semantic-materialize semantic-backfill app site-redirect site-upload deploy-static-website-storage run-controllers run-once sync-once migrate-legacy-data db-dump-remote db-restore-local
+.PHONY: help fmt fmt-check vet test test-race test-cover build image build-and-push show-image run tidy check clean clean-site distclean app site-redirect site-upload deploy-static-website-storage run-controllers run-once sync-once migrate-legacy-data db-dump-remote db-restore-local
 
 help:
 	@echo "Go targets:"
@@ -79,11 +77,6 @@ help:
 	@echo "  make clean"
 	@echo "  make clean-site"
 	@echo "  make distclean"
-	@echo ""
-	@echo "Semantic targets:"
-	@echo "  make semantic-materialize"
-	@echo "  make semantic-backfill"
-	@echo ""
 	@echo "App targets:"
 	@echo "  make app"
 	@echo "  make db-dump-remote REMOTE_PGUSER=... REMOTE_PGPASSWORD=... REMOTE_PGDATABASE=... [REMOTE_PGHOST=127.0.0.1 REMOTE_PGPORT=5432]"
@@ -124,7 +117,6 @@ help:
 	@echo "  SITE_ROOT=$(SITE_ROOT)"
 	@echo "  SITE_REDIRECT_URL=$(SITE_REDIRECT_URL)"
 	@echo "  HISTORY_WEEKS=$(HISTORY_WEEKS)"
-	@echo "  SEMANTIC_WEEK=$(SEMANTIC_WEEK)"
 	@echo "  CONTROLLER_ENVS=$(CONTROLLER_ENVS)"
 	@echo "  CONTROLLER_HISTORY_WEEKS=$(CONTROLLER_HISTORY_WEEKS)"
 	@echo "  LEGACY_DATA_DIR=$(LEGACY_DATA_DIR)"
@@ -139,8 +131,6 @@ help:
 	@echo "  AZ_STATIC_ERROR_DOCUMENT=$(AZ_STATIC_ERROR_DOCUMENT)"
 	@echo ""
 	@echo "Example:"
-	@echo "  make semantic-materialize SEMANTIC_WEEK=2026-03-30"
-	@echo "  make semantic-backfill"
 	@echo "  make app APP_WEEK=2026-03-09"
 	@echo "  make db-dump-remote REMOTE_PGUSER=myuser REMOTE_PGPASSWORD=secret REMOTE_PGDATABASE=mydb DB_DUMP_FILE=.work/cfa-prod.sql"
 	@echo "  make db-restore-local DB_DUMP_FILE=.work/cfa-prod.sql"
@@ -198,13 +188,6 @@ show-image:
 
 run:
 	$(CFA) $(RUN_ARGS)
-
-semantic-materialize:
-	$(CFA) semantic materialize \
-		$(if $(strip $(SEMANTIC_WEEK)),--week "$(SEMANTIC_WEEK)",) $(SEMANTIC_ARGS)
-
-semantic-backfill:
-	$(CFA) semantic materialize --all $(SEMANTIC_ARGS)
 
 app:
 	$(CFA) app \

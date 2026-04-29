@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 )
 
@@ -15,10 +14,6 @@ func TestBuildRunLogDayBuildsMatchedAndUnmatchedRuns(t *testing.T) {
 	ctx := context.Background()
 	fixture := newIntegrationFixture(t, "")
 	store := fixture.openWeekStore(t, "2026-03-16")
-
-	if err := store.ReplaceMaterializedWeek(ctx, currentMaterializedWeek()); err != nil {
-		t.Fatalf("seed materialized week: %v", err)
-	}
 	if err := store.UpsertRuns(ctx, sampleRunsFixture()); err != nil {
 		t.Fatalf("seed runs: %v", err)
 	}
@@ -47,10 +42,10 @@ func TestBuildRunLogDayBuildsMatchedAndUnmatchedRuns(t *testing.T) {
 	if got, want := environment.Summary.RunsWithRawFailures, 2; got != want {
 		t.Fatalf("unexpected runs with raw failures: got=%d want=%d", got, want)
 	}
-	if got, want := environment.Summary.RunsWithSemanticAttachment, 1; got != want {
+	if got, want := environment.Summary.RunsWithSemanticAttachment, 2; got != want {
 		t.Fatalf("unexpected runs with semantic attachment: got=%d want=%d", got, want)
 	}
-	if got, want := environment.Summary.RunsUnmatchedSignatures, 1; got != want {
+	if got, want := environment.Summary.RunsUnmatchedSignatures, 0; got != want {
 		t.Fatalf("unexpected runs with unmatched signatures: got=%d want=%d", got, want)
 	}
 
@@ -70,44 +65,40 @@ func TestBuildRunLogDayBuildsMatchedAndUnmatchedRuns(t *testing.T) {
 	if got, want := len(matchedRun.Lanes), 1; got != want {
 		t.Fatalf("unexpected matched run lane count: got=%d want=%d", got, want)
 	}
-	if got, want := matchedRun.Lanes[0], "upgrade"; got != want {
+	if got, want := matchedRun.Lanes[0], "unknown"; got != want {
 		t.Fatalf("unexpected matched run lane: got=%q want=%q", got, want)
 	}
 	if got, want := len(matchedRun.FailureRows), 2; got != want {
 		t.Fatalf("unexpected matched run failure row count: got=%d want=%d", got, want)
 	}
-	if got, want := matchedRun.FailureRows[0].Lane, "upgrade"; got != want {
+	if got, want := matchedRun.FailureRows[0].Lane, "unknown"; got != want {
 		t.Fatalf("unexpected matched failure row lane: got=%q want=%q", got, want)
 	}
-	if got, want := matchedRun.FailureRows[0].SemanticAttachment.CanonicalEvidencePhrase, "OAuth timeout"; got != want {
+	if got, want := matchedRun.FailureRows[0].SemanticAttachment.CanonicalEvidencePhrase, "OAuth timeout while waiting for cluster <cluster>"; got != want {
 		t.Fatalf("unexpected matched phrase: got=%q want=%q", got, want)
 	}
 
 	unmatchedRun := jobHistoryRunByURL(t, environment, "https://prow.example.com/view/2")
-	if got, want := unmatchedRun.SemanticRollups.AttachmentSummary, "unmatched_only"; got != want {
+	if got, want := unmatchedRun.SemanticRollups.AttachmentSummary, "single_clustered"; got != want {
 		t.Fatalf("unexpected unmatched run summary: got=%q want=%q", got, want)
 	}
-	if got, want := unmatchedRun.SemanticRollups.UnmatchedRows, 1; got != want {
+	if got, want := unmatchedRun.SemanticRollups.UnmatchedRows, 0; got != want {
 		t.Fatalf("unexpected unmatched row count: got=%d want=%d", got, want)
 	}
 	if got, want := unmatchedRun.FailedTestCount, 1; got != want {
 		t.Fatalf("unexpected unmatched run failed test count: got=%d want=%d", got, want)
 	}
-	if got, want := unmatchedRun.FailureRows[0].SemanticAttachment.Status, "unmatched"; got != want {
+	if got, want := unmatchedRun.FailureRows[0].SemanticAttachment.Status, "clustered"; got != want {
 		t.Fatalf("unexpected unmatched row status: got=%q want=%q", got, want)
 	}
 }
 
-func TestBuildRunLogDayUsesLatestAvailableSemanticWeekForNewerDates(t *testing.T) {
+func TestBuildRunLogDayUsesFactWeekForNewerDates(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	fixture := newIntegrationFixture(t, "")
 	store := fixture.openWeekStore(t, "2026-03-16")
-
-	if err := store.ReplaceMaterializedWeek(ctx, currentMaterializedWeek()); err != nil {
-		t.Fatalf("seed materialized week: %v", err)
-	}
 	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
 		{
 			Environment: "dev",
@@ -146,8 +137,8 @@ func TestBuildRunLogDayUsesLatestAvailableSemanticWeekForNewerDates(t *testing.T
 	if got, want := data.Meta.Date, "2026-04-21"; got != want {
 		t.Fatalf("unexpected date: got=%q want=%q", got, want)
 	}
-	if got, want := data.Meta.AnchorWeek, "2026-03-16"; got != want {
-		t.Fatalf("unexpected fallback anchor week: got=%q want=%q", got, want)
+	if got, want := data.Meta.AnchorWeek, "2026-04-20"; got != want {
+		t.Fatalf("unexpected fact-derived anchor week: got=%q want=%q", got, want)
 	}
 
 	environment := jobHistoryEnvironmentByName(t, data, "dev")
@@ -157,15 +148,15 @@ func TestBuildRunLogDayUsesLatestAvailableSemanticWeekForNewerDates(t *testing.T
 	if got, want := environment.Summary.RunsWithRawFailures, 1; got != want {
 		t.Fatalf("unexpected runs with raw failures: got=%d want=%d", got, want)
 	}
-	if got, want := environment.Summary.RunsWithSemanticAttachment, 0; got != want {
+	if got, want := environment.Summary.RunsWithSemanticAttachment, 1; got != want {
 		t.Fatalf("unexpected runs with semantic attachment: got=%d want=%d", got, want)
 	}
-	if got, want := environment.Summary.RunsUnmatchedSignatures, 1; got != want {
+	if got, want := environment.Summary.RunsUnmatchedSignatures, 0; got != want {
 		t.Fatalf("unexpected runs with unmatched signatures: got=%d want=%d", got, want)
 	}
 
 	run := jobHistoryRunByURL(t, environment, "https://prow.example.com/view/newer")
-	if got, want := run.SemanticRollups.AttachmentSummary, "unmatched_only"; got != want {
+	if got, want := run.SemanticRollups.AttachmentSummary, "single_clustered"; got != want {
 		t.Fatalf("unexpected attachment summary: got=%q want=%q", got, want)
 	}
 }
@@ -176,10 +167,6 @@ func TestBuildRunLogDayHandlesMultipleSignaturesOnOneRun(t *testing.T) {
 	ctx := context.Background()
 	fixture := newIntegrationFixture(t, "")
 	store := fixture.openWeekStore(t, "2026-03-16")
-
-	if err := store.ReplaceMaterializedWeek(ctx, jobHistoryMaterializedWeekWithExtraCluster()); err != nil {
-		t.Fatalf("seed materialized week: %v", err)
-	}
 	if err := store.UpsertRuns(ctx, sampleRunsFixture()); err != nil {
 		t.Fatalf("seed runs: %v", err)
 	}
@@ -197,25 +184,6 @@ func TestBuildRunLogDayHandlesMultipleSignaturesOnOneRun(t *testing.T) {
 	if err := store.UpsertRawFailures(ctx, rawFailures); err != nil {
 		t.Fatalf("seed raw failures: %v", err)
 	}
-	fixture.seedDeprecatedPhase3Links(t,
-		semanticcontracts.Phase3LinkRecord{
-			SchemaVersion: semanticcontracts.CurrentSchemaVersion,
-			IssueID:       "issue-dev-linked",
-			Environment:   "dev",
-			RunURL:        "https://prow.example.com/view/1",
-			RowID:         "row-1",
-			UpdatedAt:     "2026-03-16T12:00:00Z",
-		},
-		semanticcontracts.Phase3LinkRecord{
-			SchemaVersion: semanticcontracts.CurrentSchemaVersion,
-			IssueID:       "issue-dev-linked",
-			Environment:   "dev",
-			RunURL:        "https://prow.example.com/view/1",
-			RowID:         "row-4",
-			UpdatedAt:     "2026-03-16T12:00:00Z",
-		},
-	)
-
 	data, err := fixture.service.BuildRunLogDay(ctx, RunLogDayQuery{
 		Date:         "2026-03-16",
 		Environments: []string{"dev"},
@@ -237,7 +205,7 @@ func TestBuildRunLogDayHandlesMultipleSignaturesOnOneRun(t *testing.T) {
 	if got, want := len(run.Lanes), 1; got != want {
 		t.Fatalf("unexpected lane count: got=%d want=%d", got, want)
 	}
-	if got, want := run.Lanes[0], "upgrade"; got != want {
+	if got, want := run.Lanes[0], "unknown"; got != want {
 		t.Fatalf("unexpected lane value: got=%q want=%q", got, want)
 	}
 	if got, want := len(run.SemanticRollups.DistinctClusterIDs), 2; got != want {
@@ -248,16 +216,12 @@ func TestBuildRunLogDayHandlesMultipleSignaturesOnOneRun(t *testing.T) {
 	}
 }
 
-func TestBuildRunLogDayUsesStoredReferencesWhenClustersShareSignature(t *testing.T) {
+func TestBuildRunLogDayUsesRowLevelReferencesWhenClustersShareSignature(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	fixture := newIntegrationFixture(t, "")
 	store := fixture.openWeekStore(t, "2026-03-16")
-
-	if err := store.ReplaceMaterializedWeek(ctx, sharedSignatureMaterializedWeek()); err != nil {
-		t.Fatalf("seed materialized week: %v", err)
-	}
 	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
 		{
 			Environment: "dev",
@@ -318,19 +282,22 @@ func TestBuildRunLogDayUsesStoredReferencesWhenClustersShareSignature(t *testing
 	}
 
 	finalizeRow := rowsByID["row-finalize"]
-	if got, want := finalizeRow.SemanticAttachment.ClusterID, "cluster-finalize"; got != want {
-		t.Fatalf("unexpected finalize cluster id: got=%q want=%q", got, want)
+	if strings.TrimSpace(finalizeRow.SemanticAttachment.ClusterID) == "" {
+		t.Fatalf("expected finalize cluster id to be populated")
 	}
-	if got, want := finalizeRow.SemanticAttachment.CanonicalEvidencePhrase, "finalize-mce-config timeout"; got != want {
+	if got, want := finalizeRow.SemanticAttachment.CanonicalEvidencePhrase, "failed post-install: resource not ready, name: finalize-mce-config"; got != want {
 		t.Fatalf("unexpected finalize phrase: got=%q want=%q", got, want)
 	}
 
 	propagatorRow := rowsByID["row-propagator"]
-	if got, want := propagatorRow.SemanticAttachment.ClusterID, "cluster-propagator"; got != want {
-		t.Fatalf("unexpected propagator cluster id: got=%q want=%q", got, want)
+	if strings.TrimSpace(propagatorRow.SemanticAttachment.ClusterID) == "" {
+		t.Fatalf("expected propagator cluster id to be populated")
 	}
-	if got, want := propagatorRow.SemanticAttachment.CanonicalEvidencePhrase, "grc-policy-propagator timeout"; got != want {
+	if got, want := propagatorRow.SemanticAttachment.CanonicalEvidencePhrase, "resource not ready, name: grc-policy-propagator"; got != want {
 		t.Fatalf("unexpected propagator phrase: got=%q want=%q", got, want)
+	}
+	if finalizeRow.SemanticAttachment.ClusterID == propagatorRow.SemanticAttachment.ClusterID {
+		t.Fatalf("expected distinct cluster ids for different row-level references")
 	}
 }
 
@@ -340,10 +307,6 @@ func TestBuildRunLogDayFlagsFailedRunsWithoutRawRows(t *testing.T) {
 	ctx := context.Background()
 	fixture := newIntegrationFixture(t, "")
 	store := fixture.openWeekStore(t, "2026-03-16")
-
-	if err := store.ReplaceMaterializedWeek(ctx, currentMaterializedWeek()); err != nil {
-		t.Fatalf("seed materialized week: %v", err)
-	}
 	runs := append(sampleRunsFixture(), storecontracts.RunRecord{
 		Environment: "dev",
 		RunURL:      "https://prow.example.com/view/3",
@@ -385,10 +348,6 @@ func TestBuildRunLogDayUsesWeeklySemanticBadPRScore(t *testing.T) {
 	ctx := context.Background()
 	fixture := newIntegrationFixture(t, "")
 	store := fixture.openWeekStore(t, "2026-03-16")
-
-	if err := store.ReplaceMaterializedWeek(ctx, currentMaterializedWeek()); err != nil {
-		t.Fatalf("seed materialized week: %v", err)
-	}
 	runs := sampleRunsFixture()
 	runs[0].PRNumber = 123
 	runs[0].PRState = "open"
@@ -411,105 +370,6 @@ func TestBuildRunLogDayUsesWeeklySemanticBadPRScore(t *testing.T) {
 	if got := run.BadPRScore; got != 0 {
 		t.Fatalf("expected weekly bad PR score to suppress single-run false positive, got=%d", got)
 	}
-}
-
-func sharedSignatureMaterializedWeek() storecontracts.MaterializedWeek {
-	return storecontracts.MaterializedWeek{
-		FailurePatterns: []semanticcontracts.FailurePatternRecord{
-			{
-				SchemaVersion:                semanticcontracts.CurrentSchemaVersion,
-				Environment:                  "dev",
-				Phase2ClusterID:              "cluster-finalize",
-				CanonicalEvidencePhrase:      "finalize-mce-config timeout",
-				SearchQueryPhrase:            "finalize-mce-config timeout",
-				SearchQuerySourceRunURL:      "https://prow.example.com/view/shared",
-				SearchQuerySourceSignatureID: "sig-shared",
-				SupportCount:                 1,
-				ContributingTestsCount:       1,
-				ContributingTests: []semanticcontracts.ContributingTestRecord{
-					{
-						Lane:         "upgrade",
-						JobName:      "periodic-ci",
-						TestName:     "finalize step",
-						SupportCount: 1,
-					},
-				},
-				MemberPhase1ClusterIDs: []string{"phase1-shared"},
-				MemberSignatureIDs:     []string{"sig-shared"},
-				References: []semanticcontracts.ReferenceRecord{
-					{
-						RowID:       "row-finalize",
-						RunURL:      "https://prow.example.com/view/shared",
-						OccurredAt:  "2026-03-16T08:00:00Z",
-						SignatureID: "sig-shared",
-					},
-				},
-			},
-			{
-				SchemaVersion:                semanticcontracts.CurrentSchemaVersion,
-				Environment:                  "dev",
-				Phase2ClusterID:              "cluster-propagator",
-				CanonicalEvidencePhrase:      "grc-policy-propagator timeout",
-				SearchQueryPhrase:            "grc-policy-propagator timeout",
-				SearchQuerySourceRunURL:      "https://prow.example.com/view/shared",
-				SearchQuerySourceSignatureID: "sig-shared",
-				SupportCount:                 1,
-				ContributingTestsCount:       1,
-				ContributingTests: []semanticcontracts.ContributingTestRecord{
-					{
-						Lane:         "upgrade",
-						JobName:      "periodic-ci",
-						TestName:     "propagator step",
-						SupportCount: 1,
-					},
-				},
-				MemberPhase1ClusterIDs: []string{"phase1-shared"},
-				MemberSignatureIDs:     []string{"sig-shared"},
-				References: []semanticcontracts.ReferenceRecord{
-					{
-						RowID:       "row-propagator",
-						RunURL:      "https://prow.example.com/view/shared",
-						OccurredAt:  "2026-03-16T08:05:00Z",
-						SignatureID: "sig-shared",
-					},
-				},
-			},
-		},
-	}
-}
-
-func jobHistoryMaterializedWeekWithExtraCluster() storecontracts.MaterializedWeek {
-	week := currentMaterializedWeek()
-	week.FailurePatterns = append(week.FailurePatterns, semanticcontracts.FailurePatternRecord{
-		SchemaVersion:                semanticcontracts.CurrentSchemaVersion,
-		Environment:                  "dev",
-		Phase2ClusterID:              "cluster-dev-c",
-		CanonicalEvidencePhrase:      "API throttling",
-		SearchQueryPhrase:            "API throttling",
-		SearchQuerySourceRunURL:      "https://prow.example.com/view/1",
-		SearchQuerySourceSignatureID: "sig-c",
-		SupportCount:                 3,
-		ContributingTestsCount:       1,
-		ContributingTests: []semanticcontracts.ContributingTestRecord{
-			{
-				Lane:         "upgrade",
-				JobName:      "periodic-ci",
-				TestName:     "should throttle",
-				SupportCount: 3,
-			},
-		},
-		MemberPhase1ClusterIDs: []string{"phase1-sig-c"},
-		MemberSignatureIDs:     []string{"sig-c"},
-		References: []semanticcontracts.ReferenceRecord{
-			{
-				RowID:       "row-4",
-				RunURL:      "https://prow.example.com/view/1",
-				OccurredAt:  "2026-03-16T08:07:00Z",
-				SignatureID: "sig-c",
-			},
-		},
-	})
-	return week
 }
 
 func jobHistoryEnvironmentByName(t *testing.T, data RunLogDayData, environment string) RunLogDayEnvironment {

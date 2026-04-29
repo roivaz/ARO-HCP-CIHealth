@@ -8,7 +8,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 	"ci-failure-atlas/pkg/store/postgres/initdb"
 	"ci-failure-atlas/pkg/store/postgres/migrations"
@@ -27,7 +26,7 @@ func TestMethodsRequireContext(t *testing.T) {
 	t.Parallel()
 
 	store := &Store{}
-	if err := store.ReplaceMaterializedWeek(nil, storecontracts.MaterializedWeek{}); err == nil {
+	if err := store.UpsertRuns(nil, nil); err == nil {
 		t.Fatalf("expected context validation error")
 	}
 }
@@ -55,7 +54,7 @@ func TestNormalizeWeekRejectsNonMonday(t *testing.T) {
 func TestMigrationsDropDeprecatedPhase3Tables(t *testing.T) {
 	t.Parallel()
 
-	store := newIntegrationStore(t, "")
+	store := newIntegrationStore(t)
 	ctx := context.Background()
 	for _, table := range []string{
 		"cfa_phase3_issues",
@@ -73,154 +72,10 @@ func TestMigrationsDropDeprecatedPhase3Tables(t *testing.T) {
 	}
 }
 
-func TestReplaceMaterializedWeekClearsPriorSnapshot(t *testing.T) {
-	store := newIntegrationStore(t, "2026-03-16")
-	ctx := context.Background()
-
-	if err := store.ReplaceMaterializedWeek(ctx, storecontracts.MaterializedWeek{
-		FailurePatterns: []semanticcontracts.FailurePatternRecord{
-			{
-				Environment:             "dev",
-				Phase2ClusterID:         "cluster-a",
-				CanonicalEvidencePhrase: "alpha",
-				SearchQueryPhrase:       "alpha",
-				SupportCount:            3,
-				ContributingTestsCount:  1,
-			},
-		},
-		ReviewQueue: []semanticcontracts.ReviewItemRecord{
-			{
-				Environment:  "dev",
-				ReviewItemID: "review-a",
-				Phase:        "phase2",
-				Reason:       "ambiguous_provider_merge",
-			},
-		},
-	}); err != nil {
-		t.Fatalf("seed materialized week: %v", err)
-	}
-
-	if err := store.ReplaceMaterializedWeek(ctx, storecontracts.MaterializedWeek{
-		FailurePatterns: []semanticcontracts.FailurePatternRecord{
-			{
-				Environment:             "int",
-				Phase2ClusterID:         "cluster-b",
-				CanonicalEvidencePhrase: "beta",
-				SearchQueryPhrase:       "beta",
-				SupportCount:            1,
-				ContributingTestsCount:  1,
-			},
-		},
-	}); err != nil {
-		t.Fatalf("replace materialized week: %v", err)
-	}
-
-	globalClusters, err := store.ListFailurePatterns(ctx)
-	if err != nil {
-		t.Fatalf("list failure patterns: %v", err)
-	}
-	if len(globalClusters) != 1 || globalClusters[0].Environment != "int" || globalClusters[0].Phase2ClusterID != "cluster-b" {
-		t.Fatalf("expected only replaced failure pattern, got=%+v", globalClusters)
-	}
-
-	reviewQueue, err := store.ListReviewQueue(ctx)
-	if err != nil {
-		t.Fatalf("list review queue: %v", err)
-	}
-	if len(reviewQueue) != 0 {
-		t.Fatalf("expected review queue to be cleared, got=%+v", reviewQueue)
-	}
-}
-
-func TestGetSemanticWeekSummaryAggregatesByEnvironment(t *testing.T) {
-	store := newIntegrationStore(t, "2026-03-16")
-	ctx := context.Background()
-
-	if err := store.ReplaceMaterializedWeek(ctx, storecontracts.MaterializedWeek{
-		FailurePatterns: []semanticcontracts.FailurePatternRecord{
-			{
-				Environment:             "dev",
-				Phase2ClusterID:         "cluster-a",
-				CanonicalEvidencePhrase: "alpha",
-				SearchQueryPhrase:       "alpha",
-				SupportCount:            3,
-				ContributingTestsCount:  2,
-				MemberPhase1ClusterIDs:  []string{"p1", "p2"},
-			},
-			{
-				Environment:             "dev",
-				Phase2ClusterID:         "cluster-b",
-				CanonicalEvidencePhrase: "beta",
-				SearchQueryPhrase:       "beta",
-				SupportCount:            1,
-				ContributingTestsCount:  1,
-				MemberPhase1ClusterIDs:  []string{"p2", "p3", " "},
-			},
-			{
-				Environment:             "int",
-				Phase2ClusterID:         "cluster-c",
-				CanonicalEvidencePhrase: "gamma",
-				SearchQueryPhrase:       "gamma",
-				SupportCount:            4,
-				ContributingTestsCount:  1,
-			},
-		},
-		ReviewQueue: []semanticcontracts.ReviewItemRecord{
-			{
-				Environment:  "dev",
-				ReviewItemID: "review-a",
-				Phase:        "phase2",
-				Reason:       "ambiguous_provider_merge",
-			},
-			{
-				Environment:  "prod",
-				ReviewItemID: "review-b",
-				Phase:        "phase2",
-				Reason:       "missing_evidence",
-			},
-		},
-	}); err != nil {
-		t.Fatalf("seed materialized week: %v", err)
-	}
-
-	summary, err := store.GetSemanticWeekSummary(ctx)
-	if err != nil {
-		t.Fatalf("get semantic week summary: %v", err)
-	}
-
-	if got, want := summary.FailurePatternCountsByEnv["dev"], 2; got != want {
-		t.Fatalf("unexpected dev failure-pattern count: got=%d want=%d", got, want)
-	}
-	if got, want := summary.FailurePatternCountsByEnv["int"], 1; got != want {
-		t.Fatalf("unexpected int failure-pattern count: got=%d want=%d", got, want)
-	}
-	if got, want := summary.OccurrenceTotalsByEnv["dev"], 4; got != want {
-		t.Fatalf("unexpected dev support total: got=%d want=%d", got, want)
-	}
-	if got, want := summary.OccurrenceTotalsByEnv["int"], 4; got != want {
-		t.Fatalf("unexpected int support total: got=%d want=%d", got, want)
-	}
-	if got, want := summary.TestClusterCountsByEnv["dev"], 3; got != want {
-		t.Fatalf("unexpected dev test cluster count: got=%d want=%d", got, want)
-	}
-	if got, want := summary.TestClusterCountsByEnv["int"], 0; got != want {
-		t.Fatalf("unexpected int test cluster count: got=%d want=%d", got, want)
-	}
-	if got, want := summary.ReviewQueueCountsByEnv["dev"], 1; got != want {
-		t.Fatalf("unexpected dev review count: got=%d want=%d", got, want)
-	}
-	if got, want := summary.ReviewQueueCountsByEnv["prod"], 1; got != want {
-		t.Fatalf("unexpected prod review count: got=%d want=%d", got, want)
-	}
-	if got, want := summary.AvailableEnvironments, []string{"dev", "int", "prod"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
-		t.Fatalf("unexpected available environments: got=%v want=%v", got, want)
-	}
-}
-
 func TestListRunsByDateRangeUsesUTCDateProjection(t *testing.T) {
 	t.Parallel()
 
-	store := newIntegrationStore(t, "")
+	store := newIntegrationStore(t)
 	ctx := context.Background()
 
 	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
@@ -271,7 +126,7 @@ func TestListRunsByDateRangeUsesUTCDateProjection(t *testing.T) {
 func TestListRunsByDateRangeUsesTimestampWindow(t *testing.T) {
 	t.Parallel()
 
-	store := newIntegrationStore(t, "")
+	store := newIntegrationStore(t)
 	ctx := context.Background()
 
 	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
@@ -327,7 +182,7 @@ func TestListRunsByDateRangeUsesTimestampWindow(t *testing.T) {
 func TestListRawFailuresByDateRangeUsesUTCDateProjection(t *testing.T) {
 	t.Parallel()
 
-	store := newIntegrationStore(t, "")
+	store := newIntegrationStore(t)
 	ctx := context.Background()
 
 	if err := store.UpsertRawFailures(ctx, []storecontracts.RawFailureRecord{
@@ -379,7 +234,7 @@ func TestListRawFailuresByDateRangeUsesUTCDateProjection(t *testing.T) {
 func TestListRawFailuresByDateRangeUsesTimestampWindow(t *testing.T) {
 	t.Parallel()
 
-	store := newIntegrationStore(t, "")
+	store := newIntegrationStore(t)
 	ctx := context.Background()
 
 	if err := store.UpsertRawFailures(ctx, []storecontracts.RawFailureRecord{
@@ -450,7 +305,7 @@ func TestListRawFailuresByDateRangeUsesTimestampWindow(t *testing.T) {
 func TestMetricsQueriesProvideDateScopedQueries(t *testing.T) {
 	t.Parallel()
 
-	store := newIntegrationStore(t, "")
+	store := newIntegrationStore(t)
 	ctx := context.Background()
 
 	if err := store.UpsertMetricsDaily(ctx, []storecontracts.MetricDailyRecord{
@@ -503,7 +358,7 @@ func TestMetricsQueriesProvideDateScopedQueries(t *testing.T) {
 func TestTestMetadataQueriesProvideBelowTargetQueries(t *testing.T) {
 	t.Parallel()
 
-	store := newIntegrationStore(t, "")
+	store := newIntegrationStore(t)
 	ctx := context.Background()
 
 	if err := store.UpsertTestMetadataDaily(ctx, []storecontracts.TestMetadataDailyRecord{
@@ -541,7 +396,7 @@ func TestTestMetadataQueriesProvideBelowTargetQueries(t *testing.T) {
 	}
 }
 
-func newIntegrationStore(t *testing.T, week string) *Store {
+func newIntegrationStore(t *testing.T) *Store {
 	t.Helper()
 
 	server, err := pgtest.StartEmbedded(t.TempDir())
@@ -572,7 +427,7 @@ func newIntegrationStore(t *testing.T, week string) *Store {
 		t.Fatalf("run postgres migrations: %v", err)
 	}
 
-	store, err := New(pool, Options{Week: week})
+	store, err := New(pool, Options{})
 	if err != nil {
 		t.Fatalf("create postgres store: %v", err)
 	}

@@ -43,7 +43,7 @@ func (s *Service) BuildReportData(ctx context.Context, query ReportQuery) (Repor
 		return ReportData{}, err
 	}
 
-	store, err := s.OpenStoreForWeek(scope.AnchorWeek)
+	store, err := s.OpenStore()
 	if err != nil {
 		return ReportData{}, err
 	}

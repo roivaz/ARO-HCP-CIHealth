@@ -51,13 +51,6 @@ func (s *Store) UpsertRuns(ctx context.Context, rows []storecontracts.RunRecord)
 	return s.upsertRunsImpl(ctx, rows)
 }
 
-func (s *Store) ListRuns(ctx context.Context) ([]storecontracts.RunRecord, error) {
-	if err := requireContext(ctx); err != nil {
-		return nil, err
-	}
-	return s.listRunsImpl(ctx)
-}
-
 func (s *Store) ListRunKeys(ctx context.Context) ([]string, error) {
 	if err := requireContext(ctx); err != nil {
 		return nil, err
@@ -70,13 +63,6 @@ func (s *Store) ListRunDates(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	return s.listRunDatesImpl(ctx)
-}
-
-func (s *Store) ListRunsByDate(ctx context.Context, environment string, date string) ([]storecontracts.RunRecord, error) {
-	if err := requireContext(ctx); err != nil {
-		return nil, err
-	}
-	return s.listRunsByDateImpl(ctx, environment, date)
 }
 
 func (s *Store) ListRunsByDateRange(
@@ -147,32 +133,11 @@ func (s *Store) UpsertRawFailures(ctx context.Context, rows []storecontracts.Raw
 	return s.upsertRawFailuresImpl(ctx, rows)
 }
 
-func (s *Store) ListRawFailures(ctx context.Context) ([]storecontracts.RawFailureRecord, error) {
-	if err := requireContext(ctx); err != nil {
-		return nil, err
-	}
-	return s.listRawFailuresImpl(ctx)
-}
-
-func (s *Store) ListRawFailureRunKeys(ctx context.Context) ([]string, error) {
-	if err := requireContext(ctx); err != nil {
-		return nil, err
-	}
-	return s.listRawFailureRunKeysImpl(ctx)
-}
-
 func (s *Store) ListRawFailuresByRun(ctx context.Context, environment string, runURL string) ([]storecontracts.RawFailureRecord, error) {
 	if err := requireContext(ctx); err != nil {
 		return nil, err
 	}
 	return s.listRawFailuresByRunImpl(ctx, environment, runURL)
-}
-
-func (s *Store) ListRawFailuresByDate(ctx context.Context, environment string, date string) ([]storecontracts.RawFailureRecord, error) {
-	if err := requireContext(ctx); err != nil {
-		return nil, err
-	}
-	return s.listRawFailuresByDateImpl(ctx, environment, date)
 }
 
 func (s *Store) ListRawFailuresByDateRange(
@@ -192,13 +157,6 @@ func (s *Store) UpsertMetricsDaily(ctx context.Context, rows []storecontracts.Me
 		return err
 	}
 	return s.upsertMetricsDailyImpl(ctx, rows)
-}
-
-func (s *Store) ListMetricsDaily(ctx context.Context) ([]storecontracts.MetricDailyRecord, error) {
-	if err := requireContext(ctx); err != nil {
-		return nil, err
-	}
-	return s.listMetricsDailyImpl(ctx)
 }
 
 func (s *Store) ListMetricsDailyByDate(ctx context.Context, environment string, date string) ([]storecontracts.MetricDailyRecord, error) {

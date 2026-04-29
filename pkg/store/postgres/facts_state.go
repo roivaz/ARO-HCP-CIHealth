@@ -61,35 +61,6 @@ DO UPDATE SET value = EXCLUDED.value
 	})
 }
 
-func (s *Store) listMetricsDailyImpl(ctx context.Context) ([]storecontracts.MetricDailyRecord, error) {
-	rows, err := s.pool.Query(ctx, `
-SELECT environment, date, metric, value
-FROM cfa_metrics_daily
-ORDER BY environment, date, metric
-`)
-	if err != nil {
-		return nil, fmt.Errorf("query metrics daily: %w", err)
-	}
-	defer rows.Close()
-
-	out := make([]storecontracts.MetricDailyRecord, 0)
-	for rows.Next() {
-		var row storecontracts.MetricDailyRecord
-		if err := rows.Scan(&row.Environment, &row.Date, &row.Metric, &row.Value); err != nil {
-			return nil, fmt.Errorf("scan metric daily row: %w", err)
-		}
-		normalized := normalizeMetricDailyRecord(row)
-		if normalized.Environment == "" || normalized.Date == "" || normalized.Metric == "" {
-			continue
-		}
-		out = append(out, normalized)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate metrics daily rows: %w", err)
-	}
-	return out, nil
-}
-
 func (s *Store) listMetricsDailyByDateImpl(ctx context.Context, environment string, date string) ([]storecontracts.MetricDailyRecord, error) {
 	lookupEnv := normalizeEnvironment(environment)
 	if lookupEnv == "" {

@@ -7,9 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"ci-failure-atlas/pkg/failurepatterns"
 	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
-	semhistory "ci-failure-atlas/pkg/semantic/history"
-	semanticquery "ci-failure-atlas/pkg/semantic/query"
 )
 
 type ReviewSignalReference struct {
@@ -73,7 +72,7 @@ func (s *Service) BuildReviewSignalsWeek(ctx context.Context, requestedWeek stri
 		_ = store.Close()
 	}()
 
-	weekData, err := semanticquery.LoadWeekData(ctx, store, semanticquery.LoadWeekDataOptions{})
+	weekData, err := failurepatterns.LoadStoredWeek(ctx, store, failurepatterns.LoadStoredWeekOptions{})
 	if err != nil {
 		return ReviewSignalsWeekSnapshot{}, err
 	}
@@ -277,15 +276,8 @@ func reviewSignalReferenceKeys(environment string, references []semanticcontract
 		out = append(out, trimmed)
 	}
 	for _, reference := range references {
-		runURL := strings.TrimSpace(reference.RunURL)
-		rowID := strings.TrimSpace(reference.RowID)
-		signatureID := strings.TrimSpace(reference.SignatureID)
-		if runURL != "" && rowID != "" {
-			appendKey(normalizedEnvironment + "|" + runURL + "|" + rowID)
-		}
-		if runURL != "" && signatureID != "" {
-			appendKey(normalizedEnvironment + "|" + runURL + "|" + signatureID)
-		}
+		appendKey(failurepatterns.EnvironmentRunRowKey(normalizedEnvironment, reference.RunURL, reference.RowID))
+		appendKey(failurepatterns.EnvironmentRunSignatureKey(normalizedEnvironment, reference.RunURL, reference.SignatureID))
 	}
 	return out
 }
@@ -324,7 +316,7 @@ func reviewSignalSeverityRank(severity string) int {
 // immediately previous week).
 func crossWeekNewPatternSignals(
 	currentPatterns []semanticcontracts.FailurePatternRecord,
-	historyResolver semhistory.FailurePatternHistoryResolver,
+	historyResolver failurepatterns.PresenceResolver,
 	previousWeek string,
 ) []ReviewSignalRow {
 	if historyResolver == nil {
@@ -336,7 +328,7 @@ func crossWeekNewPatternSignals(
 		canonical := strings.TrimSpace(fp.CanonicalEvidencePhrase)
 		searchQuery := strings.TrimSpace(fp.SearchQueryPhrase)
 
-		presence := historyResolver.PresenceFor(semhistory.FailurePatternKey{
+		presence := historyResolver.PresenceFor(failurepatterns.PatternKey{
 			Environment: env,
 			Phrase:      canonical,
 			SearchQuery: searchQuery,

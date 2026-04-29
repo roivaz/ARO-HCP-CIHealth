@@ -7,9 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"ci-failure-atlas/pkg/failurepatterns"
 	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
-	semhistory "ci-failure-atlas/pkg/semantic/history"
-	semanticquery "ci-failure-atlas/pkg/semantic/query"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 	postgresstore "ci-failure-atlas/pkg/store/postgres"
 )
@@ -20,7 +19,7 @@ type FailurePatternReportBuildOptions struct {
 	Week                string
 	Environments        []string
 	HistoryHorizonWeeks int
-	HistoryResolver     semhistory.FailurePatternHistoryResolver
+	HistoryResolver     failurepatterns.PresenceResolver
 }
 
 type FailurePatternReportReference struct {
@@ -64,7 +63,7 @@ type FailurePatternReportData struct {
 	OverallJobsByEnvironment       map[string]int
 	WindowStartRaw                 string
 	WindowEndRaw                   string
-	HistoryResolver                semhistory.FailurePatternHistoryResolver
+	HistoryResolver                failurepatterns.PresenceResolver
 	GeneratedAt                    time.Time
 	TestClusterCountsByEnvironment map[string]int
 	ReviewItemCountsByEnvironment  map[string]int
@@ -75,8 +74,13 @@ func BuildFailurePatternReportData(ctx context.Context, store storecontracts.Sto
 		return FailurePatternReportData{}, fmt.Errorf("store is required")
 	}
 
-	weekData, err := semanticquery.LoadWeekData(ctx, store, semanticquery.LoadWeekDataOptions{
-		IncludeRawFailures: true,
+	metricWindowStart, metricWindowEnd := failurePatternReportMetricWindowBounds(opts.Week)
+	windowStartRaw, windowEndRaw := failurePatternReportMetricWindowStrings(metricWindowStart, metricWindowEnd)
+	weekData, err := failurepatterns.LoadStoredWeek(ctx, store, failurepatterns.LoadStoredWeekOptions{
+		IncludeRawFailures:     true,
+		RawFailureWindowStart:  metricWindowStart,
+		RawFailureWindowEnd:    metricWindowEnd,
+		RawFailureEnvironments: append([]string(nil), opts.Environments...),
 	})
 	if err != nil {
 		return FailurePatternReportData{}, err
@@ -85,9 +89,7 @@ func BuildFailurePatternReportData(ctx context.Context, store storecontracts.Sto
 	reportRows := toFailurePatternReportClusters(weekData.FailurePatterns)
 	rawFailuresByRun := failurePatternReportIndexRawFailuresByEnvironmentRun(weekData.RawFailures)
 
-	targetEnvironments := semanticquery.ResolveTargetEnvironments(opts.Environments, weekData)
-	metricWindowStart, metricWindowEnd := failurePatternReportMetricWindowBounds(opts.Week)
-	windowStartRaw, windowEndRaw := failurePatternReportMetricWindowStrings(metricWindowStart, metricWindowEnd)
+	targetEnvironments := failurepatterns.ResolveTargetEnvironments(opts.Environments, weekData)
 	overallJobsByEnvironment, err := failurePatternReportMetricRunTotalsByEnvironment(
 		ctx,
 		store,
@@ -105,10 +107,10 @@ func BuildFailurePatternReportData(ctx context.Context, store storecontracts.Sto
 		if lookbackWeeks <= 0 {
 			lookbackWeeks = DefaultHistoryWeeks
 		}
-		historyResolver, err = semhistory.BuildFailurePatternHistoryResolver(ctx, semhistory.BuildOptions{
-			CurrentWeek:                        strings.TrimSpace(opts.Week),
-			CurrentSchemaVersion:               weekData.WeekSchemaVersion,
-			FailurePatternHistoryLookbackWeeks: lookbackWeeks,
+		historyResolver, err = failurepatterns.BuildPresenceResolver(ctx, failurepatterns.BuildPresenceOptions{
+			CurrentWeek:          strings.TrimSpace(opts.Week),
+			CurrentSchemaVersion: weekData.WeekSchemaVersion,
+			LookbackWeeks:        lookbackWeeks,
 		})
 		if err != nil {
 			return FailurePatternReportData{}, fmt.Errorf("build failure-pattern history resolver: %w", err)
@@ -174,49 +176,11 @@ func failurePatternReportMetricRunTotalsByEnvironment(
 	if len(normalizedEnvironments) == 0 {
 		return totals, nil
 	}
-	if metricDates := metricDateLabelsFromWindow(windowStart, windowEnd); len(metricDates) > 0 {
-		return sumMetricByEnvironmentForDates(ctx, store, "run_count", normalizedEnvironments, metricDates)
+	metricDates := metricDateLabelsFromWindow(windowStart, windowEnd)
+	if len(metricDates) == 0 {
+		return totals, nil
 	}
-	environmentSet := make(map[string]struct{}, len(normalizedEnvironments))
-	for _, environment := range normalizedEnvironments {
-		environmentSet[environment] = struct{}{}
-	}
-	rows, err := store.ListMetricsDaily(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, row := range rows {
-		environment := normalizeEnvironment(row.Environment)
-		if _, ok := environmentSet[environment]; !ok {
-			continue
-		}
-		if strings.TrimSpace(row.Metric) != "run_count" {
-			continue
-		}
-		if !windowStart.IsZero() && !windowEnd.IsZero() {
-			dateValue, ok := failurePatternReportParseMetricDate(row.Date)
-			if !ok {
-				continue
-			}
-			if dateValue.Before(windowStart) || !dateValue.Before(windowEnd) {
-				continue
-			}
-		}
-		value := int(row.Value)
-		if value <= 0 {
-			continue
-		}
-		totals[environment] += value
-	}
-	return totals, nil
-}
-
-func failurePatternReportParseMetricDate(value string) (time.Time, bool) {
-	parsed, err := time.Parse("2006-01-02", strings.TrimSpace(value))
-	if err != nil {
-		return time.Time{}, false
-	}
-	return parsed.UTC(), true
+	return sumMetricByEnvironmentForDates(ctx, store, "run_count", normalizedEnvironments, metricDates)
 }
 
 func toFailurePatternReportClusters(rows []semanticcontracts.FailurePatternRecord) []FailurePatternReportCluster {

@@ -413,14 +413,6 @@ func (f *fakeProwRunsStore) UpsertRuns(_ context.Context, runs []contracts.RunRe
 	return nil
 }
 
-func (f *fakeProwRunsStore) ListRuns(_ context.Context) ([]contracts.RunRecord, error) {
-	rows := make([]contracts.RunRecord, 0, len(f.runs))
-	for _, row := range f.runs {
-		rows = append(rows, row)
-	}
-	return rows, nil
-}
-
 func (f *fakeProwRunsStore) ListRunKeys(_ context.Context) ([]string, error) {
 	keys := make([]string, 0, len(f.runs))
 	for key := range f.runs {
@@ -430,10 +422,6 @@ func (f *fakeProwRunsStore) ListRunKeys(_ context.Context) ([]string, error) {
 }
 
 func (f *fakeProwRunsStore) ListRunDates(_ context.Context) ([]string, error) {
-	return nil, nil
-}
-
-func (f *fakeProwRunsStore) ListRunsByDate(_ context.Context, environment string, date string) ([]contracts.RunRecord, error) {
 	return nil, nil
 }
 
@@ -474,19 +462,7 @@ func (f *fakeProwRunsStore) UpsertRawFailures(_ context.Context, rows []contract
 	return nil
 }
 
-func (f *fakeProwRunsStore) ListRawFailures(_ context.Context) ([]contracts.RawFailureRecord, error) {
-	return nil, nil
-}
-
-func (f *fakeProwRunsStore) ListRawFailureRunKeys(_ context.Context) ([]string, error) {
-	return nil, nil
-}
-
 func (f *fakeProwRunsStore) ListRawFailuresByRun(_ context.Context, environment string, runURL string) ([]contracts.RawFailureRecord, error) {
-	return nil, nil
-}
-
-func (f *fakeProwRunsStore) ListRawFailuresByDate(_ context.Context, environment string, date string) ([]contracts.RawFailureRecord, error) {
 	return nil, nil
 }
 
@@ -496,10 +472,6 @@ func (f *fakeProwRunsStore) ListRawFailuresByDateRange(_ context.Context, enviro
 
 func (f *fakeProwRunsStore) UpsertMetricsDaily(_ context.Context, rows []contracts.MetricDailyRecord) error {
 	return nil
-}
-
-func (f *fakeProwRunsStore) ListMetricsDaily(_ context.Context) ([]contracts.MetricDailyRecord, error) {
-	return nil, nil
 }
 
 func (f *fakeProwRunsStore) ListMetricsDailyByDate(_ context.Context, environment string, date string) ([]contracts.MetricDailyRecord, error) {

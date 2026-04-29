@@ -7,10 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"ci-failure-atlas/pkg/failurepatterns"
 	failurepatternwindow "ci-failure-atlas/pkg/failurepatterns/window"
 	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
-	semhistory "ci-failure-atlas/pkg/semantic/history"
-	semanticquery "ci-failure-atlas/pkg/semantic/query"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 )
 
@@ -350,7 +349,7 @@ func (s *Service) buildFailurePatternsInline(
 		}
 	}
 
-	anchorSchemaVersion, err := semanticquery.InferStoreWeekSchemaVersion(ctx, factsStore)
+	anchorSchemaVersion, err := failurepatterns.InferStoredWeekSchemaVersion(ctx, factsStore)
 	if err != nil {
 		return FailurePatternsData{}, fmt.Errorf("infer anchor week schema version: %w", err)
 	}
@@ -480,7 +479,7 @@ func failurePatternsHorizonStart(scope presentationWindow) time.Time {
 
 func buildInlineFailurePatternsRow(
 	cluster FailurePatternReportCluster,
-	historyResolver semhistory.FailurePatternHistoryResolver,
+	historyResolver failurepatterns.PresenceResolver,
 	trendAnchor time.Time,
 	trendDays int,
 	anchorWeek string,
@@ -520,7 +519,7 @@ func buildInlineFailurePatternsRow(
 	}
 
 	if historyResolver != nil {
-		presence := historyResolver.PresenceFor(semhistory.FailurePatternKey{
+		presence := historyResolver.PresenceFor(failurepatterns.PatternKey{
 			Environment: row.Environment,
 			Phrase:      row.CanonicalEvidencePhrase,
 			SearchQuery: row.SearchQueryPhrase,
@@ -791,7 +790,7 @@ func failurePatternsFactsForWeek(
 func buildFailurePatternsRow(
 	cluster FailurePatternReportCluster,
 	facts failurePatternsEnvironmentFacts,
-	historyResolver semhistory.FailurePatternHistoryResolver,
+	historyResolver failurepatterns.PresenceResolver,
 	trendAnchor time.Time,
 	anchorWeek string,
 ) (FailurePatternsRow, bool) {
@@ -849,7 +848,7 @@ func buildFailurePatternsRow(
 	}
 
 	if historyResolver != nil {
-		presence := historyResolver.PresenceFor(semhistory.FailurePatternKey{
+		presence := historyResolver.PresenceFor(failurepatterns.PatternKey{
 			Environment: row.Environment,
 			Phrase:      row.CanonicalEvidencePhrase,
 			SearchQuery: row.SearchQueryPhrase,

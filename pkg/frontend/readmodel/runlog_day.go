@@ -7,9 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"ci-failure-atlas/pkg/failurepatterns"
 	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
-	semhistory "ci-failure-atlas/pkg/semantic/history"
-	semanticquery "ci-failure-atlas/pkg/semantic/query"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 )
 
@@ -129,12 +128,12 @@ func (s *Service) BuildRunLogDay(ctx context.Context, query RunLogDayQuery) (Run
 		_ = store.Close()
 	}()
 
-	weekData, err := semanticquery.LoadWeekData(ctx, store, semanticquery.LoadWeekDataOptions{})
+	weekData, err := failurepatterns.LoadStoredWeek(ctx, store, failurepatterns.LoadStoredWeekOptions{})
 	if err != nil {
 		return RunLogDayData{}, fmt.Errorf("load semantic week data for run history: %w", err)
 	}
 
-	targetEnvironments := semanticquery.ResolveTargetEnvironments(query.Environments, weekData)
+	targetEnvironments := failurepatterns.ResolveTargetEnvironments(query.Environments, weekData)
 	if len(targetEnvironments) == 0 {
 		targetEnvironments = normalizeStringSlice(query.Environments)
 	}
@@ -404,7 +403,7 @@ func buildRunLogDaySummary(runs []JobHistoryRunRow) RunLogDaySummary {
 
 func buildJobHistoryReferenceIndex(
 	clusters []semanticcontracts.FailurePatternRecord,
-	historyResolver semhistory.FailurePatternHistoryResolver,
+	historyResolver failurepatterns.PresenceResolver,
 ) map[string]jobHistoryReferenceCluster {
 	index := map[string]jobHistoryReferenceCluster{}
 	phraseEnvironments := jobHistoryPhraseEnvironments(clusters)
@@ -419,7 +418,7 @@ func buildJobHistoryReferenceIndex(
 		)
 		var priorWeeksPresent int
 		if historyResolver != nil {
-			presence := historyResolver.PresenceFor(semhistory.FailurePatternKey{
+			presence := historyResolver.PresenceFor(failurepatterns.PatternKey{
 				Environment: environment,
 				Phrase:      strings.TrimSpace(cluster.CanonicalEvidencePhrase),
 				SearchQuery: strings.TrimSpace(cluster.SearchQueryPhrase),
@@ -557,26 +556,11 @@ func jobHistoryRawFailureKeys(environment string, row storecontracts.RawFailureR
 }
 
 func jobHistoryReferenceRowKey(environment string, rowID string) string {
-	normalizedEnvironment := normalizeEnvironment(environment)
-	rowKey := semanticquery.EnvironmentRowKey(normalizedEnvironment, rowID)
-	if rowKey == "" {
-		return ""
-	}
-	return "row|" + rowKey
+	return failurepatterns.ReferenceRowMatchKey(environment, rowID)
 }
 
 func jobHistoryReferenceTupleKey(environment string, runURL string, occurredAt string, signatureID string) string {
-	normalizedEnvironment := normalizeEnvironment(environment)
-	trimmedRunURL := strings.TrimSpace(runURL)
-	trimmedOccurredAt := strings.TrimSpace(occurredAt)
-	trimmedSignatureID := strings.TrimSpace(signatureID)
-	if normalizedEnvironment == "" {
-		return ""
-	}
-	if trimmedRunURL == "" && trimmedOccurredAt == "" && trimmedSignatureID == "" {
-		return ""
-	}
-	return "ref|" + normalizedEnvironment + "|" + trimmedRunURL + "|" + trimmedOccurredAt + "|" + trimmedSignatureID
+	return failurepatterns.ReferenceTupleMatchKey(environment, runURL, occurredAt, signatureID)
 }
 
 func sortJobHistoryRunRows(rows []JobHistoryRunRow) {

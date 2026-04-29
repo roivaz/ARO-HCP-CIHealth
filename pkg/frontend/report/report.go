@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"ci-failure-atlas/pkg/failurepatterns"
 	frontservice "ci-failure-atlas/pkg/frontend/readmodel"
 	frontui "ci-failure-atlas/pkg/frontend/ui"
-	semhistory "ci-failure-atlas/pkg/semantic/history"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 	postgresstore "ci-failure-atlas/pkg/store/postgres"
 )
@@ -36,7 +36,7 @@ type Options struct {
 	TargetRate          float64
 	Week                string
 	HistoryHorizonWeeks int
-	HistoryResolver     semhistory.FailurePatternHistoryResolver
+	HistoryResolver     failurepatterns.PresenceResolver
 	RunLogDayBasePath   string
 	Chrome              frontui.ReportChromeOptions
 }
@@ -47,7 +47,7 @@ type validatedOptions struct {
 	TargetRate          float64
 	Week                string
 	HistoryHorizonWeeks int
-	HistoryResolver     semhistory.FailurePatternHistoryResolver
+	HistoryResolver     failurepatterns.PresenceResolver
 	RunLogDayBasePath   string
 	Chrome              frontui.ReportChromeOptions
 }
@@ -635,7 +635,7 @@ func topSignatureToFailurePatternRow(item topSignature) frontservice.FailurePatt
 
 func legacyWeeklyFailurePatternRowsByEnv(
 	source map[string][]topSignature,
-	historyResolver semhistory.FailurePatternHistoryResolver,
+	historyResolver failurepatterns.PresenceResolver,
 	endDate time.Time,
 ) map[string][]frontservice.FailurePatternRow {
 	out := make(map[string][]frontservice.FailurePatternRow, len(source))
@@ -644,7 +644,7 @@ func legacyWeeklyFailurePatternRowsByEnv(
 		for _, item := range items {
 			failurePatternRow := topSignatureToFailurePatternRow(item)
 			if historyResolver != nil {
-				presence := historyResolver.PresenceFor(semhistory.FailurePatternKey{
+				presence := historyResolver.PresenceFor(failurepatterns.PatternKey{
 					Environment: item.Environment,
 					Phrase:      item.Phrase,
 					SearchQuery: item.SearchQuery,

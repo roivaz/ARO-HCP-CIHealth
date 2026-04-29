@@ -217,7 +217,7 @@ func TestGetSemanticWeekSummaryAggregatesByEnvironment(t *testing.T) {
 	}
 }
 
-func TestListRunsByDateUsesUTCDateProjection(t *testing.T) {
+func TestListRunsByDateRangeUsesUTCDateProjection(t *testing.T) {
 	t.Parallel()
 
 	store := newIntegrationStore(t, "")
@@ -251,9 +251,14 @@ func TestListRunsByDateUsesUTCDateProjection(t *testing.T) {
 		t.Fatalf("unexpected run dates: got=%v want=%v", got, want)
 	}
 
-	rows, err := store.ListRunsByDate(ctx, "dev", "2026-03-16")
+	rows, err := store.ListRunsByDateRange(
+		ctx,
+		"dev",
+		time.Date(2026, time.March, 16, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, time.March, 17, 0, 0, 0, 0, time.UTC),
+	)
 	if err != nil {
-		t.Fatalf("list runs by date: %v", err)
+		t.Fatalf("list runs by date range: %v", err)
 	}
 	if got, want := len(rows), 1; got != want {
 		t.Fatalf("unexpected runs by date count: got=%d want=%d", got, want)
@@ -319,7 +324,7 @@ func TestListRunsByDateRangeUsesTimestampWindow(t *testing.T) {
 	}
 }
 
-func TestListRawFailuresByDateUsesUTCDateProjection(t *testing.T) {
+func TestListRawFailuresByDateRangeUsesUTCDateProjection(t *testing.T) {
 	t.Parallel()
 
 	store := newIntegrationStore(t, "")
@@ -354,9 +359,14 @@ func TestListRawFailuresByDateUsesUTCDateProjection(t *testing.T) {
 		t.Fatalf("upsert raw failures: %v", err)
 	}
 
-	rows, err := store.ListRawFailuresByDate(ctx, "dev", "2026-03-16")
+	rows, err := store.ListRawFailuresByDateRange(
+		ctx,
+		"dev",
+		time.Date(2026, time.March, 16, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, time.March, 17, 0, 0, 0, 0, time.UTC),
+	)
 	if err != nil {
-		t.Fatalf("list raw failures by date: %v", err)
+		t.Fatalf("list raw failures by date range: %v", err)
 	}
 	if got, want := len(rows), 1; got != want {
 		t.Fatalf("unexpected raw failures by date count: got=%d want=%d", got, want)

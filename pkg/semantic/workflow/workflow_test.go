@@ -122,6 +122,8 @@ func TestRunPhase1BuildsSemanticArtifacts(t *testing.T) {
 
 	result, err := RunPhase1(ctx, store, RunOptions{
 		Environments: []string{"dev"},
+		WindowStart:  ptrTime(time.Date(2026, time.March, 6, 0, 0, 0, 0, time.UTC)),
+		WindowEnd:    ptrTime(time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)),
 	})
 	if err != nil {
 		t.Fatalf("run phase1: %v", err)
@@ -190,6 +192,8 @@ func TestRunPhase1FiltersByEnvironment(t *testing.T) {
 
 	result, err := RunPhase1(ctx, store, RunOptions{
 		Environments: []string{"dev"},
+		WindowStart:  ptrTime(time.Date(2026, time.March, 6, 0, 0, 0, 0, time.UTC)),
+		WindowEnd:    ptrTime(time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)),
 	})
 	if err != nil {
 		t.Fatalf("run phase1: %v", err)
@@ -291,6 +295,8 @@ func TestRunPhase1FailsWhenRunMetadataMissing(t *testing.T) {
 
 	_, err := RunPhase1(ctx, store, RunOptions{
 		Environments: []string{"dev"},
+		WindowStart:  ptrTime(time.Date(2026, time.March, 6, 0, 0, 0, 0, time.UTC)),
+		WindowEnd:    ptrTime(time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)),
 	})
 	if err == nil {
 		t.Fatalf("expected run to fail when run metadata is missing")

@@ -5,13 +5,17 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 )
 
 type LoadWeekDataOptions struct {
-	IncludeRawFailures bool
+	IncludeRawFailures     bool
+	RawFailureWindowStart  time.Time
+	RawFailureWindowEnd    time.Time
+	RawFailureEnvironments []string
 }
 
 type WeekData struct {
@@ -73,9 +77,17 @@ func LoadWeekData(ctx context.Context, store storecontracts.Store, opts LoadWeek
 
 	rawFailures := []storecontracts.RawFailureRecord(nil)
 	if opts.IncludeRawFailures {
-		rawFailures, err = store.ListRawFailures(ctx)
+		if err := validateWeekRawFailureRange(opts); err != nil {
+			return WeekData{}, err
+		}
+		rawFailures, err = loadWeekRawFailuresByRange(
+			ctx,
+			store,
+			opts,
+			summary.AvailableEnvironments,
+		)
 		if err != nil {
-			return WeekData{}, fmt.Errorf("list raw failures: %w", err)
+			return WeekData{}, err
 		}
 	}
 
@@ -91,6 +103,57 @@ func LoadWeekData(ctx context.Context, store storecontracts.Store, opts LoadWeek
 		OccurrenceTotalsByEnv:     summary.OccurrenceTotalsByEnv,
 		AvailableEnvironments:     summary.AvailableEnvironments,
 	}, nil
+}
+
+func validateWeekRawFailureRange(opts LoadWeekDataOptions) error {
+	hasStart := !opts.RawFailureWindowStart.IsZero()
+	hasEnd := !opts.RawFailureWindowEnd.IsZero()
+	switch {
+	case hasStart != hasEnd:
+		return fmt.Errorf("raw failure time window requires both start and end timestamps")
+	case !hasStart:
+		return fmt.Errorf("raw failure time window is required when raw failures are included")
+	case !opts.RawFailureWindowStart.Before(opts.RawFailureWindowEnd):
+		return fmt.Errorf("raw failure time window requires start before end")
+	default:
+		return nil
+	}
+}
+
+func loadWeekRawFailuresByRange(
+	ctx context.Context,
+	store storecontracts.Store,
+	opts LoadWeekDataOptions,
+	availableEnvironments []string,
+) ([]storecontracts.RawFailureRecord, error) {
+	targetEnvironments := normalizeEnvironments(opts.RawFailureEnvironments)
+	if len(targetEnvironments) == 0 {
+		targetEnvironments = normalizeEnvironments(availableEnvironments)
+	}
+	if len(targetEnvironments) == 0 {
+		return nil, nil
+	}
+
+	out := make([]storecontracts.RawFailureRecord, 0)
+	for _, environment := range targetEnvironments {
+		rows, err := store.ListRawFailuresByDateRange(
+			ctx,
+			environment,
+			opts.RawFailureWindowStart.UTC(),
+			opts.RawFailureWindowEnd.UTC(),
+		)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"list raw failures for env=%q in range %s..%s: %w",
+				environment,
+				opts.RawFailureWindowStart.UTC().Format(time.RFC3339),
+				opts.RawFailureWindowEnd.UTC().Format(time.RFC3339),
+				err,
+			)
+		}
+		out = append(out, rows...)
+	}
+	return out, nil
 }
 
 func ResolveTargetEnvironments(configured []string, data WeekData) []string {

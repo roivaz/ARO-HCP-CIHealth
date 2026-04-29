@@ -8,9 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"ci-failure-atlas/pkg/failurepatterns"
 	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
-	semhistory "ci-failure-atlas/pkg/semantic/history"
-	semanticquery "ci-failure-atlas/pkg/semantic/query"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 	postgresstore "ci-failure-atlas/pkg/store/postgres"
 
@@ -140,7 +139,7 @@ func (s *Service) semanticWeekSchemaVersion(ctx context.Context, week string) (s
 	if err != nil {
 		return "", err
 	}
-	weekSchemaVersion, inferErr := semanticquery.InferStoreWeekSchemaVersion(ctx, store)
+	weekSchemaVersion, inferErr := failurepatterns.InferStoredWeekSchemaVersion(ctx, store)
 	_ = store.Close()
 	if inferErr != nil {
 		return "", fmt.Errorf("inspect semantic week %s schema version: %w", week, inferErr)
@@ -211,7 +210,7 @@ func (s *Service) OpenStoreForWeek(week string) (storecontracts.Store, error) {
 	return store, nil
 }
 
-func (s *Service) BuildHistoryResolver(ctx context.Context, week string) (semhistory.FailurePatternHistoryResolver, error) {
+func (s *Service) BuildHistoryResolver(ctx context.Context, week string) (failurepatterns.PresenceResolver, error) {
 	return s.BuildHistoryResolverForWeek(ctx, week, "")
 }
 
@@ -219,14 +218,14 @@ func (s *Service) BuildHistoryResolverForWeek(
 	ctx context.Context,
 	week string,
 	currentSchemaVersion string,
-) (semhistory.FailurePatternHistoryResolver, error) {
+) (failurepatterns.PresenceResolver, error) {
 	if s == nil {
 		return nil, fmt.Errorf("service is required")
 	}
-	return semhistory.BuildFailurePatternHistoryResolver(ctx, semhistory.BuildOptions{
-		CurrentWeek:                        strings.TrimSpace(week),
-		CurrentSchemaVersion:               currentSchemaVersion,
-		FailurePatternHistoryLookbackWeeks: s.historyWeeks,
+	return failurepatterns.BuildPresenceResolver(ctx, failurepatterns.BuildPresenceOptions{
+		CurrentWeek:          strings.TrimSpace(week),
+		CurrentSchemaVersion: currentSchemaVersion,
+		LookbackWeeks:        s.historyWeeks,
 		ListWeeks: func(ctx context.Context) ([]string, error) {
 			return s.DiscoverSemanticWeeks(ctx)
 		},

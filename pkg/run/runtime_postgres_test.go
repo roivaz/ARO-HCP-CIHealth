@@ -43,8 +43,8 @@ func TestCompleteUsesPostgresStoreWhenEnabled(t *testing.T) {
 	if completed.Store == nil {
 		t.Fatalf("expected postgres-backed store to be created")
 	}
-	if _, err := completed.Store.ListRuns(context.Background()); err != nil {
-		t.Fatalf("smoke list runs using postgres store: %v", err)
+	if _, err := completed.Store.ListRunKeys(context.Background()); err != nil {
+		t.Fatalf("smoke list run keys using postgres store: %v", err)
 	}
 }
 

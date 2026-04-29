@@ -7,9 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"ci-failure-atlas/pkg/failurepatterns"
 	semanticcontracts "ci-failure-atlas/pkg/semantic/contracts"
-	semhistory "ci-failure-atlas/pkg/semantic/history"
-	semanticquery "ci-failure-atlas/pkg/semantic/query"
 	sourceoptions "ci-failure-atlas/pkg/source/options"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 )
@@ -40,7 +39,7 @@ type WeeklyReportBuildOptions struct {
 	TargetRate          float64
 	Week                string
 	HistoryHorizonWeeks int
-	HistoryResolver     semhistory.FailurePatternHistoryResolver
+	HistoryResolver     failurepatterns.PresenceResolver
 }
 
 type WeeklyCounts struct {
@@ -150,7 +149,7 @@ type WeeklyReportData struct {
 	PreviousSemantic      WeeklySemanticSnapshot
 	TestsBelowTargetByEnv map[string][]WeeklyBelowTargetTest
 	TopSignaturesByEnv    map[string][]WeeklyTopSignature
-	HistoryResolver       semhistory.FailurePatternHistoryResolver
+	HistoryResolver       failurepatterns.PresenceResolver
 }
 
 func BuildWeeklyReportData(
@@ -179,8 +178,13 @@ func BuildWeeklyReportData(
 		return WeeklyReportData{}, err
 	}
 
-	currentWeekData, err := semanticquery.LoadWeekData(ctx, store, semanticquery.LoadWeekDataOptions{
-		IncludeRawFailures: true,
+	currentStart := opts.StartDate.UTC()
+	currentEnd := currentStart.AddDate(0, 0, weeklyWindowDays)
+	currentWeekData, err := failurepatterns.LoadStoredWeek(ctx, store, failurepatterns.LoadStoredWeekOptions{
+		IncludeRawFailures:     true,
+		RawFailureWindowStart:  currentStart,
+		RawFailureWindowEnd:    currentEnd,
+		RawFailureEnvironments: append([]string(nil), weeklyReportEnvironments...),
 	})
 	if err != nil {
 		return WeeklyReportData{}, fmt.Errorf("load current semantic inputs: %w", err)
@@ -211,7 +215,7 @@ func BuildWeeklyReportData(
 
 	var previousSemantic semanticSnapshot
 	if previousSemanticStore != nil {
-		previousWeekData, loadErr := semanticquery.LoadWeekData(ctx, previousSemanticStore, semanticquery.LoadWeekDataOptions{})
+		previousWeekData, loadErr := failurepatterns.LoadStoredWeek(ctx, previousSemanticStore, failurepatterns.LoadStoredWeekOptions{})
 		if loadErr != nil {
 			return WeeklyReportData{}, fmt.Errorf("load previous semantic inputs: %w", loadErr)
 		}
@@ -234,17 +238,17 @@ func BuildWeeklyReportData(
 		if lookbackWeeks <= 0 {
 			lookbackWeeks = DefaultHistoryWeeks
 		}
-		historyResolver, err = semhistory.BuildFailurePatternHistoryResolver(ctx, semhistory.BuildOptions{
-			CurrentWeek:                        strings.TrimSpace(opts.Week),
-			CurrentSchemaVersion:               currentWeekData.WeekSchemaVersion,
-			FailurePatternHistoryLookbackWeeks: lookbackWeeks,
+		historyResolver, err = failurepatterns.BuildPresenceResolver(ctx, failurepatterns.BuildPresenceOptions{
+			CurrentWeek:          strings.TrimSpace(opts.Week),
+			CurrentSchemaVersion: currentWeekData.WeekSchemaVersion,
+			LookbackWeeks:        lookbackWeeks,
 		})
 		if err != nil {
 			return WeeklyReportData{}, fmt.Errorf("build signature history resolver: %w", err)
 		}
 	}
 
-	startDate := opts.StartDate.UTC()
+	startDate := currentStart
 	return WeeklyReportData{
 		StartDate:             startDate,
 		EndDate:               startDate.AddDate(0, 0, weeklyWindowDays-1),
@@ -329,7 +333,7 @@ func loadMetricsDailyByEnvironmentDate(
 	return out, nil
 }
 
-func loadSemanticSnapshot(weekData semanticquery.WeekData) (semanticSnapshot, error) {
+func loadSemanticSnapshot(weekData failurepatterns.StoredWeekData) (semanticSnapshot, error) {
 	out := semanticSnapshot{
 		ByEnvironment:                    map[string]semanticEnvSummary{},
 		ClusterSignaturesByEnv:           map[string][]topSignature{},

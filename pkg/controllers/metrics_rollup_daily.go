@@ -192,15 +192,21 @@ func (c *metricsRollupDailyController) processKey(ctx context.Context, key strin
 	if err != nil {
 		return fmt.Errorf("invalid rollup date key %q: %w", key, err)
 	}
+	startTime, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return fmt.Errorf("parse normalized rollup date %q: %w", date, err)
+	}
+	startTime = startTime.UTC()
+	endTime := startTime.AddDate(0, 0, 1)
 
 	out := make([]contracts.MetricDailyRecord, 0, len(c.envs)*9)
 	for _, env := range c.envs {
-		runs, err := c.store.ListRunsByDate(ctx, env, date)
+		runs, err := c.store.ListRunsByDateRange(ctx, env, startTime, endTime)
 		if err != nil {
 			return fmt.Errorf("list runs for env=%q date=%q: %w", env, date, err)
 		}
 
-		rawFailures, err := c.store.ListRawFailuresByDate(ctx, env, date)
+		rawFailures, err := c.store.ListRawFailuresByDateRange(ctx, env, startTime, endTime)
 		if err != nil {
 			return fmt.Errorf("list raw failures for env=%q date=%q: %w", env, date, err)
 		}

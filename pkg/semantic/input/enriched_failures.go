@@ -67,10 +67,18 @@ func BuildEnrichedFailures(ctx context.Context, store storecontracts.Store, opts
 	if store == nil {
 		return BuildResult{}, fmt.Errorf("store is required")
 	}
-
-	runs, err := store.ListRuns(ctx)
+	windowStart, windowEnd, err := normalizeBuildWindow(opts)
 	if err != nil {
-		return BuildResult{}, fmt.Errorf("list runs: %w", err)
+		return BuildResult{}, err
+	}
+	environments, err := buildEnvironments(opts.EnvironmentSet)
+	if err != nil {
+		return BuildResult{}, err
+	}
+
+	runs, err := loadRunsByEnvironmentRange(ctx, store, environments, windowStart, windowEnd)
+	if err != nil {
+		return BuildResult{}, err
 	}
 	runByKey := make(map[string]storecontracts.RunRecord, len(runs))
 	for _, run := range runs {
@@ -82,9 +90,9 @@ func BuildEnrichedFailures(ctx context.Context, store storecontracts.Store, opts
 		runByKey[key] = normalizedRun
 	}
 
-	rawRows, err := store.ListRawFailures(ctx)
+	rawRows, err := loadRawFailuresByEnvironmentRange(ctx, store, environments, windowStart, windowEnd)
 	if err != nil {
-		return BuildResult{}, fmt.Errorf("list raw failures: %w", err)
+		return BuildResult{}, err
 	}
 
 	result := BuildResult{
@@ -100,10 +108,6 @@ func BuildEnrichedFailures(ctx context.Context, store storecontracts.Store, opts
 		if environment == "" || runURL == "" {
 			continue
 		}
-		if !isEnvironmentEnabled(environment, opts.EnvironmentSet) {
-			continue
-		}
-
 		result.Diagnostics.RawRowsTotal++
 		if normalizedRow.NonArtifactBacked {
 			result.Diagnostics.RowsSkippedNonArtifact++
@@ -197,6 +201,85 @@ func BuildEnrichedFailures(ctx context.Context, store storecontracts.Store, opts
 	}
 
 	return result, nil
+}
+
+func normalizeBuildWindow(opts BuildOptions) (time.Time, time.Time, error) {
+	if opts.WindowStart == nil || opts.WindowEnd == nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("build enriched failures requires window start and end")
+	}
+	start := opts.WindowStart.UTC()
+	end := opts.WindowEnd.UTC()
+	if start.IsZero() || end.IsZero() || !start.Before(end) {
+		return time.Time{}, time.Time{}, fmt.Errorf("build enriched failures requires a valid time window")
+	}
+	return start, end, nil
+}
+
+func buildEnvironments(environmentSet map[string]struct{}) ([]string, error) {
+	if len(environmentSet) == 0 {
+		return nil, fmt.Errorf("build enriched failures requires at least one environment")
+	}
+	out := make([]string, 0, len(environmentSet))
+	for environment := range environmentSet {
+		normalized := normalizeEnvironment(environment)
+		if normalized == "" {
+			continue
+		}
+		out = append(out, normalized)
+	}
+	sort.Strings(out)
+	if len(out) == 0 {
+		return nil, fmt.Errorf("build enriched failures requires at least one environment")
+	}
+	return out, nil
+}
+
+func loadRunsByEnvironmentRange(
+	ctx context.Context,
+	store storecontracts.Store,
+	environments []string,
+	start time.Time,
+	end time.Time,
+) ([]storecontracts.RunRecord, error) {
+	out := make([]storecontracts.RunRecord, 0)
+	for _, environment := range environments {
+		rows, err := store.ListRunsByDateRange(ctx, environment, start, end)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"list runs for env=%q in range %s..%s: %w",
+				environment,
+				start.Format(time.RFC3339),
+				end.Format(time.RFC3339),
+				err,
+			)
+		}
+		out = append(out, rows...)
+	}
+	return out, nil
+}
+
+func loadRawFailuresByEnvironmentRange(
+	ctx context.Context,
+	store storecontracts.Store,
+	environments []string,
+	start time.Time,
+	end time.Time,
+) ([]storecontracts.RawFailureRecord, error) {
+	out := make([]storecontracts.RawFailureRecord, 0)
+	for _, environment := range environments {
+		rows, err := store.ListRawFailuresByDateRange(ctx, environment, start, end)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"list raw failures for env=%q in range %s..%s: %w",
+				environment,
+				start.Format(time.RFC3339),
+				end.Format(time.RFC3339),
+				err,
+			)
+		}
+		out = append(out, rows...)
+	}
+	return out, nil
 }
 
 func enrichedRunLookupKey(environment string, runURL string) string {

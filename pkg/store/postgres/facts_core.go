@@ -55,47 +55,6 @@ DO UPDATE SET
 	})
 }
 
-func (s *Store) listRunsImpl(ctx context.Context) ([]storecontracts.RunRecord, error) {
-	rows, err := s.pool.Query(ctx, `
-SELECT environment, run_url, job_name, pr_number, pr_state, pr_sha, final_merged_sha, merged_pr, post_good_commit, failed, occurred_at
-FROM cfa_runs
-`)
-	if err != nil {
-		return nil, fmt.Errorf("query runs: %w", err)
-	}
-	defer rows.Close()
-
-	out := make([]storecontracts.RunRecord, 0)
-	for rows.Next() {
-		var row storecontracts.RunRecord
-		if err := rows.Scan(
-			&row.Environment,
-			&row.RunURL,
-			&row.JobName,
-			&row.PRNumber,
-			&row.PRState,
-			&row.PRSHA,
-			&row.FinalMergedSHA,
-			&row.MergedPR,
-			&row.PostGoodCommit,
-			&row.Failed,
-			&row.OccurredAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan run row: %w", err)
-		}
-		normalized := normalizeRunRecord(row)
-		if normalized.Environment == "" || normalized.RunURL == "" {
-			continue
-		}
-		out = append(out, normalized)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate runs: %w", err)
-	}
-	sortRunsForStableOutput(out)
-	return out, nil
-}
-
 func (s *Store) listRunKeysImpl(ctx context.Context) ([]string, error) {
 	rows, err := s.pool.Query(ctx, `SELECT environment, run_url FROM cfa_runs`)
 	if err != nil {
@@ -158,18 +117,6 @@ ORDER BY occurred_date
 		return nil, fmt.Errorf("iterate run dates: %w", err)
 	}
 	return out, nil
-}
-
-func (s *Store) listRunsByDateImpl(ctx context.Context, environment string, date string) ([]storecontracts.RunRecord, error) {
-	lookupDate, err := normalizeDate(date)
-	if err != nil {
-		return nil, fmt.Errorf("run lookup requires valid date (YYYY-MM-DD): %w", err)
-	}
-	startTime, err := time.Parse("2006-01-02", lookupDate)
-	if err != nil {
-		return nil, fmt.Errorf("parse normalized run date: %w", err)
-	}
-	return s.listRunsByDateRangeImpl(ctx, environment, startTime.UTC(), startTime.AddDate(0, 0, 1).UTC())
 }
 
 func (s *Store) listRunsByDateRangeImpl(
@@ -589,91 +536,6 @@ DO UPDATE SET
 	})
 }
 
-func (s *Store) listRawFailuresImpl(ctx context.Context) ([]storecontracts.RawFailureRecord, error) {
-	rows, err := s.pool.Query(ctx, `
-SELECT environment, row_id, run_url, non_artifact_backed, test_name, test_suite, signature_id, occurred_at, raw_text, normalized_text
-FROM cfa_raw_failures
-`)
-	if err != nil {
-		return nil, fmt.Errorf("query raw failures: %w", err)
-	}
-	defer rows.Close()
-
-	out := make([]storecontracts.RawFailureRecord, 0)
-	for rows.Next() {
-		var row storecontracts.RawFailureRecord
-		if err := rows.Scan(
-			&row.Environment,
-			&row.RowID,
-			&row.RunURL,
-			&row.NonArtifactBacked,
-			&row.TestName,
-			&row.TestSuite,
-			&row.SignatureID,
-			&row.OccurredAt,
-			&row.RawText,
-			&row.NormalizedText,
-		); err != nil {
-			return nil, fmt.Errorf("scan raw failure row: %w", err)
-		}
-		normalized := normalizeRawFailureRecord(row)
-		if normalized.Environment == "" || normalized.RunURL == "" || normalized.RowID == "" || normalized.SignatureID == "" {
-			continue
-		}
-		out = append(out, normalized)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate raw failures: %w", err)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Environment != out[j].Environment {
-			return out[i].Environment < out[j].Environment
-		}
-		if out[i].RowID != out[j].RowID {
-			return out[i].RowID < out[j].RowID
-		}
-		if out[i].RunURL != out[j].RunURL {
-			return out[i].RunURL < out[j].RunURL
-		}
-		return out[i].SignatureID < out[j].SignatureID
-	})
-	return out, nil
-}
-
-func (s *Store) listRawFailureRunKeysImpl(ctx context.Context) ([]string, error) {
-	rows, err := s.pool.Query(ctx, `SELECT environment, run_url FROM cfa_raw_failures`)
-	if err != nil {
-		return nil, fmt.Errorf("query raw failure run keys: %w", err)
-	}
-	defer rows.Close()
-
-	keys := map[string]struct{}{}
-	for rows.Next() {
-		var environment, runURL string
-		if err := rows.Scan(&environment, &runURL); err != nil {
-			return nil, fmt.Errorf("scan raw failure run key row: %w", err)
-		}
-		key := runRecordKey(storecontracts.RunRecord{
-			Environment: normalizeEnvironment(environment),
-			RunURL:      strings.TrimSpace(runURL),
-		})
-		if key == "" {
-			continue
-		}
-		keys[key] = struct{}{}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate raw failure run keys: %w", err)
-	}
-
-	out := make([]string, 0, len(keys))
-	for key := range keys {
-		out = append(out, key)
-	}
-	sort.Strings(out)
-	return out, nil
-}
-
 func (s *Store) listRawFailuresByRunImpl(ctx context.Context, environment string, runURL string) ([]storecontracts.RawFailureRecord, error) {
 	lookup := normalizeRunRecord(storecontracts.RunRecord{
 		Environment: environment,
@@ -732,18 +594,6 @@ WHERE environment = $1 AND run_url = $2
 		return out[i].SignatureID < out[j].SignatureID
 	})
 	return out, nil
-}
-
-func (s *Store) listRawFailuresByDateImpl(ctx context.Context, environment string, date string) ([]storecontracts.RawFailureRecord, error) {
-	lookupDate, err := normalizeDate(date)
-	if err != nil {
-		return nil, fmt.Errorf("raw failure lookup requires valid date (YYYY-MM-DD): %w", err)
-	}
-	startTime, err := time.Parse("2006-01-02", lookupDate)
-	if err != nil {
-		return nil, fmt.Errorf("parse normalized raw failure date: %w", err)
-	}
-	return s.listRawFailuresByDateRangeImpl(ctx, environment, startTime.UTC(), startTime.AddDate(0, 0, 1).UTC())
 }
 
 func (s *Store) listRawFailuresByDateRangeImpl(

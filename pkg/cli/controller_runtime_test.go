@@ -41,8 +41,8 @@ func TestControllerCommandCompleteUsesPostgresStoreForRunOnce(t *testing.T) {
 	if runtime.Store == nil {
 		t.Fatalf("expected postgres-backed store to be created")
 	}
-	if _, err := runtime.Store.ListRuns(context.Background()); err != nil {
-		t.Fatalf("smoke list runs using postgres store: %v", err)
+	if _, err := runtime.Store.ListRunKeys(context.Background()); err != nil {
+		t.Fatalf("smoke list run keys using postgres store: %v", err)
 	}
 }
 
@@ -79,7 +79,7 @@ func TestControllerCommandCompleteUsesPostgresStoreForSyncOnce(t *testing.T) {
 	if runtime.Store == nil {
 		t.Fatalf("expected postgres-backed store to be created")
 	}
-	if _, err := runtime.Store.ListRuns(context.Background()); err != nil {
-		t.Fatalf("smoke list runs using postgres store: %v", err)
+	if _, err := runtime.Store.ListRunKeys(context.Background()); err != nil {
+		t.Fatalf("smoke list run keys using postgres store: %v", err)
 	}
 }

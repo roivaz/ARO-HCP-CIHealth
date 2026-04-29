@@ -414,8 +414,11 @@ func TestBuildFailurePatternsBadPRScoreUsesWindowReferenceSpread(t *testing.T) {
 	if got, want := row.WeeklyPostGoodCount, 0; got != want {
 		t.Fatalf("unexpected window post-good count: got=%d want=%d", got, want)
 	}
-	if got, want := score, 2; got != want {
+	if got, want := score, 0; got != want {
 		t.Fatalf("unexpected bad PR score: got=%d want=%d reasons=%v", got, want, reasons)
+	}
+	if len(reasons) != 0 {
+		t.Fatalf("expected cross-week reference spread to suppress bad PR reasons, got=%v", reasons)
 	}
 	for _, reason := range reasons {
 		if reason == "only seen in one PR" {

@@ -806,7 +806,7 @@ func TestHandleAPIReviewSignalsWeekReturnsJSON(t *testing.T) {
 	if got, want := payload.Timezone, "UTC"; got != want {
 		t.Fatalf("unexpected review-signals timezone: got=%q want=%q", got, want)
 	}
-	if got, want := payload.TotalSignals, 2; got != want {
+	if got, want := payload.TotalSignals, 4; got != want {
 		t.Fatalf("unexpected total signal count: got=%d want=%d", got, want)
 	}
 	if got, want := payload.SignalsByReason["low_confidence_evidence"], 1; got != want {
@@ -814,6 +814,9 @@ func TestHandleAPIReviewSignalsWeekReturnsJSON(t *testing.T) {
 	}
 	if got, want := payload.SignalsByReason["ambiguous_provider_merge"], 1; got != want {
 		t.Fatalf("unexpected ambiguous-provider signal count: got=%d want=%d", got, want)
+	}
+	if got, want := payload.SignalsByReason["new_pattern"], 2; got != want {
+		t.Fatalf("unexpected new_pattern signal count: got=%d want=%d", got, want)
 	}
 
 	rowsByReason := map[string]frontservice.ReviewSignalRow{}

@@ -1,4 +1,4 @@
-package readmodel
+package testsupport
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	frontreadmodel "ci-failure-atlas/pkg/frontend/readmodel"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 	postgresstore "ci-failure-atlas/pkg/store/postgres"
 	"ci-failure-atlas/pkg/store/postgres/initdb"
@@ -15,20 +16,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type integrationFixture struct {
-	service *Service
-	pool    *pgxpool.Pool
+type IntegrationFixture struct {
+	Service *frontreadmodel.Service
+	Pool    *pgxpool.Pool
 }
 
-func newIntegrationFixture(t *testing.T, defaultWeek string) *integrationFixture {
-	return newIntegrationFixtureWithEngine(t, defaultWeek, FailurePatternsEngineInline)
-}
-
-func newIntegrationFixtureWithEngine(
-	t *testing.T,
-	defaultWeek string,
-	failurePatternsEngine string,
-) *integrationFixture {
+func NewIntegrationFixture(t testing.TB, defaultWeek string) *IntegrationFixture {
 	t.Helper()
 
 	server, err := pgtest.StartEmbedded(t.TempDir())
@@ -59,24 +52,24 @@ func newIntegrationFixtureWithEngine(
 		t.Fatalf("run postgres migrations: %v", err)
 	}
 
-	service, err := New(Options{
+	service, err := frontreadmodel.New(frontreadmodel.Options{
 		DefaultWeek:           defaultWeek,
-		FailurePatternsEngine: failurePatternsEngine,
+		FailurePatternsEngine: frontreadmodel.FailurePatternsEngineInline,
 		PostgresPool:          pool,
 	})
 	if err != nil {
 		t.Fatalf("create frontend service: %v", err)
 	}
-	return &integrationFixture{
-		service: service,
-		pool:    pool,
+	return &IntegrationFixture{
+		Service: service,
+		Pool:    pool,
 	}
 }
 
-func (f *integrationFixture) openWeekStore(t *testing.T, week string) storeWithClose {
+func (f *IntegrationFixture) OpenWeekStore(t testing.TB, week string) storecontracts.Store {
 	t.Helper()
 
-	store, err := postgresstore.New(f.pool, postgresstore.Options{})
+	store, err := postgresstore.New(f.Pool, postgresstore.Options{})
 	if err != nil {
 		t.Fatalf("create postgres store for %s: %v", week, err)
 	}
@@ -86,24 +79,21 @@ func (f *integrationFixture) openWeekStore(t *testing.T, week string) storeWithC
 	return store
 }
 
-type storeWithClose = storecontracts.Store
-
-type deprecatedPhase3LinkRecord struct {
-	SchemaVersion string `json:"schema_version"`
-	IssueID       string `json:"issue_id"`
-	Environment   string `json:"environment"`
-	RunURL        string `json:"run_url"`
-	RowID         string `json:"row_id"`
-	UpdatedAt     string `json:"updated_at,omitempty"`
+type DeprecatedPhase3LinkRecord struct {
+	IssueID     string `json:"issue_id"`
+	Environment string `json:"environment"`
+	RunURL      string `json:"run_url"`
+	RowID       string `json:"row_id"`
+	UpdatedAt   string `json:"updated_at,omitempty"`
 }
 
-func (f *integrationFixture) seedDeprecatedPhase3Links(t *testing.T, rows ...deprecatedPhase3LinkRecord) {
+func (f *IntegrationFixture) SeedDeprecatedPhase3Links(t testing.TB, rows ...DeprecatedPhase3LinkRecord) {
 	t.Helper()
 	if len(rows) == 0 {
 		return
 	}
 	ctx := context.Background()
-	_, err := f.pool.Exec(ctx, `
+	_, err := f.Pool.Exec(ctx, `
 CREATE TABLE IF NOT EXISTS cfa_phase3_links (
   environment TEXT NOT NULL,
   run_url TEXT NOT NULL,
@@ -121,7 +111,7 @@ CREATE TABLE IF NOT EXISTS cfa_phase3_links (
 		if err != nil {
 			t.Fatalf("marshal deprecated phase3 link payload: %v", err)
 		}
-		_, err = f.pool.Exec(ctx, `
+		_, err = f.Pool.Exec(ctx, `
 INSERT INTO cfa_phase3_links (environment, run_url, row_id, issue_id, updated_at, payload)
 VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (environment, run_url, row_id)
@@ -133,7 +123,7 @@ DO UPDATE SET issue_id = EXCLUDED.issue_id, updated_at = EXCLUDED.updated_at, pa
 	}
 }
 
-func sampleRunsFixture() []storecontracts.RunRecord {
+func SampleRunsFixture() []storecontracts.RunRecord {
 	return []storecontracts.RunRecord{
 		{
 			Environment:    "dev",
@@ -154,7 +144,7 @@ func sampleRunsFixture() []storecontracts.RunRecord {
 	}
 }
 
-func sampleRawFailuresFixture() []storecontracts.RawFailureRecord {
+func SampleRawFailuresFixture() []storecontracts.RawFailureRecord {
 	return []storecontracts.RawFailureRecord{
 		{
 			Environment:    "dev",
@@ -192,7 +182,7 @@ func sampleRawFailuresFixture() []storecontracts.RawFailureRecord {
 	}
 }
 
-func previousSampleRunsFixture() []storecontracts.RunRecord {
+func PreviousSampleRunsFixture() []storecontracts.RunRecord {
 	return []storecontracts.RunRecord{
 		{
 			Environment:    "dev",
@@ -205,7 +195,7 @@ func previousSampleRunsFixture() []storecontracts.RunRecord {
 	}
 }
 
-func previousSampleRawFailuresFixture() []storecontracts.RawFailureRecord {
+func PreviousSampleRawFailuresFixture() []storecontracts.RawFailureRecord {
 	return []storecontracts.RawFailureRecord{
 		{
 			Environment:    "dev",
@@ -217,6 +207,36 @@ func previousSampleRawFailuresFixture() []storecontracts.RawFailureRecord {
 			OccurredAt:     "2026-03-09T08:00:00Z",
 			RawText:        "OAuth timeout while waiting for cluster operator",
 			NormalizedText: "oauth timeout while waiting for cluster operator",
+		},
+	}
+}
+
+func ReportMetricsDaily() []storecontracts.MetricDailyRecord {
+	return []storecontracts.MetricDailyRecord{
+		{Environment: "dev", Date: "2026-03-16", Metric: "run_count", Value: 7},
+		{Environment: "dev", Date: "2026-03-16", Metric: "failure_count", Value: 2},
+		{Environment: "dev", Date: "2026-03-16", Metric: "failed_e2e_run_count", Value: 2},
+		{Environment: "dev", Date: "2026-03-16", Metric: "post_good_run_count", Value: 4},
+		{Environment: "dev", Date: "2026-03-16", Metric: "post_good_failed_e2e_jobs", Value: 1},
+		{Environment: "dev", Date: "2026-03-09", Metric: "run_count", Value: 5},
+		{Environment: "dev", Date: "2026-03-09", Metric: "failure_count", Value: 1},
+		{Environment: "dev", Date: "2026-03-09", Metric: "failed_e2e_run_count", Value: 1},
+	}
+}
+
+func ReportTestMetadataDaily() []storecontracts.TestMetadataDailyRecord {
+	return []storecontracts.TestMetadataDailyRecord{
+		{
+			Environment:            "dev",
+			Date:                   "2026-03-16",
+			Period:                 "default",
+			TestName:               "should oauth",
+			TestSuite:              "suite-a",
+			CurrentPassPercentage:  90.0,
+			CurrentRuns:            12,
+			PreviousPassPercentage: 95.0,
+			PreviousRuns:           10,
+			NetImprovement:         -5.0,
 		},
 	}
 }

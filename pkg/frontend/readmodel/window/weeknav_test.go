@@ -1,15 +1,17 @@
-package readmodel
+package window_test
 
 import (
 	"testing"
 	"time"
+
+	readmodelwindow "ci-failure-atlas/pkg/frontend/readmodel/window"
 )
 
 func TestResolveWindowDefaultsToLatestCompleteWeek(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC)
-	week, previous, next, _ := ResolveWindow(
+	week, previous, next, _ := readmodelwindow.ResolveWindow(
 		[]string{"2026-03-09", "2026-03-16", "2026-03-23", "2026-03-30"},
 		"",
 		"",
@@ -30,7 +32,7 @@ func TestResolveWindowHonorsExplicitCurrentWeekRequest(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC)
-	week, previous, next, _ := ResolveWindow(
+	week, previous, next, _ := readmodelwindow.ResolveWindow(
 		[]string{"2026-03-09", "2026-03-16", "2026-03-23", "2026-03-30"},
 		"2026-03-30",
 		"",
@@ -51,7 +53,7 @@ func TestResolveWindowDoesNotDefaultToCurrentWeekWhenConfigured(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC)
-	week, _, _, _ := ResolveWindow(
+	week, _, _, _ := readmodelwindow.ResolveWindow(
 		[]string{"2026-03-16", "2026-03-23", "2026-03-30"},
 		"",
 		"2026-03-30",
@@ -66,7 +68,7 @@ func TestResolveWindowAtOldestWeekDisablesOlderOnly(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC)
-	week, previous, next, _ := ResolveWindow(
+	week, previous, next, _ := readmodelwindow.ResolveWindow(
 		[]string{"2026-03-09", "2026-03-16", "2026-03-23", "2026-03-30"},
 		"2026-03-09",
 		"",

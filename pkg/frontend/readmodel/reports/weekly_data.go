@@ -1,4 +1,4 @@
-package readmodel
+package reports
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 
 	"ci-failure-atlas/pkg/failurepatterns"
 	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
+	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
+	readmodelpatterns "ci-failure-atlas/pkg/frontend/readmodel/patterns"
 	sourceoptions "ci-failure-atlas/pkg/source/options"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 )
@@ -30,6 +32,7 @@ const (
 	weeklyTestSuccessMinRuns       = 10
 	weeklyTestsBelowTargetTopLimit = 5
 	weeklyFullErrorExamples        = 3
+	defaultHistoryWeeks            = 4
 )
 
 var weeklyReportEnvironments = sourceoptions.SupportedEnvironments()
@@ -102,11 +105,13 @@ type WeeklyTopSignature struct {
 	SupportShare      float64
 	PostGoodCount     int
 	BadPRScore        int
+	BadPRReasons      []string
+	BadPREvaluated    bool
 	SeenInOtherEnvs   []string
 	QualityScore      int
 	QualityNoteLabels []string
-	ContributingTests []ContributingTest
-	References        []RunReference
+	ContributingTests []readmodelmodel.ContributingTest
+	References        []readmodelmodel.RunReference
 	FullErrorSamples  []string
 	LinkedChildren    []WeeklyTopSignature
 }
@@ -118,8 +123,8 @@ type WeeklySemanticSnapshot struct {
 	ClusterSignaturesByEnv           map[string][]WeeklyTopSignature
 	PhraseSupportByEnv               map[string]map[string]int
 	PhrasePostGoodByEnv              map[string]map[string]int
-	PhraseReferencesByEnv            map[string]map[string][]RunReference
-	PhraseContributingTestsByEnv     map[string]map[string][]ContributingTest
+	PhraseReferencesByEnv            map[string]map[string][]readmodelmodel.RunReference
+	PhraseContributingTestsByEnv     map[string]map[string][]readmodelmodel.ContributingTest
 	PhraseClusterIDByEnv             map[string]map[string]string
 	PhraseSearchQueryByEnv           map[string]map[string]string
 	PhraseRepresentativeSupportByEnv map[string]map[string]int
@@ -211,8 +216,6 @@ func BuildWeeklyReportData(
 	if err != nil {
 		return WeeklyReportData{}, fmt.Errorf("load weekly tests below target: %w", err)
 	}
-	topSignaturesByEnv := rankTopSignaturesByEnvironment(currentSemantic, 0, 0)
-
 	var previousSemantic semanticSnapshot
 	if previousSemanticStore != nil {
 		previousWeekData, loadErr := failurepatterns.LoadRange(ctx, previousSemanticStore, failurepatterns.LoadRangeOptions{
@@ -233,11 +236,11 @@ func BuildWeeklyReportData(
 	if historyResolver == nil {
 		lookbackWeeks := opts.HistoryHorizonWeeks
 		if lookbackWeeks <= 0 {
-			lookbackWeeks = DefaultHistoryWeeks
+			lookbackWeeks = defaultHistoryWeeks
 		}
 		historyResolver, err = failurepatterns.BuildPresenceResolver(ctx, failurepatterns.BuildPresenceOptions{
 			Store:         store,
-			AnchorWeek:    strings.TrimSpace(opts.Week),
+			EndTime:       currentEnd,
 			LookbackWeeks: lookbackWeeks,
 			Environments:  append([]string(nil), weeklyReportEnvironments...),
 		})
@@ -245,6 +248,7 @@ func BuildWeeklyReportData(
 			return WeeklyReportData{}, fmt.Errorf("build signature history resolver: %w", err)
 		}
 	}
+	topSignaturesByEnv := rankTopSignaturesByEnvironment(currentSemantic, historyResolver, 0, 0)
 
 	startDate := currentStart
 	return WeeklyReportData{
@@ -337,8 +341,8 @@ func loadSemanticSnapshot(weekData failurepatterns.RangeData) (semanticSnapshot,
 		ClusterSignaturesByEnv:           map[string][]topSignature{},
 		PhraseSupportByEnv:               map[string]map[string]int{},
 		PhrasePostGoodByEnv:              map[string]map[string]int{},
-		PhraseReferencesByEnv:            map[string]map[string][]RunReference{},
-		PhraseContributingTestsByEnv:     map[string]map[string][]ContributingTest{},
+		PhraseReferencesByEnv:            map[string]map[string][]readmodelmodel.RunReference{},
+		PhraseContributingTestsByEnv:     map[string]map[string][]readmodelmodel.ContributingTest{},
 		PhraseClusterIDByEnv:             map[string]map[string]string{},
 		PhraseSearchQueryByEnv:           map[string]map[string]string{},
 		PhraseRepresentativeSupportByEnv: map[string]map[string]int{},
@@ -385,7 +389,7 @@ func loadSemanticSnapshot(weekData failurepatterns.RangeData) (semanticSnapshot,
 		out.PhrasePostGoodByEnv[environment][phrase] += postGood
 
 		if _, ok := out.PhraseReferencesByEnv[environment]; !ok {
-			out.PhraseReferencesByEnv[environment] = map[string][]RunReference{}
+			out.PhraseReferencesByEnv[environment] = map[string][]readmodelmodel.RunReference{}
 		}
 		out.PhraseReferencesByEnv[environment][phrase] = append(
 			out.PhraseReferencesByEnv[environment][phrase],
@@ -394,7 +398,7 @@ func loadSemanticSnapshot(weekData failurepatterns.RangeData) (semanticSnapshot,
 		if sourceRunURL := strings.TrimSpace(row.SearchQuerySourceRunURL); sourceRunURL != "" {
 			out.PhraseReferencesByEnv[environment][phrase] = append(
 				out.PhraseReferencesByEnv[environment][phrase],
-				RunReference{
+				readmodelmodel.RunReference{
 					RunURL:      sourceRunURL,
 					SignatureID: strings.TrimSpace(row.SearchQuerySourceSignatureID),
 				},
@@ -402,7 +406,7 @@ func loadSemanticSnapshot(weekData failurepatterns.RangeData) (semanticSnapshot,
 		}
 
 		if _, ok := out.PhraseContributingTestsByEnv[environment]; !ok {
-			out.PhraseContributingTestsByEnv[environment] = map[string][]ContributingTest{}
+			out.PhraseContributingTestsByEnv[environment] = map[string][]readmodelmodel.ContributingTest{}
 		}
 		out.PhraseContributingTestsByEnv[environment][phrase] = mergeFailurePatternContributingTests(
 			out.PhraseContributingTestsByEnv[environment][phrase],
@@ -427,14 +431,14 @@ func loadSemanticSnapshot(weekData failurepatterns.RangeData) (semanticSnapshot,
 
 		mergePhraseReferenceKeys(out.PhraseReferenceKeysByEnv, environment, phrase, row.References)
 
-		qualityCodes := QualityIssueCodes(strings.TrimSpace(phrase))
+		qualityCodes := readmodelmodel.QualityIssueCodes(strings.TrimSpace(phrase))
 		qualityLabels := make([]string, 0, len(qualityCodes))
 		for _, code := range qualityCodes {
-			qualityLabels = append(qualityLabels, QualityIssueLabel(code))
+			qualityLabels = append(qualityLabels, readmodelmodel.QualityIssueLabel(code))
 		}
 		rowReferences := toFailurePatternRunReferences(row.References)
 		if sourceRunURL := strings.TrimSpace(row.SearchQuerySourceRunURL); sourceRunURL != "" {
-			rowReferences = append(rowReferences, RunReference{
+			rowReferences = append(rowReferences, readmodelmodel.RunReference{
 				RunURL:      sourceRunURL,
 				SignatureID: strings.TrimSpace(row.SearchQuerySourceSignatureID),
 			})
@@ -446,9 +450,9 @@ func loadSemanticSnapshot(weekData failurepatterns.RangeData) (semanticSnapshot,
 			SearchQuery:       strings.TrimSpace(row.SearchQueryPhrase),
 			SupportCount:      support,
 			PostGoodCount:     postGood,
-			QualityScore:      QualityScore(qualityCodes),
+			QualityScore:      readmodelmodel.QualityScore(qualityCodes),
 			QualityNoteLabels: qualityLabels,
-			ContributingTests: OrderedContributingTests(toFailurePatternContributingTests(row.ContributingTests)),
+			ContributingTests: readmodelmodel.OrderedContributingTests(toFailurePatternContributingTests(row.ContributingTests)),
 			References:        rowReferences,
 		})
 	}
@@ -623,7 +627,7 @@ func metadataDatesAfter(metricDates []string, threshold string) []string {
 		}
 		unique[trimmed] = struct{}{}
 	}
-	return sortedStringSet(unique)
+	return readmodelmodel.SortedStringSet(unique)
 }
 
 func metadataDatesBefore(metricDates []string, threshold string) []string {
@@ -639,21 +643,31 @@ func metadataDatesBefore(metricDates []string, threshold string) []string {
 		}
 		unique[trimmed] = struct{}{}
 	}
-	out := sortedStringSet(unique)
+	out := readmodelmodel.SortedStringSet(unique)
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
 	}
 	return out
 }
 
-func rankTopSignaturesByEnvironment(snapshot semanticSnapshot, limit int, minShare float64) map[string][]topSignature {
+func rankTopSignaturesByEnvironment(
+	snapshot semanticSnapshot,
+	historyResolver failurepatterns.PresenceResolver,
+	limit int,
+	minShare float64,
+) map[string][]topSignature {
 	if len(snapshot.ClusterSignaturesByEnv) > 0 {
-		return rankTopSignaturesByEnvironmentFromClusters(snapshot, limit, minShare)
+		return rankTopSignaturesByEnvironmentFromClusters(snapshot, historyResolver, limit, minShare)
 	}
-	return rankTopSignaturesByEnvironmentFromPhrases(snapshot, limit, minShare)
+	return rankTopSignaturesByEnvironmentFromPhrases(snapshot, historyResolver, limit, minShare)
 }
 
-func rankTopSignaturesByEnvironmentFromClusters(snapshot semanticSnapshot, limit int, minShare float64) map[string][]topSignature {
+func rankTopSignaturesByEnvironmentFromClusters(
+	snapshot semanticSnapshot,
+	historyResolver failurepatterns.PresenceResolver,
+	limit int,
+	minShare float64,
+) map[string][]topSignature {
 	out := make(map[string][]topSignature, len(weeklyReportEnvironments))
 	for _, environment := range weeklyReportEnvironments {
 		totalSupport := 0
@@ -691,13 +705,8 @@ func rankTopSignaturesByEnvironmentFromClusters(snapshot semanticSnapshot, limit
 			if minShare > 0 && share < minShare {
 				continue
 			}
-			references := append([]RunReference(nil), source.References...)
-			badPRScore, _ := BadPRScoreAndReasons(FailurePatternRow{
-				Environment:        environment,
-				AfterLastPushCount: source.PostGoodCount,
-				AlsoIn:             otherEnvironments,
-				AffectedRuns:       references,
-			})
+			references := append([]readmodelmodel.RunReference(nil), source.References...)
+			presence := topSignaturePatternPresence(historyResolver, environment, source.Phrase, source.SearchQuery)
 			linkedChildren := make([]topSignature, 0, len(source.LinkedChildren))
 			for _, child := range source.LinkedChildren {
 				childEnvironment := normalizeReportEnvironment(child.Environment)
@@ -713,6 +722,7 @@ func rankTopSignaturesByEnvironmentFromClusters(snapshot semanticSnapshot, limit
 				if totalSupport > 0 && childSupport > 0 {
 					childShare = float64(childSupport) * 100.0 / float64(totalSupport)
 				}
+				childPresence := topSignaturePatternPresence(historyResolver, childEnvironment, child.Phrase, child.SearchQuery)
 				linkedChildren = append(linkedChildren, topSignature{
 					Environment:       childEnvironment,
 					Phrase:            childPhrase,
@@ -721,10 +731,13 @@ func rankTopSignaturesByEnvironmentFromClusters(snapshot semanticSnapshot, limit
 					SupportCount:      childSupport,
 					SupportShare:      childShare,
 					PostGoodCount:     child.PostGoodCount,
+					BadPRScore:        childPresence.BadPRScore,
+					BadPRReasons:      append([]string(nil), childPresence.BadPRReasons...),
+					BadPREvaluated:    historyResolver != nil,
 					QualityScore:      child.QualityScore,
 					QualityNoteLabels: append([]string(nil), child.QualityNoteLabels...),
-					ContributingTests: append([]ContributingTest(nil), child.ContributingTests...),
-					References:        append([]RunReference(nil), child.References...),
+					ContributingTests: append([]readmodelmodel.ContributingTest(nil), child.ContributingTests...),
+					References:        append([]readmodelmodel.RunReference(nil), child.References...),
 					FullErrorSamples:  append([]string(nil), snapshot.PhraseFullErrorsByEnv[childEnvironment][childPhrase]...),
 				})
 			}
@@ -736,11 +749,13 @@ func rankTopSignaturesByEnvironmentFromClusters(snapshot semanticSnapshot, limit
 				SupportCount:      support,
 				SupportShare:      share,
 				PostGoodCount:     source.PostGoodCount,
-				BadPRScore:        badPRScore,
+				BadPRScore:        presence.BadPRScore,
+				BadPRReasons:      append([]string(nil), presence.BadPRReasons...),
+				BadPREvaluated:    historyResolver != nil,
 				SeenInOtherEnvs:   otherEnvironments,
 				QualityScore:      source.QualityScore,
 				QualityNoteLabels: append([]string(nil), source.QualityNoteLabels...),
-				ContributingTests: append([]ContributingTest(nil), source.ContributingTests...),
+				ContributingTests: append([]readmodelmodel.ContributingTest(nil), source.ContributingTests...),
 				References:        references,
 				FullErrorSamples:  append([]string(nil), snapshot.PhraseFullErrorsByEnv[environment][phrase]...),
 				LinkedChildren:    linkedChildren,
@@ -755,7 +770,12 @@ func rankTopSignaturesByEnvironmentFromClusters(snapshot semanticSnapshot, limit
 	return out
 }
 
-func rankTopSignaturesByEnvironmentFromPhrases(snapshot semanticSnapshot, limit int, minShare float64) map[string][]topSignature {
+func rankTopSignaturesByEnvironmentFromPhrases(
+	snapshot semanticSnapshot,
+	historyResolver failurepatterns.PresenceResolver,
+	limit int,
+	minShare float64,
+) map[string][]topSignature {
 	out := make(map[string][]topSignature, len(weeklyReportEnvironments))
 	for _, environment := range weeklyReportEnvironments {
 		supportByPhrase := snapshot.PhraseSupportByEnv[environment]
@@ -789,18 +809,18 @@ func rankTopSignaturesByEnvironmentFromPhrases(snapshot semanticSnapshot, limit 
 			if minShare > 0 && share < minShare {
 				continue
 			}
-			qualityCodes := QualityIssueCodes(strings.TrimSpace(phrase))
+			qualityCodes := readmodelmodel.QualityIssueCodes(strings.TrimSpace(phrase))
 			qualityLabels := make([]string, 0, len(qualityCodes))
 			for _, code := range qualityCodes {
-				qualityLabels = append(qualityLabels, QualityIssueLabel(code))
+				qualityLabels = append(qualityLabels, readmodelmodel.QualityIssueLabel(code))
 			}
-			references := append([]RunReference(nil), snapshot.PhraseReferencesByEnv[environment][phrase]...)
-			badPRScore, _ := BadPRScoreAndReasons(FailurePatternRow{
-				Environment:        environment,
-				AfterLastPushCount: postGoodByPhrase[phrase],
-				AlsoIn:             otherEnvironments,
-				AffectedRuns:       references,
-			})
+			references := append([]readmodelmodel.RunReference(nil), snapshot.PhraseReferencesByEnv[environment][phrase]...)
+			presence := topSignaturePatternPresence(
+				historyResolver,
+				environment,
+				phrase,
+				snapshot.PhraseSearchQueryByEnv[environment][phrase],
+			)
 			rows = append(rows, topSignature{
 				Environment:       environment,
 				Phrase:            strings.TrimSpace(phrase),
@@ -809,11 +829,13 @@ func rankTopSignaturesByEnvironmentFromPhrases(snapshot semanticSnapshot, limit 
 				SupportCount:      support,
 				SupportShare:      share,
 				PostGoodCount:     postGoodByPhrase[phrase],
-				BadPRScore:        badPRScore,
+				BadPRScore:        presence.BadPRScore,
+				BadPRReasons:      append([]string(nil), presence.BadPRReasons...),
+				BadPREvaluated:    historyResolver != nil,
 				SeenInOtherEnvs:   otherEnvironments,
-				QualityScore:      QualityScore(qualityCodes),
+				QualityScore:      readmodelmodel.QualityScore(qualityCodes),
 				QualityNoteLabels: qualityLabels,
-				ContributingTests: append([]ContributingTest(nil), snapshot.PhraseContributingTestsByEnv[environment][phrase]...),
+				ContributingTests: append([]readmodelmodel.ContributingTest(nil), snapshot.PhraseContributingTestsByEnv[environment][phrase]...),
 				References:        references,
 				FullErrorSamples:  append([]string(nil), snapshot.PhraseFullErrorsByEnv[environment][phrase]...),
 			})
@@ -825,6 +847,22 @@ func rankTopSignaturesByEnvironmentFromPhrases(snapshot semanticSnapshot, limit 
 		out[environment] = rows
 	}
 	return out
+}
+
+func topSignaturePatternPresence(
+	historyResolver failurepatterns.PresenceResolver,
+	environment string,
+	phrase string,
+	searchQuery string,
+) failurepatterns.PatternPresence {
+	if historyResolver == nil {
+		return failurepatterns.PatternPresence{}
+	}
+	return historyResolver.PresenceFor(failurepatterns.PatternKey{
+		Environment: environment,
+		Phrase:      phrase,
+		SearchQuery: searchQuery,
+	})
 }
 
 func sortTopSignatures(rows []topSignature) {
@@ -861,14 +899,14 @@ func topSignaturesFromFailurePatternClusters(rows []failurepatterncontracts.Fail
 		if postGood < 0 {
 			postGood = 0
 		}
-		qualityCodes := QualityIssueCodes(phrase)
+		qualityCodes := readmodelmodel.QualityIssueCodes(phrase)
 		qualityLabels := make([]string, 0, len(qualityCodes))
 		for _, code := range qualityCodes {
-			qualityLabels = append(qualityLabels, QualityIssueLabel(code))
+			qualityLabels = append(qualityLabels, readmodelmodel.QualityIssueLabel(code))
 		}
 		references := toFailurePatternRunReferences(row.References)
 		if sourceRunURL := strings.TrimSpace(row.SearchQuerySourceRunURL); sourceRunURL != "" {
-			references = append(references, RunReference{
+			references = append(references, readmodelmodel.RunReference{
 				RunURL:      sourceRunURL,
 				SignatureID: strings.TrimSpace(row.SearchQuerySourceSignatureID),
 			})
@@ -880,19 +918,19 @@ func topSignaturesFromFailurePatternClusters(rows []failurepatterncontracts.Fail
 			SearchQuery:       strings.TrimSpace(row.SearchQueryPhrase),
 			SupportCount:      support,
 			PostGoodCount:     postGood,
-			QualityScore:      QualityScore(qualityCodes),
+			QualityScore:      readmodelmodel.QualityScore(qualityCodes),
 			QualityNoteLabels: qualityLabels,
-			ContributingTests: OrderedContributingTests(toFailurePatternContributingTests(row.ContributingTests)),
+			ContributingTests: readmodelmodel.OrderedContributingTests(toFailurePatternContributingTests(row.ContributingTests)),
 			References:        references,
 		})
 	}
 	return out
 }
 
-func toFailurePatternRunReferences(rows []failurepatterncontracts.ReferenceRecord) []RunReference {
-	out := make([]RunReference, 0, len(rows))
+func toFailurePatternRunReferences(rows []failurepatterncontracts.ReferenceRecord) []readmodelmodel.RunReference {
+	out := make([]readmodelmodel.RunReference, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, RunReference{
+		out = append(out, readmodelmodel.RunReference{
 			RunURL:      strings.TrimSpace(row.RunURL),
 			OccurredAt:  strings.TrimSpace(row.OccurredAt),
 			SignatureID: strings.TrimSpace(row.SignatureID),
@@ -902,10 +940,10 @@ func toFailurePatternRunReferences(rows []failurepatterncontracts.ReferenceRecor
 	return out
 }
 
-func toFailurePatternContributingTests(rows []failurepatterncontracts.ContributingTestRecord) []ContributingTest {
-	out := make([]ContributingTest, 0, len(rows))
+func toFailurePatternContributingTests(rows []failurepatterncontracts.ContributingTestRecord) []readmodelmodel.ContributingTest {
+	out := make([]readmodelmodel.ContributingTest, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, ContributingTest{
+		out = append(out, readmodelmodel.ContributingTest{
 			FailedAt:    strings.TrimSpace(row.Lane),
 			JobName:     strings.TrimSpace(row.JobName),
 			TestName:    strings.TrimSpace(row.TestName),
@@ -915,7 +953,7 @@ func toFailurePatternContributingTests(rows []failurepatterncontracts.Contributi
 	return out
 }
 
-func mergeFailurePatternContributingTests(existing []ContributingTest, incoming []ContributingTest) []ContributingTest {
+func mergeFailurePatternContributingTests(existing []readmodelmodel.ContributingTest, incoming []readmodelmodel.ContributingTest) []readmodelmodel.ContributingTest {
 	if len(incoming) == 0 {
 		return existing
 	}
@@ -924,7 +962,7 @@ func mergeFailurePatternContributingTests(existing []ContributingTest, incoming 
 		job  string
 		test string
 	}
-	merged := make(map[mergeKey]ContributingTest, len(existing)+len(incoming))
+	merged := make(map[mergeKey]readmodelmodel.ContributingTest, len(existing)+len(incoming))
 	for _, item := range existing {
 		merged[mergeKey{
 			lane: strings.TrimSpace(item.FailedAt),
@@ -946,11 +984,11 @@ func mergeFailurePatternContributingTests(existing []ContributingTest, incoming 
 		existingItem.Occurrences += item.Occurrences
 		merged[key] = existingItem
 	}
-	out := make([]ContributingTest, 0, len(merged))
+	out := make([]readmodelmodel.ContributingTest, 0, len(merged))
 	for _, item := range merged {
 		out = append(out, item)
 	}
-	return OrderedContributingTests(out)
+	return readmodelmodel.OrderedContributingTests(out)
 }
 
 func loadSignatureFullErrorSamplesByEnvironment(
@@ -1046,7 +1084,7 @@ func mergePhraseReferenceKeys(
 	}
 }
 
-func failurePatternReportReferenceKeys(rows []FailurePatternReportReference) []string {
+func failurePatternReportReferenceKeys(rows []readmodelpatterns.FailurePatternReportReference) []string {
 	keys := make([]string, 0, len(rows)*2)
 	seen := map[string]struct{}{}
 	for _, row := range rows {
@@ -1059,6 +1097,55 @@ func failurePatternReportReferenceKeys(rows []FailurePatternReportReference) []s
 		}
 	}
 	return keys
+}
+
+func toFailurePatternReportReferences(rows []failurepatterncontracts.ReferenceRecord) []readmodelpatterns.FailurePatternReportReference {
+	out := make([]readmodelpatterns.FailurePatternReportReference, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, readmodelpatterns.FailurePatternReportReference{
+			RowID:          strings.TrimSpace(row.RowID),
+			RunURL:         strings.TrimSpace(row.RunURL),
+			OccurredAt:     strings.TrimSpace(row.OccurredAt),
+			SignatureID:    strings.TrimSpace(row.SignatureID),
+			PRNumber:       row.PRNumber,
+			PostGoodCommit: row.PostGoodCommit,
+		})
+	}
+	return out
+}
+
+func failurePatternsReferenceMatchKeys(row readmodelpatterns.FailurePatternReportReference) []string {
+	keys := make([]string, 0, 2)
+	rowID := strings.TrimSpace(row.RowID)
+	if rowID != "" {
+		keys = append(keys, "row|"+rowID)
+	}
+	if key := failurePatternsReferenceTupleKey(row.RunURL, row.OccurredAt, row.SignatureID); key != "" {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func failurePatternsRawFailureMatchKeys(row storecontracts.RawFailureRecord) []string {
+	keys := make([]string, 0, 2)
+	rowID := strings.TrimSpace(row.RowID)
+	if rowID != "" {
+		keys = append(keys, "row|"+rowID)
+	}
+	if key := failurePatternsReferenceTupleKey(row.RunURL, row.OccurredAt, row.SignatureID); key != "" {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func failurePatternsReferenceTupleKey(runURL string, occurredAt string, signatureID string) string {
+	trimmedRunURL := strings.TrimSpace(runURL)
+	trimmedOccurredAt := strings.TrimSpace(occurredAt)
+	trimmedSignatureID := strings.TrimSpace(signatureID)
+	if trimmedRunURL == "" && trimmedOccurredAt == "" && trimmedSignatureID == "" {
+		return ""
+	}
+	return "ref|" + trimmedRunURL + "|" + trimmedOccurredAt + "|" + trimmedSignatureID
 }
 
 func indexRawFailuresByEnvironmentDate(rows []storecontracts.RawFailureRecord) map[string][]storecontracts.RawFailureRecord {

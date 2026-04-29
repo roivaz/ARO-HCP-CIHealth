@@ -13,6 +13,11 @@ import (
 
 	frontfailurepatterns "ci-failure-atlas/pkg/frontend/failurepatterns"
 	frontservice "ci-failure-atlas/pkg/frontend/readmodel"
+	readmodelpatterns "ci-failure-atlas/pkg/frontend/readmodel/patterns"
+	readmodelreports "ci-failure-atlas/pkg/frontend/readmodel/reports"
+	readmodelreview "ci-failure-atlas/pkg/frontend/readmodel/review"
+	readmodelrunlog "ci-failure-atlas/pkg/frontend/readmodel/runlog"
+	readmodelwindow "ci-failure-atlas/pkg/frontend/readmodel/window"
 	reportweekly "ci-failure-atlas/pkg/frontend/report"
 	frontrunlog "ci-failure-atlas/pkg/frontend/runlog"
 	frontui "ci-failure-atlas/pkg/frontend/ui"
@@ -81,7 +86,7 @@ func (h *handler) handleRoot(w http.ResponseWriter, r *http.Request) {
 	href, err := h.currentRollingReportHref(r.Context())
 	if err != nil {
 		statusCode := http.StatusBadRequest
-		if errors.Is(err, frontservice.ErrNoAvailableWeeks) || errors.Is(err, frontservice.ErrWeekNotFound) {
+		if errors.Is(err, frontservice.ErrNoAvailableWeeks) {
 			statusCode = http.StatusNotFound
 		}
 		http.Error(w, err.Error(), statusCode)
@@ -145,7 +150,7 @@ func (h *handler) handleRunsPage(w http.ResponseWriter, r *http.Request) {
 	query, err := h.resolveRunLogPageQuery(r.Context(), runLogDayQueryFromRequest(r))
 	if err != nil {
 		statusCode := http.StatusBadRequest
-		if errors.Is(err, frontservice.ErrNoAvailableWeeks) || errors.Is(err, frontservice.ErrWeekNotFound) {
+		if errors.Is(err, frontservice.ErrNoAvailableWeeks) {
 			statusCode = http.StatusNotFound
 		}
 		http.Error(w, err.Error(), statusCode)
@@ -154,7 +159,7 @@ func (h *handler) handleRunsPage(w http.ResponseWriter, r *http.Request) {
 	reportHTML, err := h.generateDayRunHistoryPage(r.Context(), query)
 	if err != nil {
 		statusCode := http.StatusBadRequest
-		if errors.Is(err, frontservice.ErrNoAvailableWeeks) || errors.Is(err, frontservice.ErrWeekNotFound) {
+		if errors.Is(err, frontservice.ErrNoAvailableWeeks) {
 			statusCode = http.StatusNotFound
 		}
 		http.Error(w, err.Error(), statusCode)
@@ -184,7 +189,7 @@ func (h *handler) handleReportPage(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		statusCode := http.StatusBadRequest
-		if errors.Is(err, frontservice.ErrNoAvailableWeeks) || errors.Is(err, frontservice.ErrWeekNotFound) {
+		if errors.Is(err, frontservice.ErrNoAvailableWeeks) {
 			statusCode = http.StatusNotFound
 		}
 		http.Error(w, err.Error(), statusCode)
@@ -204,10 +209,10 @@ func (h *handler) handleAPIFailurePatterns(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
 		return
 	}
-	response, err := h.service.BuildFailurePatterns(r.Context(), failurePatternsQueryFromRequest(r))
+	response, err := readmodelpatterns.BuildWindowData(r.Context(), h.service, failurePatternsQueryFromRequest(r))
 	if err != nil {
 		statusCode := http.StatusBadRequest
-		if errors.Is(err, frontservice.ErrNoAvailableWeeks) || errors.Is(err, frontservice.ErrWeekNotFound) {
+		if errors.Is(err, frontservice.ErrNoAvailableWeeks) {
 			statusCode = http.StatusNotFound
 		}
 		writeJSONError(w, statusCode, err)
@@ -221,10 +226,19 @@ func (h *handler) handleAPIReviewSignalsWeek(w http.ResponseWriter, r *http.Requ
 		writeJSONError(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
 		return
 	}
-	response, err := h.service.BuildReviewSignalsWeek(r.Context(), strings.TrimSpace(r.URL.Query().Get("week")))
+	window, err := h.service.ResolveWeekWindow(r.Context(), strings.TrimSpace(r.URL.Query().Get("week")), time.Time{})
 	if err != nil {
 		statusCode := http.StatusBadRequest
-		if errors.Is(err, frontservice.ErrNoAvailableWeeks) || errors.Is(err, frontservice.ErrWeekNotFound) {
+		if errors.Is(err, frontservice.ErrNoAvailableWeeks) {
+			statusCode = http.StatusNotFound
+		}
+		writeJSONError(w, statusCode, err)
+		return
+	}
+	response, err := readmodelreview.BuildWeek(r.Context(), h.service, window)
+	if err != nil {
+		statusCode := http.StatusBadRequest
+		if errors.Is(err, frontservice.ErrNoAvailableWeeks) {
 			statusCode = http.StatusNotFound
 		}
 		writeJSONError(w, statusCode, err)
@@ -238,10 +252,10 @@ func (h *handler) handleAPIRunsDay(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
 		return
 	}
-	response, err := h.service.BuildRunLogDay(r.Context(), runLogDayQueryFromRequest(r))
+	response, err := readmodelrunlog.BuildDay(r.Context(), h.service, runLogDayQueryFromRequest(r))
 	if err != nil {
 		statusCode := http.StatusBadRequest
-		if errors.Is(err, frontservice.ErrNoAvailableWeeks) || errors.Is(err, frontservice.ErrWeekNotFound) {
+		if errors.Is(err, frontservice.ErrNoAvailableWeeks) {
 			statusCode = http.StatusNotFound
 		}
 		writeJSONError(w, statusCode, err)
@@ -250,12 +264,12 @@ func (h *handler) handleAPIRunsDay(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (h *handler) generateFailurePatternsReport(ctx context.Context, query frontservice.FailurePatternsQuery) (string, error) {
-	data, err := h.service.BuildFailurePatterns(ctx, query)
+func (h *handler) generateFailurePatternsReport(ctx context.Context, query readmodelpatterns.FailurePatternsQuery) (string, error) {
+	data, err := readmodelpatterns.BuildWindowData(ctx, h.service, query)
 	if err != nil {
 		return "", err
 	}
-	scope, err := h.service.ResolveWindow(ctx, frontservice.WindowRequest{
+	scope, err := readmodelwindow.Resolve(ctx, h.service, readmodelwindow.Request{
 		StartDate: data.Meta.StartDate,
 		EndDate:   data.Meta.EndDate,
 	})
@@ -292,8 +306,8 @@ func (h *handler) generateFailurePatternsReport(ctx context.Context, query front
 	}), nil
 }
 
-func (h *handler) generateDayRunHistoryPage(ctx context.Context, query frontservice.RunLogDayQuery) (string, error) {
-	data, err := h.service.BuildRunLogDay(ctx, query)
+func (h *handler) generateDayRunHistoryPage(ctx context.Context, query readmodelrunlog.RunLogDayQuery) (string, error) {
+	data, err := readmodelrunlog.BuildDay(ctx, h.service, query)
 	if err != nil {
 		return "", err
 	}
@@ -327,14 +341,14 @@ func (h *handler) generateDayRunHistoryPage(ctx context.Context, query frontserv
 
 func (h *handler) generateReportPage(
 	ctx context.Context,
-	query frontservice.ReportQuery,
+	query readmodelreports.ReportQuery,
 	mode reportPageMode,
 ) (string, error) {
-	data, err := h.service.BuildReportData(ctx, query)
+	data, err := readmodelreports.BuildWindowData(ctx, h.service, query)
 	if err != nil {
 		return "", err
 	}
-	scope, err := h.service.ResolveWindow(ctx, frontservice.WindowRequest{
+	scope, err := readmodelwindow.Resolve(ctx, h.service, readmodelwindow.Request{
 		StartDate: query.StartDate,
 		EndDate:   query.EndDate,
 	})
@@ -421,15 +435,15 @@ func failurePatternsHref(path string, week string, startDate string, endDate str
 	return trimmedPath
 }
 
-func hasFailurePatternsQuery(query frontservice.FailurePatternsQuery) bool {
+func hasFailurePatternsQuery(query readmodelpatterns.FailurePatternsQuery) bool {
 	return strings.TrimSpace(query.StartDate) != "" || strings.TrimSpace(query.EndDate) != ""
 }
 
-func failurePatternsQueryFromRequest(r *http.Request) frontservice.FailurePatternsQuery {
+func failurePatternsQueryFromRequest(r *http.Request) readmodelpatterns.FailurePatternsQuery {
 	if r == nil {
-		return frontservice.FailurePatternsQuery{}
+		return readmodelpatterns.FailurePatternsQuery{}
 	}
-	return frontservice.FailurePatternsQuery{
+	return readmodelpatterns.FailurePatternsQuery{
 		StartDate:    strings.TrimSpace(r.URL.Query().Get("start_date")),
 		EndDate:      strings.TrimSpace(r.URL.Query().Get("end_date")),
 		Week:         strings.TrimSpace(r.URL.Query().Get("week")),
@@ -438,11 +452,11 @@ func failurePatternsQueryFromRequest(r *http.Request) frontservice.FailurePatter
 	}
 }
 
-func reportQueryFromRequest(r *http.Request) frontservice.ReportQuery {
+func reportQueryFromRequest(r *http.Request) readmodelreports.ReportQuery {
 	if r == nil {
-		return frontservice.ReportQuery{}
+		return readmodelreports.ReportQuery{}
 	}
-	return frontservice.ReportQuery{
+	return readmodelreports.ReportQuery{
 		StartDate: strings.TrimSpace(r.URL.Query().Get("start_date")),
 		EndDate:   strings.TrimSpace(r.URL.Query().Get("end_date")),
 		Week:      strings.TrimSpace(r.URL.Query().Get("week")),
@@ -451,18 +465,18 @@ func reportQueryFromRequest(r *http.Request) frontservice.ReportQuery {
 
 func (h *handler) resolveFailurePatternsPageQuery(
 	ctx context.Context,
-	query frontservice.FailurePatternsQuery,
-) (frontservice.FailurePatternsQuery, error) {
+	query readmodelpatterns.FailurePatternsQuery,
+) (readmodelpatterns.FailurePatternsQuery, error) {
 	hasExplicitWindow := hasFailurePatternsQuery(query) || strings.TrimSpace(query.Week) != ""
 	requestedMode := normalizeFailurePatternsMode(query.Mode)
-	defaultMode := frontservice.WindowDefaultRolling
+	defaultMode := readmodelwindow.DefaultRolling
 	switch requestedMode {
 	case string(reportPageModeSprint):
-		defaultMode = frontservice.WindowDefaultLatestSprint
+		defaultMode = readmodelwindow.DefaultLatestSprint
 	case string(reportPageModeRolling), "":
-		defaultMode = frontservice.WindowDefaultRolling
+		defaultMode = readmodelwindow.DefaultRolling
 	}
-	window, err := h.service.ResolveWindow(ctx, frontservice.WindowRequest{
+	window, err := readmodelwindow.Resolve(ctx, h.service, readmodelwindow.Request{
 		StartDate:   query.StartDate,
 		EndDate:     query.EndDate,
 		Week:        query.Week,
@@ -470,7 +484,7 @@ func (h *handler) resolveFailurePatternsPageQuery(
 		RollingDays: 7,
 	})
 	if err != nil {
-		if !hasExplicitWindow && defaultMode == frontservice.WindowDefaultRolling {
+		if !hasExplicitWindow && defaultMode == readmodelwindow.DefaultRolling {
 			if weekWindow, weekErr := h.service.ResolveWeekWindow(ctx, "", time.Time{}); weekErr == nil {
 				query.Week = ""
 				query.StartDate, query.EndDate = semanticWeekDateRange(weekWindow.CurrentWeek)
@@ -478,12 +492,12 @@ func (h *handler) resolveFailurePatternsPageQuery(
 				return query, nil
 			}
 		}
-		return frontservice.FailurePatternsQuery{}, err
+		return readmodelpatterns.FailurePatternsQuery{}, err
 	}
 	query.Week = ""
 	query.StartDate = window.StartDate
 	query.EndDate = window.EndDate
-	if !hasExplicitWindow && requestedMode == "" && defaultMode == frontservice.WindowDefaultRolling {
+	if !hasExplicitWindow && requestedMode == "" && defaultMode == readmodelwindow.DefaultRolling {
 		query.Mode = string(reportPageModeRolling)
 	}
 	return query, nil
@@ -491,18 +505,18 @@ func (h *handler) resolveFailurePatternsPageQuery(
 
 func (h *handler) resolveRunLogPageQuery(
 	ctx context.Context,
-	query frontservice.RunLogDayQuery,
-) (frontservice.RunLogDayQuery, error) {
+	query readmodelrunlog.RunLogDayQuery,
+) (readmodelrunlog.RunLogDayQuery, error) {
 	if strings.TrimSpace(query.Date) != "" {
 		return query, nil
 	}
 
 	if strings.TrimSpace(query.Week) != "" {
-		window, err := h.service.ResolveWindow(ctx, frontservice.WindowRequest{
+		window, err := readmodelwindow.Resolve(ctx, h.service, readmodelwindow.Request{
 			Week: query.Week,
 		})
 		if err != nil {
-			return frontservice.RunLogDayQuery{}, err
+			return readmodelrunlog.RunLogDayQuery{}, err
 		}
 		query.Date = runLogDefaultDate(window.EndDate)
 		return query, nil
@@ -514,17 +528,17 @@ func (h *handler) resolveRunLogPageQuery(
 
 func (h *handler) resolveReportPageQuery(
 	ctx context.Context,
-	query frontservice.ReportQuery,
+	query readmodelreports.ReportQuery,
 	mode reportPageMode,
-) (frontservice.ReportQuery, reportPageMode, error) {
-	defaultMode := frontservice.WindowDefaultLatestWeek
+) (readmodelreports.ReportQuery, reportPageMode, error) {
+	defaultMode := readmodelwindow.DefaultLatestWeek
 	switch mode {
 	case reportPageModeRolling:
-		defaultMode = frontservice.WindowDefaultRolling
+		defaultMode = readmodelwindow.DefaultRolling
 	case reportPageModeSprint:
-		defaultMode = frontservice.WindowDefaultLatestSprint
+		defaultMode = readmodelwindow.DefaultLatestSprint
 	}
-	window, err := h.service.ResolveWindow(ctx, frontservice.WindowRequest{
+	window, err := readmodelwindow.Resolve(ctx, h.service, readmodelwindow.Request{
 		StartDate:   query.StartDate,
 		EndDate:     query.EndDate,
 		Week:        query.Week,
@@ -532,7 +546,7 @@ func (h *handler) resolveReportPageQuery(
 		RollingDays: 7,
 	})
 	if err != nil {
-		return frontservice.ReportQuery{}, "", err
+		return readmodelreports.ReportQuery{}, "", err
 	}
 	query.Week = ""
 	query.StartDate = window.StartDate
@@ -651,7 +665,7 @@ func timeSelectorShiftDays(mode frontui.TimeSelectorMode, startDate string, endD
 	case frontui.TimeSelectorModeWeekly:
 		return 7
 	case frontui.TimeSelectorModeSprint:
-		return frontservice.SprintDurationDays()
+		return readmodelwindow.SprintDurationDays()
 	case frontui.TimeSelectorModeDay:
 		return 1
 	default:
@@ -760,10 +774,10 @@ func isSprintDateWindow(startDate string, endDate string) bool {
 	if !okStart || !okEnd {
 		return false
 	}
-	sprintStart, sprintEnd := frontservice.SprintWindowForDate(startValue)
+	sprintStart, sprintEnd := readmodelwindow.SprintWindowForDate(startValue)
 	return startValue.Equal(sprintStart.UTC()) &&
 		endValue.Equal(sprintEnd.UTC()) &&
-		timeWindowSpanDays(startDate, endDate) == frontservice.SprintDurationDays()
+		timeWindowSpanDays(startDate, endDate) == readmodelwindow.SprintDurationDays()
 }
 
 func rollingWindowEndingOn(endDate string, days int) (string, string, bool) {
@@ -790,7 +804,7 @@ func sprintWindowContaining(date string) (string, string, bool) {
 	if !ok {
 		return "", "", false
 	}
-	startValue, endValue := frontservice.SprintWindowForDate(dateValue)
+	startValue, endValue := readmodelwindow.SprintWindowForDate(dateValue)
 	return startValue.Format("2006-01-02"), endValue.Format("2006-01-02"), true
 }
 
@@ -910,7 +924,7 @@ func (h *handler) validatedReportWindowHref(
 	if strings.TrimSpace(startDate) == "" || strings.TrimSpace(endDate) == "" {
 		return ""
 	}
-	if _, err := h.service.ResolveWindow(ctx, frontservice.WindowRequest{
+	if _, err := readmodelwindow.Resolve(ctx, h.service, readmodelwindow.Request{
 		StartDate: startDate,
 		EndDate:   endDate,
 	}); err != nil {
@@ -929,7 +943,7 @@ func (h *handler) validatedFailurePatternsWindowHref(
 	if strings.TrimSpace(startDate) == "" || strings.TrimSpace(endDate) == "" {
 		return ""
 	}
-	if _, err := h.service.ResolveWindow(ctx, frontservice.WindowRequest{
+	if _, err := readmodelwindow.Resolve(ctx, h.service, readmodelwindow.Request{
 		StartDate: startDate,
 		EndDate:   endDate,
 	}); err != nil {
@@ -946,13 +960,13 @@ func (h *handler) validatedFailurePatternsWindowHref(
 }
 
 func (h *handler) currentSprintReportHref(_ context.Context) (string, error) {
-	start, end := frontservice.SprintWindowForDate(time.Now().UTC())
+	start, end := readmodelwindow.SprintWindowForDate(time.Now().UTC())
 	return reportHref("/report", start.Format("2006-01-02"), end.Format("2006-01-02"), reportPageModeSprint), nil
 }
 
 func (h *handler) currentRollingReportHref(ctx context.Context) (string, error) {
-	window, err := h.service.ResolveWindow(ctx, frontservice.WindowRequest{
-		DefaultMode: frontservice.WindowDefaultRolling,
+	window, err := readmodelwindow.Resolve(ctx, h.service, readmodelwindow.Request{
+		DefaultMode: readmodelwindow.DefaultRolling,
 		RollingDays: 7,
 	})
 	if err == nil {
@@ -983,7 +997,7 @@ func (h *handler) shiftedReportHref(
 	if err != nil {
 		return ""
 	}
-	if _, err := h.service.ResolveWindow(ctx, frontservice.WindowRequest{
+	if _, err := readmodelwindow.Resolve(ctx, h.service, readmodelwindow.Request{
 		StartDate: targetStart,
 		EndDate:   targetEnd,
 	}); err != nil {
@@ -1007,7 +1021,7 @@ func (h *handler) shiftedFailurePatternsHref(
 	if err != nil {
 		return ""
 	}
-	if _, err := h.service.ResolveWindow(ctx, frontservice.WindowRequest{
+	if _, err := readmodelwindow.Resolve(ctx, h.service, readmodelwindow.Request{
 		StartDate: targetStart,
 		EndDate:   targetEnd,
 	}); err != nil {
@@ -1182,11 +1196,11 @@ func normalizedQueryEnvironments(values []string) []string {
 	return out
 }
 
-func runLogDayQueryFromRequest(r *http.Request) frontservice.RunLogDayQuery {
+func runLogDayQueryFromRequest(r *http.Request) readmodelrunlog.RunLogDayQuery {
 	if r == nil {
-		return frontservice.RunLogDayQuery{}
+		return readmodelrunlog.RunLogDayQuery{}
 	}
-	return frontservice.RunLogDayQuery{
+	return readmodelrunlog.RunLogDayQuery{
 		Date:         strings.TrimSpace(r.URL.Query().Get("date")),
 		Week:         strings.TrimSpace(r.URL.Query().Get("week")),
 		Environments: parseListQueryValues(r.URL.Query()["env"]),

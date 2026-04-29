@@ -10,8 +10,9 @@ import (
 	"testing"
 	"time"
 
-	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
-	frontservice "ci-failure-atlas/pkg/frontend/readmodel"
+	readmodelpatterns "ci-failure-atlas/pkg/frontend/readmodel/patterns"
+	readmodelreview "ci-failure-atlas/pkg/frontend/readmodel/review"
+	readmodelrunlog "ci-failure-atlas/pkg/frontend/readmodel/runlog"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 	postgresstore "ci-failure-atlas/pkg/store/postgres"
 	"ci-failure-atlas/pkg/store/postgres/initdb"
@@ -167,7 +168,7 @@ func TestHandleAPIFailurePatternsReturnsJSON(t *testing.T) {
 		t.Fatalf("unexpected content type: %q", got)
 	}
 
-	var payload frontservice.FailurePatternsData
+	var payload readmodelpatterns.FailurePatternsData
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -191,7 +192,7 @@ func TestHandleAPIFailurePatternsReturnsJSON(t *testing.T) {
 	if got, want := len(payload.Environments[0].Rows), 2; got != want {
 		t.Fatalf("unexpected row count: got=%d want=%d", got, want)
 	}
-	var linkedRow *frontservice.FailurePatternsRow
+	var linkedRow *readmodelpatterns.FailurePatternsRow
 	for index := range payload.Environments[0].Rows {
 		row := &payload.Environments[0].Rows[index]
 		if len(row.FullErrorSamples) == 1 && row.FullErrorSamples[0] == reviewAPILongRawFailureText() {
@@ -434,20 +435,18 @@ func TestHandleAPIRunsDayReturnsJSON(t *testing.T) {
 	}
 	fixture.seedDeprecatedPhase3Links(t,
 		deprecatedPhase3LinkRecord{
-			SchemaVersion: failurepatterncontracts.CurrentSchemaVersion,
-			IssueID:       "QE-999",
-			Environment:   "dev",
-			RunURL:        "https://prow.example.com/view/job-history-1",
-			RowID:         "job-history-row-1",
-			UpdatedAt:     "2026-03-16T12:00:00Z",
+			IssueID:     "QE-999",
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/view/job-history-1",
+			RowID:       "job-history-row-1",
+			UpdatedAt:   "2026-03-16T12:00:00Z",
 		},
 		deprecatedPhase3LinkRecord{
-			SchemaVersion: failurepatterncontracts.CurrentSchemaVersion,
-			IssueID:       "QE-999",
-			Environment:   "dev",
-			RunURL:        "https://prow.example.com/view/job-history-1",
-			RowID:         "job-history-row-2",
-			UpdatedAt:     "2026-03-16T12:00:00Z",
+			IssueID:     "QE-999",
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/view/job-history-1",
+			RowID:       "job-history-row-2",
+			UpdatedAt:   "2026-03-16T12:00:00Z",
 		},
 	)
 
@@ -469,7 +468,7 @@ func TestHandleAPIRunsDayReturnsJSON(t *testing.T) {
 		t.Fatalf("unexpected content type: %q", got)
 	}
 
-	var payload frontservice.RunLogDayData
+	var payload readmodelrunlog.RunLogDayData
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -498,9 +497,9 @@ func TestHandleAPIRunsDayReturnsJSON(t *testing.T) {
 		t.Fatalf("unexpected unmatched signature runs: got=%d want=%d", got, want)
 	}
 
-	var multipleRun *frontservice.JobHistoryRunRow
-	var unmatchedRun *frontservice.JobHistoryRunRow
-	var noRawRun *frontservice.JobHistoryRunRow
+	var multipleRun *readmodelrunlog.JobHistoryRunRow
+	var unmatchedRun *readmodelrunlog.JobHistoryRunRow
+	var noRawRun *readmodelrunlog.JobHistoryRunRow
 	for index := range environment.Runs {
 		row := &environment.Runs[index]
 		switch row.Run.RunURL {
@@ -754,7 +753,7 @@ func TestHandleAPIReviewSignalsWeekReturnsJSON(t *testing.T) {
 		t.Fatalf("unexpected content type: %q", got)
 	}
 
-	var payload frontservice.ReviewSignalsWeekSnapshot
+	var payload readmodelreview.ReviewSignalsWeekSnapshot
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -771,7 +770,7 @@ func TestHandleAPIReviewSignalsWeekReturnsJSON(t *testing.T) {
 		t.Fatalf("unexpected new_pattern signal count: got=%d want=%d", got, want)
 	}
 
-	rowsByReason := map[string]frontservice.ReviewSignalRow{}
+	rowsByReason := map[string]readmodelreview.ReviewSignalRow{}
 	for _, row := range payload.Rows {
 		rowsByReason[row.Reason] = row
 	}
@@ -790,12 +789,11 @@ type handlerFixture struct {
 }
 
 type deprecatedPhase3LinkRecord struct {
-	SchemaVersion string `json:"schema_version"`
-	IssueID       string `json:"issue_id"`
-	Environment   string `json:"environment"`
-	RunURL        string `json:"run_url"`
-	RowID         string `json:"row_id"`
-	UpdatedAt     string `json:"updated_at,omitempty"`
+	IssueID     string `json:"issue_id"`
+	Environment string `json:"environment"`
+	RunURL      string `json:"run_url"`
+	RowID       string `json:"row_id"`
+	UpdatedAt   string `json:"updated_at,omitempty"`
 }
 
 func newHandlerFixture(t *testing.T) *handlerFixture {

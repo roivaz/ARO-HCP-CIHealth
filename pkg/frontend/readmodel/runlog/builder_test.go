@@ -1,27 +1,29 @@
-package readmodel
+package runlog_test
 
 import (
 	"context"
 	"strings"
 	"testing"
 
+	readmodelrunlog "ci-failure-atlas/pkg/frontend/readmodel/runlog"
+	"ci-failure-atlas/pkg/frontend/readmodel/testsupport"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 )
 
-func TestBuildRunLogDayBuildsMatchedAndUnmatchedRuns(t *testing.T) {
+func TestBuildDayBuildsMatchedAndUnmatchedRuns(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	fixture := newIntegrationFixture(t, "")
-	store := fixture.openWeekStore(t, "2026-03-16")
-	if err := store.UpsertRuns(ctx, sampleRunsFixture()); err != nil {
+	fixture := testsupport.NewIntegrationFixture(t, "")
+	store := fixture.OpenWeekStore(t, "2026-03-16")
+	if err := store.UpsertRuns(ctx, testsupport.SampleRunsFixture()); err != nil {
 		t.Fatalf("seed runs: %v", err)
 	}
-	if err := store.UpsertRawFailures(ctx, sampleRawFailuresFixture()); err != nil {
+	if err := store.UpsertRawFailures(ctx, testsupport.SampleRawFailuresFixture()); err != nil {
 		t.Fatalf("seed raw failures: %v", err)
 	}
 
-	data, err := fixture.service.BuildRunLogDay(ctx, RunLogDayQuery{
+	data, err := readmodelrunlog.BuildDay(ctx, fixture.Service, readmodelrunlog.RunLogDayQuery{
 		Date:         "2026-03-16",
 		Environments: []string{"dev"},
 	})
@@ -93,12 +95,12 @@ func TestBuildRunLogDayBuildsMatchedAndUnmatchedRuns(t *testing.T) {
 	}
 }
 
-func TestBuildRunLogDayUsesFactWeekForNewerDates(t *testing.T) {
+func TestBuildDayUsesCalendarAnchorWeekForNewerDates(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	fixture := newIntegrationFixture(t, "")
-	store := fixture.openWeekStore(t, "2026-03-16")
+	fixture := testsupport.NewIntegrationFixture(t, "")
+	store := fixture.OpenWeekStore(t, "2026-03-16")
 	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
 		{
 			Environment: "dev",
@@ -126,7 +128,7 @@ func TestBuildRunLogDayUsesFactWeekForNewerDates(t *testing.T) {
 		t.Fatalf("seed raw failures: %v", err)
 	}
 
-	data, err := fixture.service.BuildRunLogDay(ctx, RunLogDayQuery{
+	data, err := readmodelrunlog.BuildDay(ctx, fixture.Service, readmodelrunlog.RunLogDayQuery{
 		Date:         "2026-04-21",
 		Environments: []string{"dev"},
 	})
@@ -161,16 +163,16 @@ func TestBuildRunLogDayUsesFactWeekForNewerDates(t *testing.T) {
 	}
 }
 
-func TestBuildRunLogDayHandlesMultipleSignaturesOnOneRun(t *testing.T) {
+func TestBuildDayHandlesMultipleSignaturesOnOneRun(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	fixture := newIntegrationFixture(t, "")
-	store := fixture.openWeekStore(t, "2026-03-16")
-	if err := store.UpsertRuns(ctx, sampleRunsFixture()); err != nil {
+	fixture := testsupport.NewIntegrationFixture(t, "")
+	store := fixture.OpenWeekStore(t, "2026-03-16")
+	if err := store.UpsertRuns(ctx, testsupport.SampleRunsFixture()); err != nil {
 		t.Fatalf("seed runs: %v", err)
 	}
-	rawFailures := append(sampleRawFailuresFixture(), storecontracts.RawFailureRecord{
+	rawFailures := append(testsupport.SampleRawFailuresFixture(), storecontracts.RawFailureRecord{
 		Environment:    "dev",
 		RowID:          "row-4",
 		RunURL:         "https://prow.example.com/view/1",
@@ -184,7 +186,7 @@ func TestBuildRunLogDayHandlesMultipleSignaturesOnOneRun(t *testing.T) {
 	if err := store.UpsertRawFailures(ctx, rawFailures); err != nil {
 		t.Fatalf("seed raw failures: %v", err)
 	}
-	data, err := fixture.service.BuildRunLogDay(ctx, RunLogDayQuery{
+	data, err := readmodelrunlog.BuildDay(ctx, fixture.Service, readmodelrunlog.RunLogDayQuery{
 		Date:         "2026-03-16",
 		Environments: []string{"dev"},
 	})
@@ -216,12 +218,12 @@ func TestBuildRunLogDayHandlesMultipleSignaturesOnOneRun(t *testing.T) {
 	}
 }
 
-func TestBuildRunLogDayUsesRowLevelReferencesWhenClustersShareSignature(t *testing.T) {
+func TestBuildDayUsesRowLevelReferencesWhenClustersShareSignature(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	fixture := newIntegrationFixture(t, "")
-	store := fixture.openWeekStore(t, "2026-03-16")
+	fixture := testsupport.NewIntegrationFixture(t, "")
+	store := fixture.OpenWeekStore(t, "2026-03-16")
 	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
 		{
 			Environment: "dev",
@@ -260,7 +262,7 @@ func TestBuildRunLogDayUsesRowLevelReferencesWhenClustersShareSignature(t *testi
 		t.Fatalf("seed raw failures: %v", err)
 	}
 
-	data, err := fixture.service.BuildRunLogDay(ctx, RunLogDayQuery{
+	data, err := readmodelrunlog.BuildDay(ctx, fixture.Service, readmodelrunlog.RunLogDayQuery{
 		Date:         "2026-03-16",
 		Environments: []string{"dev"},
 	})
@@ -276,7 +278,7 @@ func TestBuildRunLogDayUsesRowLevelReferencesWhenClustersShareSignature(t *testi
 		t.Fatalf("unexpected distinct cluster count: got=%d want=%d", got, want)
 	}
 
-	rowsByID := map[string]JobHistoryFailureRow{}
+	rowsByID := map[string]readmodelrunlog.JobHistoryFailureRow{}
 	for _, row := range run.FailureRows {
 		rowsByID[row.RowID] = row
 	}
@@ -301,13 +303,13 @@ func TestBuildRunLogDayUsesRowLevelReferencesWhenClustersShareSignature(t *testi
 	}
 }
 
-func TestBuildRunLogDayFlagsFailedRunsWithoutRawRows(t *testing.T) {
+func TestBuildDayFlagsFailedRunsWithoutRawRows(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	fixture := newIntegrationFixture(t, "")
-	store := fixture.openWeekStore(t, "2026-03-16")
-	runs := append(sampleRunsFixture(), storecontracts.RunRecord{
+	fixture := testsupport.NewIntegrationFixture(t, "")
+	store := fixture.OpenWeekStore(t, "2026-03-16")
+	runs := append(testsupport.SampleRunsFixture(), storecontracts.RunRecord{
 		Environment: "dev",
 		RunURL:      "https://prow.example.com/view/3",
 		JobName:     "periodic-ci-missing-raw",
@@ -317,11 +319,11 @@ func TestBuildRunLogDayFlagsFailedRunsWithoutRawRows(t *testing.T) {
 	if err := store.UpsertRuns(ctx, runs); err != nil {
 		t.Fatalf("seed runs: %v", err)
 	}
-	if err := store.UpsertRawFailures(ctx, sampleRawFailuresFixture()); err != nil {
+	if err := store.UpsertRawFailures(ctx, testsupport.SampleRawFailuresFixture()); err != nil {
 		t.Fatalf("seed raw failures: %v", err)
 	}
 
-	data, err := fixture.service.BuildRunLogDay(ctx, RunLogDayQuery{
+	data, err := readmodelrunlog.BuildDay(ctx, fixture.Service, readmodelrunlog.RunLogDayQuery{
 		Date:         "2026-03-16",
 		Environments: []string{"dev"},
 	})
@@ -342,23 +344,23 @@ func TestBuildRunLogDayFlagsFailedRunsWithoutRawRows(t *testing.T) {
 	}
 }
 
-func TestBuildRunLogDayUsesWeeklySemanticBadPRScore(t *testing.T) {
+func TestBuildDaySuppressesBadPRScoreWhenDayHasPostGoodEvidence(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	fixture := newIntegrationFixture(t, "")
-	store := fixture.openWeekStore(t, "2026-03-16")
-	runs := sampleRunsFixture()
+	fixture := testsupport.NewIntegrationFixture(t, "")
+	store := fixture.OpenWeekStore(t, "2026-03-16")
+	runs := testsupport.SampleRunsFixture()
 	runs[0].PRNumber = 123
 	runs[0].PRState = "open"
 	if err := store.UpsertRuns(ctx, runs); err != nil {
 		t.Fatalf("seed runs: %v", err)
 	}
-	if err := store.UpsertRawFailures(ctx, sampleRawFailuresFixture()); err != nil {
+	if err := store.UpsertRawFailures(ctx, testsupport.SampleRawFailuresFixture()); err != nil {
 		t.Fatalf("seed raw failures: %v", err)
 	}
 
-	data, err := fixture.service.BuildRunLogDay(ctx, RunLogDayQuery{
+	data, err := readmodelrunlog.BuildDay(ctx, fixture.Service, readmodelrunlog.RunLogDayQuery{
 		Date:         "2026-03-16",
 		Environments: []string{"dev"},
 	})
@@ -368,11 +370,160 @@ func TestBuildRunLogDayUsesWeeklySemanticBadPRScore(t *testing.T) {
 
 	run := jobHistoryRunByURL(t, jobHistoryEnvironmentByName(t, data, "dev"), "https://prow.example.com/view/1")
 	if got := run.BadPRScore; got != 0 {
-		t.Fatalf("expected weekly bad PR score to suppress single-run false positive, got=%d", got)
+		t.Fatalf("expected same-day post-good evidence to suppress bad PR score, got=%d", got)
 	}
 }
 
-func jobHistoryEnvironmentByName(t *testing.T, data RunLogDayData, environment string) RunLogDayEnvironment {
+func TestBuildDayUsesBackwardSupportWindowForBadPRScore(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	fixture := testsupport.NewIntegrationFixture(t, "")
+	store := fixture.OpenWeekStore(t, "2026-03-16")
+	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
+		{
+			Environment:    "dev",
+			RunURL:         "https://prow.example.com/view/support-post-good",
+			JobName:        "periodic-ci",
+			PRNumber:       123,
+			PRState:        "open",
+			PostGoodCommit: true,
+			Failed:         true,
+			OccurredAt:     "2026-03-16T08:00:00Z",
+		},
+		{
+			Environment:    "dev",
+			RunURL:         "https://prow.example.com/view/day-target",
+			JobName:        "periodic-ci",
+			PRNumber:       123,
+			PRState:        "open",
+			PostGoodCommit: false,
+			Failed:         true,
+			OccurredAt:     "2026-03-17T08:00:00Z",
+		},
+	}); err != nil {
+		t.Fatalf("seed runs: %v", err)
+	}
+	if err := store.UpsertRawFailures(ctx, []storecontracts.RawFailureRecord{
+		{
+			Environment:    "dev",
+			RowID:          "row-support-post-good",
+			RunURL:         "https://prow.example.com/view/support-post-good",
+			TestName:       "should install",
+			TestSuite:      "suite-b",
+			SignatureID:    "sig-support-post-good",
+			OccurredAt:     "2026-03-16T08:00:00Z",
+			RawText:        "Installer failed to reach bootstrap machine",
+			NormalizedText: "installer failed to reach bootstrap machine",
+		},
+		{
+			Environment:    "dev",
+			RowID:          "row-day-target",
+			RunURL:         "https://prow.example.com/view/day-target",
+			TestName:       "should install",
+			TestSuite:      "suite-b",
+			SignatureID:    "sig-day-target",
+			OccurredAt:     "2026-03-17T08:00:00Z",
+			RawText:        "Installer failed to reach bootstrap machine",
+			NormalizedText: "installer failed to reach bootstrap machine",
+		},
+	}); err != nil {
+		t.Fatalf("seed raw failures: %v", err)
+	}
+
+	data, err := readmodelrunlog.BuildDay(ctx, fixture.Service, readmodelrunlog.RunLogDayQuery{
+		Date:         "2026-03-17",
+		Environments: []string{"dev"},
+	})
+	if err != nil {
+		t.Fatalf("build job history day: %v", err)
+	}
+
+	run := jobHistoryRunByURL(t, jobHistoryEnvironmentByName(t, data, "dev"), "https://prow.example.com/view/day-target")
+	if got := run.BadPRScore; got != 0 {
+		t.Fatalf("expected backward support window to suppress bad PR score, got=%d", got)
+	}
+}
+
+func TestBuildDayUsesDayScopedBadPRScore(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	fixture := testsupport.NewIntegrationFixture(t, "")
+	store := fixture.OpenWeekStore(t, "2026-03-16")
+	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
+		{
+			Environment:    "dev",
+			RunURL:         "https://prow.example.com/view/day-target",
+			JobName:        "periodic-ci",
+			PRNumber:       123,
+			PRState:        "open",
+			PostGoodCommit: false,
+			Failed:         true,
+			OccurredAt:     "2026-03-17T08:00:00Z",
+		},
+		{
+			Environment:    "dev",
+			RunURL:         "https://prow.example.com/view/week-post-good",
+			JobName:        "periodic-ci",
+			PRNumber:       123,
+			PRState:        "open",
+			PostGoodCommit: true,
+			Failed:         true,
+			OccurredAt:     "2026-03-18T08:00:00Z",
+		},
+	}); err != nil {
+		t.Fatalf("seed runs: %v", err)
+	}
+	if err := store.UpsertRawFailures(ctx, []storecontracts.RawFailureRecord{
+		{
+			Environment:    "dev",
+			RowID:          "row-day-target",
+			RunURL:         "https://prow.example.com/view/day-target",
+			TestName:       "should install",
+			TestSuite:      "suite-b",
+			SignatureID:    "sig-day-target",
+			OccurredAt:     "2026-03-17T08:00:00Z",
+			RawText:        "Installer failed to reach bootstrap machine",
+			NormalizedText: "installer failed to reach bootstrap machine",
+		},
+		{
+			Environment:    "dev",
+			RowID:          "row-week-post-good",
+			RunURL:         "https://prow.example.com/view/week-post-good",
+			TestName:       "should install",
+			TestSuite:      "suite-b",
+			SignatureID:    "sig-week-post-good",
+			OccurredAt:     "2026-03-18T08:00:00Z",
+			RawText:        "Installer failed to reach bootstrap machine",
+			NormalizedText: "installer failed to reach bootstrap machine",
+		},
+	}); err != nil {
+		t.Fatalf("seed raw failures: %v", err)
+	}
+
+	data, err := readmodelrunlog.BuildDay(ctx, fixture.Service, readmodelrunlog.RunLogDayQuery{
+		Date:         "2026-03-17",
+		Environments: []string{"dev"},
+	})
+	if err != nil {
+		t.Fatalf("build job history day: %v", err)
+	}
+
+	run := jobHistoryRunByURL(t, jobHistoryEnvironmentByName(t, data, "dev"), "https://prow.example.com/view/day-target")
+	if got, want := run.BadPRScore, 3; got != want {
+		t.Fatalf("expected day-scoped bad PR score, got=%d want=%d", got, want)
+	}
+	if len(run.BadPRReasons) == 0 {
+		t.Fatalf("expected day-scoped bad PR reasons")
+	}
+}
+
+func jobHistoryEnvironmentByName(
+	t *testing.T,
+	data readmodelrunlog.RunLogDayData,
+	environment string,
+) readmodelrunlog.RunLogDayEnvironment {
 	t.Helper()
 	for _, row := range data.Environments {
 		if strings.TrimSpace(row.Environment) == strings.TrimSpace(environment) {
@@ -380,10 +531,14 @@ func jobHistoryEnvironmentByName(t *testing.T, data RunLogDayData, environment s
 		}
 	}
 	t.Fatalf("environment %q not found", environment)
-	return RunLogDayEnvironment{}
+	return readmodelrunlog.RunLogDayEnvironment{}
 }
 
-func jobHistoryRunByURL(t *testing.T, environment RunLogDayEnvironment, runURL string) JobHistoryRunRow {
+func jobHistoryRunByURL(
+	t *testing.T,
+	environment readmodelrunlog.RunLogDayEnvironment,
+	runURL string,
+) readmodelrunlog.JobHistoryRunRow {
 	t.Helper()
 	for _, row := range environment.Runs {
 		if strings.TrimSpace(row.Run.RunURL) == strings.TrimSpace(runURL) {
@@ -391,5 +546,5 @@ func jobHistoryRunByURL(t *testing.T, environment RunLogDayEnvironment, runURL s
 		}
 	}
 	t.Fatalf("run %q not found", runURL)
-	return JobHistoryRunRow{}
+	return readmodelrunlog.JobHistoryRunRow{}
 }

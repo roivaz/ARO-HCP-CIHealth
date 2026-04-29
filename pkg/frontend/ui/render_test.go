@@ -88,6 +88,29 @@ func TestBadPRScoreRejectsNonDevEnvironment(t *testing.T) {
 	}
 }
 
+func TestBadPRScoreAndReasonsUsesPrecomputedSignal(t *testing.T) {
+	t.Parallel()
+
+	score, reasons := BadPRScoreAndReasons(FailurePatternRow{
+		Environment:        "dev",
+		BadPRScore:         3,
+		BadPRReasons:       []string{"resolver-backed"},
+		BadPREvaluated:     true,
+		AfterLastPushCount: 99,
+		AlsoIn:             []string{"INT"},
+		AffectedRuns: []RunReference{
+			{RunURL: "https://prow.example/run/1", PRNumber: 4313, OccurredAt: "2026-03-07T10:00:00Z"},
+			{RunURL: "https://prow.example/run/2", PRNumber: 4314, OccurredAt: "2026-03-07T11:00:00Z"},
+		},
+	})
+	if score != 3 {
+		t.Fatalf("expected precomputed score 3, got %d", score)
+	}
+	if len(reasons) != 1 || reasons[0] != "resolver-backed" {
+		t.Fatalf("unexpected precomputed reasons: %+v", reasons)
+	}
+}
+
 func TestClassifyFailurePatternRegression(t *testing.T) {
 	t.Parallel()
 

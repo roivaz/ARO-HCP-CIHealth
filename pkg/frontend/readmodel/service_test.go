@@ -1,23 +1,25 @@
-package readmodel
+package readmodel_test
 
 import (
 	"context"
 	"testing"
+
+	"ci-failure-atlas/pkg/frontend/readmodel/testsupport"
 )
 
-func TestDiscoverSemanticWeeksUsesFactDates(t *testing.T) {
+func TestDiscoverAvailableWeeksUsesFactDates(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	fixture := newIntegrationFixture(t, "")
-	store := fixture.openWeekStore(t, "2026-03-16")
-	if err := store.UpsertRuns(ctx, append(sampleRunsFixture(), previousSampleRunsFixture()...)); err != nil {
+	fixture := testsupport.NewIntegrationFixture(t, "")
+	store := fixture.OpenWeekStore(t, "2026-03-16")
+	if err := store.UpsertRuns(ctx, append(testsupport.SampleRunsFixture(), testsupport.PreviousSampleRunsFixture()...)); err != nil {
 		t.Fatalf("seed runs: %v", err)
 	}
 
-	weeks, err := fixture.service.DiscoverSemanticWeeks(ctx)
+	weeks, err := fixture.Service.DiscoverAvailableWeeks(ctx)
 	if err != nil {
-		t.Fatalf("discover semantic weeks: %v", err)
+		t.Fatalf("discover available weeks: %v", err)
 	}
 	if len(weeks) != 2 || weeks[0] != "2026-03-09" || weeks[1] != "2026-03-16" {
 		t.Fatalf("unexpected loadable weeks: %+v", weeks)

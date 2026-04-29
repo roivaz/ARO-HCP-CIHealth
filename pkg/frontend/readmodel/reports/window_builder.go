@@ -1,9 +1,12 @@
-package readmodel
+package reports
 
 import (
 	"context"
 	"fmt"
 	"time"
+
+	readmodelpatterns "ci-failure-atlas/pkg/frontend/readmodel/patterns"
+	readmodelwindow "ci-failure-atlas/pkg/frontend/readmodel/window"
 )
 
 type ReportQuery struct {
@@ -24,26 +27,30 @@ type ReportData struct {
 	PreviousReports       []WeeklyEnvReport
 	TargetRate            float64
 	TestsBelowTargetByEnv map[string][]WeeklyBelowTargetTest
-	TopSignaturesByEnv    map[string][]FailurePatternsRow
+	TopSignaturesByEnv    map[string][]readmodelpatterns.FailurePatternsRow
 	NavigationAnchorWeek  string
 }
 
-func (s *Service) BuildReportData(ctx context.Context, query ReportQuery) (ReportData, error) {
-	if s == nil {
+type WindowBuilderDeps interface {
+	readmodelpatterns.WindowBuilderDeps
+}
+
+func BuildWindowData(ctx context.Context, deps WindowBuilderDeps, query ReportQuery) (ReportData, error) {
+	if deps == nil {
 		return ReportData{}, fmt.Errorf("service is required")
 	}
 
-	scope, err := s.resolvePresentationWindow(ctx, presentationWindowRequest{
+	scope, err := readmodelwindow.Resolve(ctx, deps, readmodelwindow.Request{
 		StartDate:   query.StartDate,
 		EndDate:     query.EndDate,
 		Week:        query.Week,
-		DefaultMode: presentationWindowDefaultLatestWeek,
+		DefaultMode: readmodelwindow.DefaultLatestWeek,
 	})
 	if err != nil {
 		return ReportData{}, err
 	}
 
-	store, err := s.OpenStore()
+	store, err := deps.OpenStore()
 	if err != nil {
 		return ReportData{}, err
 	}
@@ -78,16 +85,16 @@ func (s *Service) BuildReportData(ctx context.Context, query ReportQuery) (Repor
 		return ReportData{}, fmt.Errorf("load report tests below target: %w", err)
 	}
 
-	failurePatternData, err := s.BuildFailurePatterns(ctx, FailurePatternsQuery{
+	failurePatternData, err := readmodelpatterns.BuildWindowData(ctx, deps, readmodelpatterns.FailurePatternsQuery{
 		StartDate: scope.StartDate,
 		EndDate:   scope.EndDate,
 	})
 	if err != nil {
 		return ReportData{}, fmt.Errorf("build report failure-pattern data: %w", err)
 	}
-	failurePatternsByEnv := make(map[string][]FailurePatternsRow, len(failurePatternData.Environments))
+	failurePatternsByEnv := make(map[string][]readmodelpatterns.FailurePatternsRow, len(failurePatternData.Environments))
 	for _, environment := range failurePatternData.Environments {
-		failurePatternsByEnv[environment.Environment] = append([]FailurePatternsRow(nil), environment.Rows...)
+		failurePatternsByEnv[environment.Environment] = append([]readmodelpatterns.FailurePatternsRow(nil), environment.Rows...)
 	}
 
 	generatedAt := query.GeneratedAt

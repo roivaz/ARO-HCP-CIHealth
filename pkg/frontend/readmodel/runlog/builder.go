@@ -1,4 +1,4 @@
-package readmodel
+package runlog
 
 import (
 	"context"
@@ -8,7 +8,11 @@ import (
 	"time"
 
 	"ci-failure-atlas/pkg/failurepatterns"
-	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
+	failurepatternwindow "ci-failure-atlas/pkg/failurepatterns/window"
+	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
+	readmodelpatterns "ci-failure-atlas/pkg/frontend/readmodel/patterns"
+	readmodelwindow "ci-failure-atlas/pkg/frontend/readmodel/window"
+	sourceoptions "ci-failure-atlas/pkg/source/options"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 )
 
@@ -89,12 +93,6 @@ type JobHistorySemanticRollups struct {
 	AttachmentSummary  string   `json:"match_summary"`
 }
 
-type runLogDayScope struct {
-	Date         string
-	DateValue    time.Time
-	ResolvedWeek string
-}
-
 type jobHistoryReferenceCluster struct {
 	ClusterID               string
 	CanonicalEvidencePhrase string
@@ -106,21 +104,26 @@ type jobHistoryReferenceCluster struct {
 	BadPRReasons            []string
 }
 
-func (s *Service) BuildRunLogDay(ctx context.Context, query RunLogDayQuery) (RunLogDayData, error) {
-	if s == nil {
+type DayBuilderDeps interface {
+	readmodelwindow.WeekWindowResolver
+	OpenStore() (storecontracts.Store, error)
+	BuildHistoryResolver(context.Context, time.Time) (failurepatterns.PresenceResolver, error)
+}
+
+func BuildDay(ctx context.Context, deps DayBuilderDeps, query RunLogDayQuery) (RunLogDayData, error) {
+	if deps == nil {
 		return RunLogDayData{}, fmt.Errorf("service is required")
 	}
-	scope, err := resolveRunLogDayScope(query)
+	dateLabel, _, err := readmodelwindow.NormalizeDateLabel(query.Date)
+	if err != nil {
+		return RunLogDayData{}, fmt.Errorf("invalid date: %w", err)
+	}
+	window, err := readmodelwindow.Resolve(ctx, deps, readmodelwindow.Request{Date: dateLabel})
 	if err != nil {
 		return RunLogDayData{}, err
 	}
-	scope.ResolvedWeek, err = s.resolveRunLogAnchorWeek(ctx, scope.DateValue, query.Week)
-	if err != nil {
-		return RunLogDayData{}, err
-	}
-	window := scope.window()
 
-	store, err := s.OpenStore()
+	store, err := deps.OpenStore()
 	if err != nil {
 		return RunLogDayData{}, err
 	}
@@ -128,33 +131,47 @@ func (s *Service) BuildRunLogDay(ctx context.Context, query RunLogDayQuery) (Run
 		_ = store.Close()
 	}()
 
-	weekStart, weekEnd, err := semanticWeekTimeRange(window.AnchorWeek)
-	if err != nil {
-		return RunLogDayData{}, err
+	targetEnvironments := readmodelmodel.NormalizeStringSlice(query.Environments)
+	if len(targetEnvironments) == 0 {
+		targetEnvironments = readmodelmodel.NormalizeStringSlice(sourceoptions.SupportedEnvironments())
 	}
-	weekData, err := failurepatterns.LoadRange(ctx, store, failurepatterns.LoadRangeOptions{
-		StartTime: weekStart,
-		EndTime:   weekEnd,
+
+	preparedWindow, err := failurepatternwindow.Prepare(ctx, store, failurepatternwindow.PrepareOptions{
+		Environments: targetEnvironments,
+		StartTime:    window.StartTime,
+		EndTime:      window.EndTime,
 	})
 	if err != nil {
-		return RunLogDayData{}, fmt.Errorf("load failure-pattern week data for run history: %w", err)
+		return RunLogDayData{}, fmt.Errorf("prepare failure-pattern day inputs for run history: %w", err)
 	}
 
-	targetEnvironments := failurepatterns.ResolveTargetEnvironments(query.Environments, weekData)
-	if len(targetEnvironments) == 0 {
-		targetEnvironments = normalizeStringSlice(query.Environments)
-	}
-
-	factsByEnvironment, err := loadFailurePatternsFacts(ctx, store, targetEnvironments, window)
+	currentResult, err := preparedWindow.ResultForWindow(window.StartTime, window.EndTime, false)
 	if err != nil {
-		return RunLogDayData{}, fmt.Errorf("load run history day facts: %w", err)
+		return RunLogDayData{}, fmt.Errorf("compute failure-pattern day data for run history: %w", err)
+	}
+	currentClusters := toFailurePatternReportClusters(currentResult.FailurePatterns)
+	if len(query.Environments) == 0 {
+		targetEnvironments = availableFailurePatternEnvironments(targetEnvironments, currentResult, currentClusters)
+	}
+	historyResolver, err := deps.BuildHistoryResolver(ctx, window.EndTime)
+	if err != nil {
+		return RunLogDayData{}, fmt.Errorf("build run history presence resolver: %w", err)
+	}
+	allFactsByEnvironment := preparedWindow.FactsByEnvironment()
+	factsByEnvironment := make(map[string]failurePatternsEnvironmentFacts, len(targetEnvironments))
+	for _, environment := range targetEnvironments {
+		normalizedEnvironment := readmodelmodel.NormalizeEnvironment(environment)
+		if normalizedEnvironment == "" {
+			continue
+		}
+		factsByEnvironment[normalizedEnvironment] = filterFailurePatternsFactsWindow(
+			allFactsByEnvironment[normalizedEnvironment],
+			window.StartTime,
+			window.EndTime,
+		)
 	}
 
-	historyResolver, err := s.BuildHistoryResolver(ctx, scope.ResolvedWeek)
-	if err != nil {
-		return RunLogDayData{}, fmt.Errorf("build history resolver for run log: %w", err)
-	}
-	clusterByReference := buildJobHistoryReferenceIndex(weekData.FailurePatterns, historyResolver)
+	clusterByReference := buildJobHistoryReferenceIndex(currentClusters, historyResolver)
 
 	generatedAt := query.GeneratedAt
 	if generatedAt.IsZero() {
@@ -163,7 +180,7 @@ func (s *Service) BuildRunLogDay(ctx context.Context, query RunLogDayQuery) (Run
 
 	environments := make([]RunLogDayEnvironment, 0, len(targetEnvironments))
 	for _, environment := range targetEnvironments {
-		normalizedEnvironment := normalizeEnvironment(environment)
+		normalizedEnvironment := readmodelmodel.NormalizeEnvironment(environment)
 		if normalizedEnvironment == "" {
 			continue
 		}
@@ -189,40 +206,6 @@ func (s *Service) BuildRunLogDay(ctx context.Context, query RunLogDayQuery) (Run
 		},
 		Environments: environments,
 	}, nil
-}
-
-func resolveRunLogDayScope(query RunLogDayQuery) (runLogDayScope, error) {
-	dateLabel, dateValue, err := normalizeDateLabel(query.Date)
-	if err != nil {
-		return runLogDayScope{}, fmt.Errorf("invalid date: %w", err)
-	}
-	return runLogDayScope{
-		Date:      dateLabel,
-		DateValue: dateValue,
-	}, nil
-}
-
-func (s *Service) resolveRunLogAnchorWeek(ctx context.Context, dateValue time.Time, override string) (string, error) {
-	_ = ctx
-	if strings.TrimSpace(override) != "" {
-		return normalizeWeekLabel(override)
-	}
-	return weekStartForDate(dateValue).Format("2006-01-02"), nil
-}
-
-func (s runLogDayScope) window() presentationWindow {
-	startTime := time.Date(s.DateValue.Year(), s.DateValue.Month(), s.DateValue.Day(), 0, 0, 0, 0, time.UTC)
-	endTime := startTime.AddDate(0, 0, 1)
-	return presentationWindow{
-		StartDate:          s.Date,
-		EndDate:            s.Date,
-		StartTime:          startTime,
-		EndTime:            endTime,
-		DateLabels:         []string{s.Date},
-		SemanticWeeks:      []string{s.ResolvedWeek},
-		AnchorWeek:         s.ResolvedWeek,
-		SignalHorizonWeeks: []string{s.ResolvedWeek},
-	}
 }
 
 func buildJobHistoryRunRows(
@@ -332,7 +315,7 @@ func buildJobHistorySemanticRollups(run storecontracts.RunRecord, failures []Job
 
 	return JobHistorySemanticRollups{
 		SignatureCount:     len(signatureIDs),
-		DistinctClusterIDs: sortedStringSet(clusterIDs),
+		DistinctClusterIDs: readmodelmodel.SortedStringSet(clusterIDs),
 		ClusteredRows:      clusteredRows,
 		UnmatchedRows:      unmatchedRows,
 		AttachmentSummary:  buildJobHistoryAttachmentSummary(run, len(signatureIDs), len(clusterIDs), clusteredRows, unmatchedRows),
@@ -391,45 +374,32 @@ func buildRunLogDaySummary(runs []JobHistoryRunRow) RunLogDaySummary {
 }
 
 func buildJobHistoryReferenceIndex(
-	clusters []failurepatterncontracts.FailurePatternRecord,
+	clusters []readmodelpatterns.FailurePatternReportCluster,
 	historyResolver failurepatterns.PresenceResolver,
 ) map[string]jobHistoryReferenceCluster {
 	index := map[string]jobHistoryReferenceCluster{}
-	phraseEnvironments := jobHistoryPhraseEnvironments(clusters)
 	for _, cluster := range clusters {
-		environment := normalizeEnvironment(cluster.Environment)
+		environment := readmodelmodel.NormalizeEnvironment(cluster.Environment)
 		if environment == "" {
 			continue
 		}
-		otherEnvironments := windowedSeenInOtherEnvironments(
-			phraseEnvironments[normalizePhrase(cluster.CanonicalEvidencePhrase)],
-			environment,
-		)
-		var priorWeeksPresent int
+		presence := failurepatterns.PatternPresence{}
 		if historyResolver != nil {
-			presence := historyResolver.PresenceFor(failurepatterns.PatternKey{
+			presence = historyResolver.PresenceFor(failurepatterns.PatternKey{
 				Environment: environment,
 				Phrase:      strings.TrimSpace(cluster.CanonicalEvidencePhrase),
 				SearchQuery: strings.TrimSpace(cluster.SearchQueryPhrase),
 			})
-			priorWeeksPresent = presence.PriorWeeksPresent
 		}
-		badPRScore, badPRReasons := BadPRScoreAndReasons(FailurePatternRow{
-			Environment:        environment,
-			AfterLastPushCount: cluster.PostGoodCommitCount,
-			AlsoIn:             otherEnvironments,
-			AffectedRuns:       jobHistoryRunReferences(cluster.References),
-			PriorWeeksPresent:  priorWeeksPresent,
-		})
 		candidate := jobHistoryReferenceCluster{
 			ClusterID:               strings.TrimSpace(cluster.Phase2ClusterID),
 			CanonicalEvidencePhrase: strings.TrimSpace(cluster.CanonicalEvidencePhrase),
 			SearchQueryPhrase:       strings.TrimSpace(cluster.SearchQueryPhrase),
-			Lane:                    strings.TrimSpace(primaryContributingTest(cluster.ContributingTests).Lane),
+			Lane:                    strings.TrimSpace(primaryContributingTestForReport(cluster.ContributingTests).Lane),
 			SupportCount:            cluster.SupportCount,
-			PriorWeeksPresent:       priorWeeksPresent,
-			BadPRScore:              badPRScore,
-			BadPRReasons:            append([]string(nil), badPRReasons...),
+			PriorWeeksPresent:       presence.PriorWeeksPresent,
+			BadPRScore:              presence.BadPRScore,
+			BadPRReasons:            append([]string(nil), presence.BadPRReasons...),
 		}
 		for _, key := range jobHistoryReferenceKeys(environment, cluster.References) {
 			if key == "" {
@@ -444,11 +414,11 @@ func buildJobHistoryReferenceIndex(
 	return index
 }
 
-func jobHistoryPhraseEnvironments(clusters []failurepatterncontracts.FailurePatternRecord) map[string]map[string]struct{} {
+func jobHistoryPhraseEnvironments(clusters []readmodelpatterns.FailurePatternReportCluster) map[string]map[string]struct{} {
 	out := map[string]map[string]struct{}{}
 	for _, cluster := range clusters {
-		environment := normalizeEnvironment(cluster.Environment)
-		phraseKey := normalizePhrase(cluster.CanonicalEvidencePhrase)
+		environment := readmodelmodel.NormalizeEnvironment(cluster.Environment)
+		phraseKey := readmodelmodel.NormalizePhrase(cluster.CanonicalEvidencePhrase)
 		if environment == "" || phraseKey == "" {
 			continue
 		}
@@ -462,17 +432,15 @@ func jobHistoryPhraseEnvironments(clusters []failurepatterncontracts.FailurePatt
 	return out
 }
 
-func jobHistoryRunReferences(rows []failurepatterncontracts.ReferenceRecord) []RunReference {
-	out := make([]RunReference, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, RunReference{
-			RunURL:      strings.TrimSpace(row.RunURL),
-			OccurredAt:  strings.TrimSpace(row.OccurredAt),
-			SignatureID: strings.TrimSpace(row.SignatureID),
-			PRNumber:    row.PRNumber,
-		})
+func jobHistorySignalReferences(
+	cluster readmodelpatterns.FailurePatternReportCluster,
+	supportRefs signalHorizonRefSet,
+) []readmodelpatterns.FailurePatternReportReference {
+	references := supportRefs.byMergeKey[failurePatternsMergeKeyForCluster(cluster)]
+	if len(references) == 0 {
+		return append([]readmodelpatterns.FailurePatternReportReference(nil), cluster.References...)
 	}
-	return out
+	return append([]readmodelpatterns.FailurePatternReportReference(nil), references...)
 }
 
 func jobHistoryPrefersClusterCandidate(current jobHistoryReferenceCluster, candidate jobHistoryReferenceCluster) bool {
@@ -501,11 +469,11 @@ func findJobHistoryClusterForRawFailure(
 	return jobHistoryReferenceCluster{}, false
 }
 
-func jobHistoryReferenceKeys(environment string, references []failurepatterncontracts.ReferenceRecord) []string {
+func jobHistoryReferenceKeys(environment string, references []readmodelpatterns.FailurePatternReportReference) []string {
 	if len(references) == 0 {
 		return nil
 	}
-	normalizedEnvironment := normalizeEnvironment(environment)
+	normalizedEnvironment := readmodelmodel.NormalizeEnvironment(environment)
 	if normalizedEnvironment == "" {
 		return nil
 	}
@@ -530,7 +498,7 @@ func jobHistoryReferenceKeys(environment string, references []failurepatterncont
 }
 
 func jobHistoryRawFailureKeys(environment string, row storecontracts.RawFailureRecord) []string {
-	normalizedEnvironment := normalizeEnvironment(environment)
+	normalizedEnvironment := readmodelmodel.NormalizeEnvironment(environment)
 	if normalizedEnvironment == "" {
 		return nil
 	}
@@ -586,7 +554,7 @@ func jobHistoryRunLanes(rows []JobHistoryFailureRow) []string {
 			set[lane] = struct{}{}
 		}
 	}
-	return sortedStringSet(set)
+	return readmodelmodel.SortedStringSet(set)
 }
 
 func jobHistoryFailedTestCount(rows []JobHistoryFailureRow) int {

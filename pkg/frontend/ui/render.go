@@ -8,68 +8,75 @@ import (
 	"strings"
 	"time"
 
-	frontreadmodel "ci-failure-atlas/pkg/frontend/readmodel"
+	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
 	sourceoptions "ci-failure-atlas/pkg/source/options"
 )
 
-type RunReference = frontreadmodel.RunReference
+type RunReference = readmodelmodel.RunReference
 
-type ContributingTest = frontreadmodel.ContributingTest
+type ContributingTest = readmodelmodel.ContributingTest
 
-type FailurePatternRow = frontreadmodel.FailurePatternRow
+type FailurePatternRow = readmodelmodel.FailurePatternRow
 
 func OrderedUniqueReferences(rows []RunReference) []RunReference {
-	return frontreadmodel.OrderedUniqueReferences(rows)
+	return readmodelmodel.OrderedUniqueReferences(rows)
 }
 
 func OrderedContributingTests(items []ContributingTest) []ContributingTest {
-	return frontreadmodel.OrderedContributingTests(items)
+	return readmodelmodel.OrderedContributingTests(items)
 }
 
 func ParseReferenceTimestamp(value string) (time.Time, bool) {
-	return frontreadmodel.ParseReferenceTimestamp(value)
+	return readmodelmodel.ParseReferenceTimestamp(value)
 }
 
 func QualityIssueCodes(phrase string) []string {
-	return frontreadmodel.QualityIssueCodes(phrase)
+	return readmodelmodel.QualityIssueCodes(phrase)
 }
 
 func QualityScore(issueCodes []string) int {
-	return frontreadmodel.QualityScore(issueCodes)
+	return readmodelmodel.QualityScore(issueCodes)
 }
 
 func QualityIssueLabel(code string) string {
-	return frontreadmodel.QualityIssueLabel(code)
+	return readmodelmodel.QualityIssueLabel(code)
 }
 
 func DailyDensitySparkline(references []RunReference, windowDays int, endAnchor time.Time) (string, []int, string, bool) {
-	return frontreadmodel.DailyDensitySparkline(references, windowDays, endAnchor)
+	return readmodelmodel.DailyDensitySparkline(references, windowDays, endAnchor)
 }
 
-type FailureCategory = frontreadmodel.FailureCategory
+type FailureCategory = readmodelmodel.FailureCategory
+
+const (
+	CategoryRegression    = readmodelmodel.CategoryRegression
+	CategoryFlake         = readmodelmodel.CategoryFlake
+	CategoryNoise         = readmodelmodel.CategoryNoise
+	CategoryIndeterminate = readmodelmodel.CategoryIndeterminate
+)
 
 func ClassifyFailurePattern(row FailurePatternRow) (FailureCategory, []string) {
-	return frontreadmodel.ClassifyFailurePattern(row)
+	return readmodelmodel.ClassifyFailurePattern(row)
 }
 
 func CategoryRank(c FailureCategory) int {
-	return frontreadmodel.CategoryRank(c)
+	return readmodelmodel.CategoryRank(c)
 }
 
 func CategoryLabel(c FailureCategory) string {
-	return frontreadmodel.CategoryLabel(c)
+	return readmodelmodel.CategoryLabel(c)
 }
 
 func CategoryClass(c FailureCategory) string {
-	return frontreadmodel.CategoryClass(c)
+	return readmodelmodel.CategoryClass(c)
 }
 
 func BadPRScoreAndReasons(row FailurePatternRow) (int, []string) {
-	return frontreadmodel.BadPRScoreAndReasons(row)
+	return readmodelmodel.BadPRScoreAndReasons(row)
 }
 
 func SortRowsByDefaultPriority(rows []FailurePatternRow) {
-	frontreadmodel.SortRowsByDefaultPriority(rows)
+	readmodelmodel.SortRowsByDefaultPriority(rows)
 }
 
 func affectedJobCount(row FailurePatternRow) int {
@@ -1421,12 +1428,12 @@ func signalIconTooltipHTML(className string, glyph string, tooltip string) strin
 func signalIconsPlainHTML(category FailureCategory, priorWeeksPresent int) string {
 	var icons strings.Builder
 	switch category {
-	case frontreadmodel.CategoryRegression:
+	case CategoryRegression:
 		icons.WriteString(signalIconContentHTML("signal-regression", "⚠"))
-	case frontreadmodel.CategoryFlake:
+	case CategoryFlake:
 		icons.WriteString(signalIconContentHTML("signal-flake", "↻"))
 	}
-	if category != frontreadmodel.CategoryRegression && priorWeeksPresent == 0 {
+	if category != CategoryRegression && priorWeeksPresent == 0 {
 		icons.WriteString(signalIconContentHTML("signal-new", "★"))
 	}
 	return icons.String()
@@ -1437,7 +1444,7 @@ func categoryTooltipText(category FailureCategory, catLabel string, categoryReas
 	if len(categoryReasons) > 0 {
 		parts = append(parts, strings.Join(categoryReasons, "; "))
 	}
-	if category != frontreadmodel.CategoryRegression && priorWeeksPresent == 0 {
+	if category != CategoryRegression && priorWeeksPresent == 0 {
 		parts = append(parts, "New failure pattern — no prior history")
 	}
 	return strings.Join(parts, " — ")
@@ -1553,7 +1560,7 @@ func renderMainRow(row FailurePatternRow, rowID string, opts TableOptions) strin
 	catLabel := CategoryLabel(category)
 	catClass := CategoryClass(category)
 	catRank := CategoryRank(category)
-	if category == frontreadmodel.CategoryRegression {
+	if category == CategoryRegression {
 		tooltip := "Likely regression — " + strings.Join(categoryReasons, "; ")
 		summaryText = fmt.Sprintf(
 			"%s%s",

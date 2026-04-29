@@ -7,7 +7,8 @@ import (
 	"strings"
 	"time"
 
-	frontservice "ci-failure-atlas/pkg/frontend/readmodel"
+	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
+	readmodelpatterns "ci-failure-atlas/pkg/frontend/readmodel/patterns"
 	frontui "ci-failure-atlas/pkg/frontend/ui"
 	sourceoptions "ci-failure-atlas/pkg/source/options"
 )
@@ -19,11 +20,11 @@ const (
 
 type PageOptions struct {
 	Chrome frontui.ReportChromeOptions
-	Query  frontservice.FailurePatternsQuery
+	Query  readmodelpatterns.FailurePatternsQuery
 }
 
 func RenderHTML(
-	data frontservice.FailurePatternsData,
+	data readmodelpatterns.FailurePatternsData,
 	options PageOptions,
 ) string {
 	var b strings.Builder
@@ -96,12 +97,12 @@ func RenderHTML(
 }
 
 func failurePatternsFailurePatternRows(
-	rows []frontservice.FailurePatternsRow,
+	rows []readmodelpatterns.FailurePatternsRow,
 	totalEnvironmentFailures int,
-) []frontservice.FailurePatternRow {
-	out := make([]frontservice.FailurePatternRow, 0, len(rows))
+) []readmodelmodel.FailurePatternRow {
+	out := make([]readmodelmodel.FailurePatternRow, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, frontservice.FailurePatternRow{
+		out = append(out, readmodelmodel.FailurePatternRow{
 			Environment:        strings.TrimSpace(row.Environment),
 			FailedAt:           strings.TrimSpace(row.Lane),
 			JobName:            strings.TrimSpace(row.JobName),
@@ -124,6 +125,9 @@ func failurePatternsFailurePatternRows(
 			PriorWeekStarts:    append([]string(nil), row.PriorWeekStarts...),
 			PriorRunsAffected:  row.PriorJobsAffected,
 			PriorLastSeenAt:    strings.TrimSpace(row.PriorLastSeenAt),
+			BadPRScore:         row.BadPRScore,
+			BadPRReasons:       append([]string(nil), row.BadPRReasons...),
+			BadPREvaluated:     row.BadPREvaluated,
 			LinkedPatterns:     failurePatternsFailurePatternRows(row.LinkedChildren, totalEnvironmentFailures),
 		})
 	}
@@ -139,10 +143,10 @@ func failurePatternsFailurePatternRows(
 	return out
 }
 
-func failurePatternsRunReferences(rows []frontservice.FailurePatternReportReference) []frontservice.RunReference {
-	out := make([]frontservice.RunReference, 0, len(rows))
+func failurePatternsRunReferences(rows []readmodelpatterns.FailurePatternReportReference) []readmodelmodel.RunReference {
+	out := make([]readmodelmodel.RunReference, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, frontservice.RunReference{
+		out = append(out, readmodelmodel.RunReference{
 			RunURL:      strings.TrimSpace(row.RunURL),
 			OccurredAt:  strings.TrimSpace(row.OccurredAt),
 			SignatureID: strings.TrimSpace(row.SignatureID),
@@ -152,10 +156,10 @@ func failurePatternsRunReferences(rows []frontservice.FailurePatternReportRefere
 	return out
 }
 
-func failurePatternsContributingTests(rows []frontservice.FailurePatternReportContributingTest) []frontservice.ContributingTest {
-	out := make([]frontservice.ContributingTest, 0, len(rows))
+func failurePatternsContributingTests(rows []readmodelpatterns.FailurePatternReportContributingTest) []readmodelmodel.ContributingTest {
+	out := make([]readmodelmodel.ContributingTest, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, frontservice.ContributingTest{
+		out = append(out, readmodelmodel.ContributingTest{
 			FailedAt:    strings.TrimSpace(row.Lane),
 			JobName:     strings.TrimSpace(row.JobName),
 			TestName:    strings.TrimSpace(row.TestName),

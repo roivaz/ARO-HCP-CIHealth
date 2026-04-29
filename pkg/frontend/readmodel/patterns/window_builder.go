@@ -1,4 +1,4 @@
-package readmodel
+package patterns
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 
 	"ci-failure-atlas/pkg/failurepatterns"
 	failurepatternwindow "ci-failure-atlas/pkg/failurepatterns/window"
+	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
+	readmodelwindow "ci-failure-atlas/pkg/frontend/readmodel/window"
 	sourceoptions "ci-failure-atlas/pkg/source/options"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 )
@@ -72,12 +74,15 @@ type FailurePatternsRow struct {
 	PriorWeekStarts         []string                               `json:"prior_window_starts,omitempty"`
 	PriorJobsAffected       int                                    `json:"prior_runs_affected"`
 	PriorLastSeenAt         string                                 `json:"prior_last_seen_at,omitempty"`
+	BadPRScore              int                                    `json:"-"`
+	BadPRReasons            []string                               `json:"-"`
+	BadPREvaluated          bool                                   `json:"-"`
 	ContributingTests       []FailurePatternReportContributingTest `json:"contributing_tests,omitempty"`
 	FullErrorSamples        []string                               `json:"full_error_samples,omitempty"`
 	References              []FailurePatternReportReference        `json:"affected_runs,omitempty"`
 	ScoringReferences       []FailurePatternReportReference        `json:"-"`
 	LinkedChildren          []FailurePatternsRow                   `json:"linked_failure_patterns,omitempty"`
-	AnchorWeek              string                                 `json:"-"`
+	WindowEndDate           string                                 `json:"-"`
 	MergeKey                string                                 `json:"-"`
 }
 
@@ -90,33 +95,42 @@ type failurePatternsMatch struct {
 	FailedRuns   int
 }
 
-func (s *Service) BuildFailurePatterns(ctx context.Context, query FailurePatternsQuery) (FailurePatternsData, error) {
-	if s == nil {
+const signalHorizonMinWeeks = 3
+
+type WindowBuilderDeps interface {
+	readmodelwindow.WeekWindowResolver
+	OpenStore() (storecontracts.Store, error)
+	BuildHistoryResolver(context.Context, time.Time) (failurepatterns.PresenceResolver, error)
+}
+
+func BuildWindowData(ctx context.Context, deps WindowBuilderDeps, query FailurePatternsQuery) (FailurePatternsData, error) {
+	if deps == nil {
 		return FailurePatternsData{}, fmt.Errorf("service is required")
 	}
 
-	scope, err := s.resolvePresentationWindow(ctx, presentationWindowRequest{
+	scope, err := readmodelwindow.Resolve(ctx, deps, readmodelwindow.Request{
 		StartDate:   query.StartDate,
 		EndDate:     query.EndDate,
 		Week:        query.Week,
-		DefaultMode: presentationWindowDefaultLatestWeek,
+		DefaultMode: readmodelwindow.DefaultLatestWeek,
 	})
 	if err != nil {
 		return FailurePatternsData{}, err
 	}
-	requestedEnvironments := normalizeStringSlice(query.Environments)
-	return s.buildFailurePatternsInline(ctx, query, scope, requestedEnvironments)
+	requestedEnvironments := readmodelmodel.NormalizeStringSlice(query.Environments)
+	return buildFailurePatternsInline(ctx, deps, query, scope, requestedEnvironments)
 }
 
-func (s *Service) buildFailurePatternsInline(
+func buildFailurePatternsInline(
 	ctx context.Context,
+	deps WindowBuilderDeps,
 	query FailurePatternsQuery,
-	scope presentationWindow,
+	scope readmodelwindow.Scope,
 	requestedEnvironments []string,
 ) (FailurePatternsData, error) {
-	targetEnvironments := s.resolveFailurePatternsTargetEnvironments(requestedEnvironments)
+	targetEnvironments := resolveFailurePatternsTargetEnvironments(requestedEnvironments)
 
-	factsStore, err := s.OpenStore()
+	factsStore, err := deps.OpenStore()
 	if err != nil {
 		return FailurePatternsData{}, err
 	}
@@ -152,7 +166,7 @@ func (s *Service) buildFailurePatternsInline(
 		}
 	}
 
-	historyResolver, err := s.BuildHistoryResolverForWeek(ctx, scope.AnchorWeek, "")
+	historyResolver, err := deps.BuildHistoryResolver(ctx, scope.EndTime)
 	if err != nil {
 		return FailurePatternsData{}, fmt.Errorf("build signal-horizon history resolver: %w", err)
 	}
@@ -179,7 +193,7 @@ func (s *Service) buildFailurePatternsInline(
 	rowsByEnvironment := make(map[string][]FailurePatternsRow, len(targetEnvironments))
 	phraseEnvironments := map[string]map[string]struct{}{}
 	for _, cluster := range currentClusters {
-		environment := normalizeEnvironment(cluster.Environment)
+		environment := readmodelmodel.NormalizeEnvironment(cluster.Environment)
 		if environment == "" {
 			continue
 		}
@@ -189,7 +203,7 @@ func (s *Service) buildFailurePatternsInline(
 			historyResolver,
 			trendEndAnchor,
 			trendDays,
-			scope.AnchorWeek,
+			scope.EndDate,
 			scoringRefs,
 			extractedRowsByKey,
 		)
@@ -236,28 +250,22 @@ func (s *Service) buildFailurePatternsInline(
 	}, nil
 }
 
-func (s *Service) resolveFailurePatternsTargetEnvironments(
-	requestedEnvironments []string,
-) []string {
+func resolveFailurePatternsTargetEnvironments(requestedEnvironments []string) []string {
 	if len(requestedEnvironments) > 0 {
 		return append([]string(nil), requestedEnvironments...)
 	}
-	return normalizeStringSlice(sourceoptions.SupportedEnvironments())
+	return readmodelmodel.NormalizeStringSlice(sourceoptions.SupportedEnvironments())
 }
 
-func failurePatternsHorizonStart(scope presentationWindow) time.Time {
-	horizonWeeks := scope.SignalHorizonWeeks
-	if len(horizonWeeks) == 0 {
-		horizonWeeks = scope.SemanticWeeks
-	}
-	if len(horizonWeeks) == 0 {
+func failurePatternsHorizonStart(scope readmodelwindow.Scope) time.Time {
+	if scope.EndTime.IsZero() {
 		return scope.StartTime
 	}
-	start, err := time.Parse("2006-01-02", strings.TrimSpace(horizonWeeks[0]))
-	if err != nil {
+	anchorWeekStart := readmodelwindow.WeekStartForDate(scope.EndTime.Add(-time.Nanosecond))
+	if anchorWeekStart.IsZero() {
 		return scope.StartTime
 	}
-	return start.UTC()
+	return anchorWeekStart.AddDate(0, 0, -(signalHorizonMinWeeks * 7)).UTC()
 }
 
 func buildInlineFailurePatternsRow(
@@ -265,7 +273,7 @@ func buildInlineFailurePatternsRow(
 	historyResolver failurepatterns.PresenceResolver,
 	trendAnchor time.Time,
 	trendDays int,
-	anchorWeek string,
+	windowEndDate string,
 	scoringReferences []FailurePatternReportReference,
 	extractedRowsByKey map[string]failurepatternwindow.ExtractedFailureRow,
 ) FailurePatternsRow {
@@ -280,7 +288,7 @@ func buildInlineFailurePatternsRow(
 	sortWindowedReferences(scoringRefs)
 
 	row := FailurePatternsRow{
-		Environment:             normalizeEnvironment(cluster.Environment),
+		Environment:             readmodelmodel.NormalizeEnvironment(cluster.Environment),
 		ClusterID:               strings.TrimSpace(cluster.Phase2ClusterID),
 		CanonicalEvidencePhrase: strings.TrimSpace(cluster.CanonicalEvidencePhrase),
 		SearchQueryPhrase:       strings.TrimSpace(cluster.SearchQueryPhrase),
@@ -297,7 +305,7 @@ func buildInlineFailurePatternsRow(
 		FullErrorSamples:        inlineFailurePatternSamples(references, extractedRowsByKey, failurePatternReportFullErrorExamplesLimit),
 		References:              references,
 		ScoringReferences:       scoringRefs,
-		AnchorWeek:              strings.TrimSpace(anchorWeek),
+		WindowEndDate:           strings.TrimSpace(windowEndDate),
 		MergeKey:                failurePatternsMergeKeyForCluster(cluster),
 	}
 
@@ -313,10 +321,13 @@ func buildInlineFailurePatternsRow(
 		if !presence.PriorLastSeenAt.IsZero() {
 			row.PriorLastSeenAt = presence.PriorLastSeenAt.UTC().Format(time.RFC3339)
 		}
+		row.BadPRScore = presence.BadPRScore
+		row.BadPRReasons = append([]string(nil), presence.BadPRReasons...)
+		row.BadPREvaluated = true
 	}
 
 	if trendDays > 0 && !trendAnchor.IsZero() {
-		if _, counts, trendRange, ok := DailyDensitySparkline(toWindowedHTMLRunReferences(scoringRefs), trendDays, trendAnchor); ok {
+		if _, counts, trendRange, ok := readmodelmodel.DailyDensitySparkline(toWindowedHTMLRunReferences(scoringRefs), trendDays, trendAnchor); ok {
 			row.TrendCounts = append([]int(nil), counts...)
 			row.TrendRange = trendRange
 		}
@@ -366,7 +377,7 @@ func availableFailurePatternEnvironments(
 		}
 	}
 	for _, cluster := range clusters {
-		environment := normalizeEnvironment(cluster.Environment)
+		environment := readmodelmodel.NormalizeEnvironment(cluster.Environment)
 		if environment != "" {
 			set[environment] = struct{}{}
 		}
@@ -469,33 +480,16 @@ func inlineFailurePatternSamples(
 	return samples
 }
 
-func loadFailurePatternsFacts(
-	ctx context.Context,
-	store storecontracts.Store,
-	environments []string,
-	scope presentationWindow,
-) (map[string]failurePatternsEnvironmentFacts, error) {
-	return failurepatternwindow.LoadDateScopedFacts(ctx, store, failurepatternwindow.FactLoadOptions{
-		Environments: environments,
-		StartTime:    scope.StartTime,
-		EndTime:      scope.EndTime,
-	})
-}
-
-func failurePatternsFactsForWeek(
+func filterFailurePatternsFactsWindow(
 	facts failurePatternsEnvironmentFacts,
-	week string,
+	startTime time.Time,
+	endTime time.Time,
 ) failurePatternsEnvironmentFacts {
-	startDate, endDate := semanticWeekDateRange(week)
-	if startDate == "" || endDate == "" {
+	startTime = startTime.UTC()
+	endTime = endTime.UTC()
+	if startTime.IsZero() || endTime.IsZero() || !startTime.Before(endTime) {
 		return facts
 	}
-	startTime, errStart := time.Parse("2006-01-02", startDate)
-	endInclusive, errEnd := time.Parse("2006-01-02", endDate)
-	if errStart != nil || errEnd != nil {
-		return facts
-	}
-	endTime := endInclusive.UTC().AddDate(0, 0, 1)
 	filtered := failurePatternsEnvironmentFacts{
 		RawFailures: make([]storecontracts.RawFailureRecord, 0, len(facts.RawFailures)),
 		RunsByURL:   map[string]storecontracts.RunRecord{},
@@ -506,7 +500,7 @@ func failurePatternsFactsForWeek(
 			continue
 		}
 		occurredAt = occurredAt.UTC()
-		if occurredAt.Before(startTime.UTC()) || !occurredAt.Before(endTime) {
+		if occurredAt.Before(startTime) || !occurredAt.Before(endTime) {
 			continue
 		}
 		filtered.RawFailures = append(filtered.RawFailures, row)
@@ -517,7 +511,7 @@ func failurePatternsFactsForWeek(
 			continue
 		}
 		occurredAt = occurredAt.UTC()
-		if occurredAt.Before(startTime.UTC()) || !occurredAt.Before(endTime) {
+		if occurredAt.Before(startTime) || !occurredAt.Before(endTime) {
 			continue
 		}
 		filtered.RunsByURL[runURL] = run
@@ -533,11 +527,11 @@ func buildFailurePatternsRow(
 	facts failurePatternsEnvironmentFacts,
 	historyResolver failurepatterns.PresenceResolver,
 	trendAnchor time.Time,
-	anchorWeek string,
+	windowEndDate string,
 ) (FailurePatternsRow, bool) {
 	children := make([]FailurePatternsRow, 0, len(cluster.LinkedChildren))
 	for _, child := range cluster.LinkedChildren {
-		childRow, ok := buildFailurePatternsRow(child, facts, nil, trendAnchor, anchorWeek)
+		childRow, ok := buildFailurePatternsRow(child, facts, nil, trendAnchor, windowEndDate)
 		if !ok {
 			continue
 		}
@@ -566,7 +560,7 @@ func buildFailurePatternsRow(
 
 	anchorWeekReferences := append([]FailurePatternReportReference(nil), cluster.References...)
 	row := FailurePatternsRow{
-		Environment:             normalizeEnvironment(cluster.Environment),
+		Environment:             readmodelmodel.NormalizeEnvironment(cluster.Environment),
 		ClusterID:               strings.TrimSpace(cluster.Phase2ClusterID),
 		CanonicalEvidencePhrase: strings.TrimSpace(cluster.CanonicalEvidencePhrase),
 		SearchQueryPhrase:       strings.TrimSpace(cluster.SearchQueryPhrase),
@@ -584,7 +578,7 @@ func buildFailurePatternsRow(
 		References:              references,
 		ScoringReferences:       append([]FailurePatternReportReference(nil), references...),
 		LinkedChildren:          children,
-		AnchorWeek:              strings.TrimSpace(anchorWeek),
+		WindowEndDate:           strings.TrimSpace(windowEndDate),
 		MergeKey:                failurePatternsMergeKeyForCluster(cluster),
 	}
 
@@ -600,6 +594,9 @@ func buildFailurePatternsRow(
 		if !presence.PriorLastSeenAt.IsZero() {
 			row.PriorLastSeenAt = presence.PriorLastSeenAt.UTC().Format(time.RFC3339)
 		}
+		row.BadPRScore = presence.BadPRScore
+		row.BadPRReasons = append([]string(nil), presence.BadPRReasons...)
+		row.BadPREvaluated = true
 	}
 
 	if counts, trendRange, ok := buildWindowedTrend(anchorWeekReferences, trendAnchor); ok {
@@ -615,7 +612,7 @@ func buildWindowedTrend(references []FailurePatternReportReference, trendAnchor 
 	if trendAnchor.IsZero() {
 		return nil, "", false
 	}
-	if _, counts, trendRange, ok := DailyDensitySparkline(toWindowedHTMLRunReferences(references), 7, trendAnchor); ok {
+	if _, counts, trendRange, ok := readmodelmodel.DailyDensitySparkline(toWindowedHTMLRunReferences(references), 7, trendAnchor); ok {
 		return append([]int(nil), counts...), trendRange, true
 	}
 	return nil, "", false
@@ -649,13 +646,13 @@ func failurePatternsTrendAnchor(week string) time.Time {
 }
 
 func failurePatternsMergeKeyForCluster(cluster FailurePatternReportCluster) string {
-	environment := normalizeEnvironment(cluster.Environment)
+	environment := readmodelmodel.NormalizeEnvironment(cluster.Environment)
 	if environment == "" {
 		return ""
 	}
 	clusterID := strings.TrimSpace(cluster.Phase2ClusterID)
-	phraseKey := normalizePhrase(cluster.CanonicalEvidencePhrase)
-	searchKey := normalizePhrase(cluster.SearchQueryPhrase)
+	phraseKey := readmodelmodel.NormalizePhrase(cluster.CanonicalEvidencePhrase)
+	searchKey := readmodelmodel.NormalizePhrase(cluster.SearchQueryPhrase)
 	if phraseKey == "" && searchKey == "" {
 		if clusterID == "" {
 			return ""
@@ -670,6 +667,7 @@ func cloneFailurePatternsRow(row FailurePatternsRow) FailurePatternsRow {
 	cloned.SeenIn = append([]string(nil), row.SeenIn...)
 	cloned.TrendCounts = append([]int(nil), row.TrendCounts...)
 	cloned.PriorWeekStarts = append([]string(nil), row.PriorWeekStarts...)
+	cloned.BadPRReasons = append([]string(nil), row.BadPRReasons...)
 	cloned.ContributingTests = append([]FailurePatternReportContributingTest(nil), row.ContributingTests...)
 	cloned.FullErrorSamples = append([]string(nil), row.FullErrorSamples...)
 	cloned.References = append([]FailurePatternReportReference(nil), row.References...)
@@ -695,7 +693,7 @@ func mergeFailurePatternsRows(
 	merged.References = mergeFailurePatternsReferences(merged.References, incoming.References)
 	merged.LinkedChildren = mergeFailurePatternsChildren(merged.LinkedChildren, incoming.LinkedChildren, runsByURL)
 	merged.FullErrorSamples = mergeFailurePatternsSamples(merged.FullErrorSamples, incoming.FullErrorSamples, failurePatternReportFullErrorExamplesLimit)
-	if strings.TrimSpace(incoming.AnchorWeek) >= strings.TrimSpace(merged.AnchorWeek) {
+	if strings.TrimSpace(incoming.WindowEndDate) >= strings.TrimSpace(merged.WindowEndDate) {
 		merged.Environment = incoming.Environment
 		merged.ClusterID = incoming.ClusterID
 		merged.CanonicalEvidencePhrase = incoming.CanonicalEvidencePhrase
@@ -712,9 +710,12 @@ func mergeFailurePatternsRows(
 		merged.PriorWeekStarts = append([]string(nil), incoming.PriorWeekStarts...)
 		merged.PriorJobsAffected = incoming.PriorJobsAffected
 		merged.PriorLastSeenAt = incoming.PriorLastSeenAt
+		merged.BadPRScore = incoming.BadPRScore
+		merged.BadPRReasons = append([]string(nil), incoming.BadPRReasons...)
+		merged.BadPREvaluated = incoming.BadPREvaluated
 		merged.ContributingTests = append([]FailurePatternReportContributingTest(nil), incoming.ContributingTests...)
 		merged.ScoringReferences = mergeFailurePatternsReferences(merged.ScoringReferences, incoming.ScoringReferences)
-		merged.AnchorWeek = incoming.AnchorWeek
+		merged.WindowEndDate = incoming.WindowEndDate
 	}
 	merged.JobsAffected = windowedDistinctRunCount(merged.References)
 	merged.FailedRuns = windowedFailedRunsFromReferences(merged.References, runsByURL)
@@ -961,7 +962,7 @@ func failurePatternsOverlayStoredReference(
 }
 
 func collectWindowedPhraseEnvironments(row FailurePatternsRow, phraseEnvironments map[string]map[string]struct{}) {
-	phraseKey := normalizePhrase(row.CanonicalEvidencePhrase)
+	phraseKey := readmodelmodel.NormalizePhrase(row.CanonicalEvidencePhrase)
 	if phraseKey != "" && row.WindowFailureCount > 0 {
 		set := phraseEnvironments[phraseKey]
 		if set == nil {
@@ -985,7 +986,7 @@ func applyWindowedSeenIn(
 	}
 	out := append([]FailurePatternsRow(nil), rows...)
 	for index := range out {
-		phraseKey := normalizePhrase(out[index].CanonicalEvidencePhrase)
+		phraseKey := readmodelmodel.NormalizePhrase(out[index].CanonicalEvidencePhrase)
 		if phraseKey != "" {
 			out[index].SeenIn = windowedSeenInOtherEnvironments(phraseEnvironments[phraseKey], currentEnvironment)
 		}
@@ -1109,6 +1110,14 @@ func windowedFullErrorSamples(rows []storecontracts.RawFailureRecord, limit int)
 	return samples
 }
 
+func sampleFailureText(row storecontracts.RawFailureRecord) string {
+	text := strings.TrimSpace(row.RawText)
+	if text == "" {
+		text = strings.TrimSpace(row.NormalizedText)
+	}
+	return text
+}
+
 func windowedFullErrorSamplesFromChildren(children []FailurePatternsRow, limit int) []string {
 	if len(children) == 0 || limit <= 0 {
 		return nil
@@ -1131,8 +1140,8 @@ func windowedSeenInOtherEnvironments(seenByEnvironment map[string]struct{}, curr
 	}
 	out := make([]string, 0, len(seenByEnvironment))
 	for environment := range seenByEnvironment {
-		normalizedEnvironment := normalizeEnvironment(environment)
-		if normalizedEnvironment == "" || normalizedEnvironment == normalizeEnvironment(currentEnvironment) {
+		normalizedEnvironment := readmodelmodel.NormalizeEnvironment(environment)
+		if normalizedEnvironment == "" || normalizedEnvironment == readmodelmodel.NormalizeEnvironment(currentEnvironment) {
 			continue
 		}
 		out = append(out, strings.ToUpper(normalizedEnvironment))
@@ -1163,8 +1172,8 @@ func sortFailurePatternsRows(rows []FailurePatternsRow) {
 
 func sortWindowedReferences(rows []FailurePatternReportReference) {
 	sort.Slice(rows, func(i, j int) bool {
-		ti, okI := ParseReferenceTimestamp(rows[i].OccurredAt)
-		tj, okJ := ParseReferenceTimestamp(rows[j].OccurredAt)
+		ti, okI := readmodelmodel.ParseReferenceTimestamp(rows[i].OccurredAt)
+		tj, okJ := readmodelmodel.ParseReferenceTimestamp(rows[j].OccurredAt)
 		switch {
 		case okI && okJ && !ti.Equal(tj):
 			return ti.After(tj)
@@ -1183,8 +1192,8 @@ func sortWindowedReferences(rows []FailurePatternReportReference) {
 
 func sortWindowedRawFailures(rows []storecontracts.RawFailureRecord) {
 	sort.Slice(rows, func(i, j int) bool {
-		ti, okI := ParseReferenceTimestamp(rows[i].OccurredAt)
-		tj, okJ := ParseReferenceTimestamp(rows[j].OccurredAt)
+		ti, okI := readmodelmodel.ParseReferenceTimestamp(rows[i].OccurredAt)
+		tj, okJ := readmodelmodel.ParseReferenceTimestamp(rows[j].OccurredAt)
 		switch {
 		case okI && okJ && !ti.Equal(tj):
 			return ti.After(tj)
@@ -1201,10 +1210,10 @@ func sortWindowedRawFailures(rows []storecontracts.RawFailureRecord) {
 	})
 }
 
-func toWindowedHTMLRunReferences(rows []FailurePatternReportReference) []RunReference {
-	out := make([]RunReference, 0, len(rows))
+func toWindowedHTMLRunReferences(rows []FailurePatternReportReference) []readmodelmodel.RunReference {
+	out := make([]readmodelmodel.RunReference, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, RunReference{
+		out = append(out, readmodelmodel.RunReference{
 			RunURL:      strings.TrimSpace(row.RunURL),
 			OccurredAt:  strings.TrimSpace(row.OccurredAt),
 			SignatureID: strings.TrimSpace(row.SignatureID),
@@ -1312,7 +1321,7 @@ func enrichRowFromSignalHorizon(
 	enriched.WeeklyPostGoodCount = windowedPostGoodCount(enriched.ScoringReferences)
 
 	if trendDays > 0 && !trendAnchor.IsZero() {
-		if _, counts, trendRange, ok := DailyDensitySparkline(toWindowedHTMLRunReferences(horizonRefsForRow), trendDays, trendAnchor); ok {
+		if _, counts, trendRange, ok := readmodelmodel.DailyDensitySparkline(toWindowedHTMLRunReferences(horizonRefsForRow), trendDays, trendAnchor); ok {
 			enriched.TrendCounts = append([]int(nil), counts...)
 			enriched.TrendRange = trendRange
 		}

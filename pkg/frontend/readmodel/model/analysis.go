@@ -1,11 +1,13 @@
-package readmodel
+package model
 
 import (
-    "fmt"
-    "sort"
-    "strings"
-    "time"
-    "unicode"
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+	"unicode"
+
+	"ci-failure-atlas/pkg/failurepatterns"
 )
 
 func OrderedUniqueReferences(rows []RunReference) []RunReference {
@@ -219,19 +221,26 @@ func DailyDensitySparkline(references []RunReference, windowDays int, endAnchor 
 }
 
 func BadPRScoreAndReasons(row FailurePatternRow) (int, []string) {
-	if rowPostGoodCount(row) > 0 {
-		return 0, nil
+	if row.BadPREvaluated {
+		return row.BadPRScore, append([]string(nil), row.BadPRReasons...)
 	}
-	if !isOnlySeenInDev(row) {
-		return 0, nil
+	references := rowScoreReferences(row)
+	signalReferences := make([]failurepatterns.BadPRSignalReference, 0, len(references))
+	for _, reference := range references {
+		signalReferences = append(signalReferences, failurepatterns.BadPRSignalReference{
+			RunURL:      strings.TrimSpace(reference.RunURL),
+			OccurredAt:  strings.TrimSpace(reference.OccurredAt),
+			SignatureID: strings.TrimSpace(reference.SignatureID),
+			PRNumber:    reference.PRNumber,
+		})
 	}
-	if !isSingleKnownPR(row) {
-		return 0, nil
-	}
-	if row.PriorWeeksPresent > 0 {
-		return 0, nil
-	}
-	return 3, []string{"post-good=0", "only seen in DEV", "only seen in one PR"}
+	return failurepatterns.BadPRScoreAndReasons(failurepatterns.BadPRSignalEvidence{
+		Environment:             strings.TrimSpace(row.Environment),
+		AfterLastPushCount:      rowPostGoodCount(row),
+		SeenInOtherEnvironments: append([]string(nil), row.AlsoIn...),
+		References:              signalReferences,
+		PriorWeeksPresent:       row.PriorWeeksPresent,
+	})
 }
 
 type FailureCategory string
@@ -457,33 +466,6 @@ func sortRowsByDefaultPriorityWithImpact(rows []FailurePatternRow, impactTotalJo
 		}
 		return strings.TrimSpace(rows[i].FailurePatternID) < strings.TrimSpace(rows[j].FailurePatternID)
 	})
-}
-
-func isOnlySeenInDev(row FailurePatternRow) bool {
-	if strings.ToLower(strings.TrimSpace(row.Environment)) != "dev" {
-		return false
-	}
-	for _, value := range row.AlsoIn {
-		if strings.TrimSpace(value) != "" {
-			return false
-		}
-	}
-	return true
-}
-
-func isSingleKnownPR(row FailurePatternRow) bool {
-	references := OrderedUniqueReferences(rowScoreReferences(row))
-	if len(references) == 0 {
-		return false
-	}
-	uniquePRs := map[int]struct{}{}
-	for _, reference := range references {
-		if reference.PRNumber <= 0 {
-			return false
-		}
-		uniquePRs[reference.PRNumber] = struct{}{}
-	}
-	return len(uniquePRs) == 1
 }
 
 func qualityIssueWeight(code string) int {

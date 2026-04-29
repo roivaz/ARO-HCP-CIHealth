@@ -1,4 +1,4 @@
-package readmodel
+package window
 
 import "time"
 

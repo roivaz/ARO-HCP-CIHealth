@@ -4,15 +4,15 @@ import (
 	"strings"
 	"testing"
 
-	frontservice "ci-failure-atlas/pkg/frontend/readmodel"
+	readmodelrunlog "ci-failure-atlas/pkg/frontend/readmodel/runlog"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 )
 
 func TestDayRunHistoryFailureDetailsHTMLSkipsNonArtifactBackedFailures(t *testing.T) {
 	t.Parallel()
 
-	rendered := runLogDayFailureDetailsHTML(frontservice.JobHistoryRunRow{
-		FailureRows: []frontservice.JobHistoryFailureRow{
+	rendered := runLogDayFailureDetailsHTML(readmodelrunlog.JobHistoryRunRow{
+		FailureRows: []readmodelrunlog.JobHistoryFailureRow{
 			{
 				FailureText:       "job failed and CFA synthesized a non-artifact-backed row",
 				NonArtifactBacked: true,
@@ -27,8 +27,8 @@ func TestDayRunHistoryFailureDetailsHTMLSkipsNonArtifactBackedFailures(t *testin
 func TestDayRunHistoryFailureDetailsHTMLRendersArtifactBackedFailures(t *testing.T) {
 	t.Parallel()
 
-	rendered := runLogDayFailureDetailsHTML(frontservice.JobHistoryRunRow{
-		FailureRows: []frontservice.JobHistoryFailureRow{
+	rendered := runLogDayFailureDetailsHTML(readmodelrunlog.JobHistoryRunRow{
+		FailureRows: []readmodelrunlog.JobHistoryFailureRow{
 			{
 				FailureText:       "real junit-backed failure text",
 				NonArtifactBacked: false,
@@ -43,7 +43,7 @@ func TestDayRunHistoryFailureDetailsHTMLRendersArtifactBackedFailures(t *testing
 func TestDayRunHistoryPRHTMLShowsRegressionIconForLikelyBadPR(t *testing.T) {
 	t.Parallel()
 
-	rendered := runLogDayPRHTML(frontservice.JobHistoryRunRow{
+	rendered := runLogDayPRHTML(readmodelrunlog.JobHistoryRunRow{
 		Run: storecontracts.RunRecord{
 			Environment: "dev",
 			RunURL:      "https://prow.example.com/view/run-1",
@@ -52,7 +52,7 @@ func TestDayRunHistoryPRHTMLShowsRegressionIconForLikelyBadPR(t *testing.T) {
 			MergedPR:    false,
 			Failed:      true,
 		},
-		SemanticRollups: frontservice.JobHistorySemanticRollups{
+		SemanticRollups: readmodelrunlog.JobHistorySemanticRollups{
 			ClusteredRows: 1,
 		},
 		BadPRScore:   3,
@@ -72,7 +72,7 @@ func TestDayRunHistoryPRHTMLShowsRegressionIconForLikelyBadPR(t *testing.T) {
 func TestDayRunHistoryPRHTMLDoesNotUseRunLocalBadPRApproximation(t *testing.T) {
 	t.Parallel()
 
-	rendered := runLogDayPRHTML(frontservice.JobHistoryRunRow{
+	rendered := runLogDayPRHTML(readmodelrunlog.JobHistoryRunRow{
 		Run: storecontracts.RunRecord{
 			Environment: "dev",
 			RunURL:      "https://prow.example.com/view/run-1b",
@@ -81,7 +81,7 @@ func TestDayRunHistoryPRHTMLDoesNotUseRunLocalBadPRApproximation(t *testing.T) {
 			MergedPR:    false,
 			Failed:      true,
 		},
-		SemanticRollups: frontservice.JobHistorySemanticRollups{
+		SemanticRollups: readmodelrunlog.JobHistorySemanticRollups{
 			ClusteredRows: 1,
 		},
 	})
@@ -93,7 +93,7 @@ func TestDayRunHistoryPRHTMLDoesNotUseRunLocalBadPRApproximation(t *testing.T) {
 func TestDayRunHistoryPRHTMLUsesMergedStateWhenMergedPR(t *testing.T) {
 	t.Parallel()
 
-	rendered := runLogDayPRHTML(frontservice.JobHistoryRunRow{
+	rendered := runLogDayPRHTML(readmodelrunlog.JobHistoryRunRow{
 		Run: storecontracts.RunRecord{
 			Environment:    "dev",
 			RunURL:         "https://prow.example.com/view/run-2",
@@ -114,7 +114,7 @@ func TestDayRunHistoryPRHTMLUsesMergedStateWhenMergedPR(t *testing.T) {
 func TestDayRunHistoryPRHTMLUsesClosedStateWhenNotMerged(t *testing.T) {
 	t.Parallel()
 
-	rendered := runLogDayPRHTML(frontservice.JobHistoryRunRow{
+	rendered := runLogDayPRHTML(readmodelrunlog.JobHistoryRunRow{
 		Run: storecontracts.RunRecord{
 			Environment:    "int",
 			RunURL:         "https://prow.example.com/view/run-3",
@@ -132,7 +132,7 @@ func TestDayRunHistoryPRHTMLUsesClosedStateWhenNotMerged(t *testing.T) {
 func TestDayRunHistoryPRHTMLDoesNotShowSignalIconForPassedRun(t *testing.T) {
 	t.Parallel()
 
-	rendered := runLogDayPRHTML(frontservice.JobHistoryRunRow{
+	rendered := runLogDayPRHTML(readmodelrunlog.JobHistoryRunRow{
 		Run: storecontracts.RunRecord{
 			Environment: "dev",
 			RunURL:      "https://prow.example.com/view/run-4",
@@ -140,7 +140,7 @@ func TestDayRunHistoryPRHTMLDoesNotShowSignalIconForPassedRun(t *testing.T) {
 			PRState:     "open",
 			Failed:      false,
 		},
-		SemanticRollups: frontservice.JobHistorySemanticRollups{
+		SemanticRollups: readmodelrunlog.JobHistorySemanticRollups{
 			ClusteredRows: 1,
 		},
 		BadPRScore:   3,
@@ -154,7 +154,7 @@ func TestDayRunHistoryPRHTMLDoesNotShowSignalIconForPassedRun(t *testing.T) {
 func TestDayRunHistoryPRHTMLDoesNotShowSignalIconForUnmatchedFailure(t *testing.T) {
 	t.Parallel()
 
-	rendered := runLogDayPRHTML(frontservice.JobHistoryRunRow{
+	rendered := runLogDayPRHTML(readmodelrunlog.JobHistoryRunRow{
 		Run: storecontracts.RunRecord{
 			Environment: "dev",
 			RunURL:      "https://prow.example.com/view/run-5",
@@ -162,7 +162,7 @@ func TestDayRunHistoryPRHTMLDoesNotShowSignalIconForUnmatchedFailure(t *testing.
 			PRState:     "open",
 			Failed:      true,
 		},
-		SemanticRollups: frontservice.JobHistorySemanticRollups{
+		SemanticRollups: readmodelrunlog.JobHistorySemanticRollups{
 			ClusteredRows: 0,
 			UnmatchedRows: 1,
 		},
@@ -177,7 +177,7 @@ func TestDayRunHistoryPRHTMLDoesNotShowSignalIconForUnmatchedFailure(t *testing.
 func TestDayRunHistoryPRHTMLShowsNewPatternIcon(t *testing.T) {
 	t.Parallel()
 
-	rendered := runLogDayPRHTML(frontservice.JobHistoryRunRow{
+	rendered := runLogDayPRHTML(readmodelrunlog.JobHistoryRunRow{
 		Run: storecontracts.RunRecord{
 			Environment: "dev",
 			RunURL:      "https://prow.example.com/view/run-6",
@@ -185,12 +185,12 @@ func TestDayRunHistoryPRHTMLShowsNewPatternIcon(t *testing.T) {
 			PRState:     "open",
 			Failed:      true,
 		},
-		SemanticRollups: frontservice.JobHistorySemanticRollups{
+		SemanticRollups: readmodelrunlog.JobHistorySemanticRollups{
 			ClusteredRows: 1,
 		},
-		FailureRows: []frontservice.JobHistoryFailureRow{
+		FailureRows: []readmodelrunlog.JobHistoryFailureRow{
 			{
-				SemanticAttachment: frontservice.JobHistorySemanticAttachment{
+				SemanticAttachment: readmodelrunlog.JobHistorySemanticAttachment{
 					Status:    "clustered",
 					ClusterID: "fp-1",
 				},

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"ci-failure-atlas/pkg/failurepatterns"
-	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
+	readmodelwindow "ci-failure-atlas/pkg/frontend/readmodel/window"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 	postgresstore "ci-failure-atlas/pkg/store/postgres"
 
@@ -24,7 +24,6 @@ const (
 
 var (
 	ErrNoAvailableWeeks = errors.New("no available weeks found in postgres fact store")
-	ErrWeekNotFound     = errors.New("week not found in postgres fact store")
 )
 
 type Options struct {
@@ -38,14 +37,6 @@ type Service struct {
 	defaultWeek  string
 	historyWeeks int
 	postgresPool *pgxpool.Pool
-}
-
-type WeekWindow struct {
-	Weeks        []string `json:"weeks,omitempty"`
-	CurrentWeek  string   `json:"current_week"`
-	PreviousWeek string   `json:"previous_week,omitempty"`
-	NextWeek     string   `json:"next_week,omitempty"`
-	Index        int      `json:"-"`
 }
 
 func New(opts Options) (*Service, error) {
@@ -88,11 +79,11 @@ func (s *Service) FailurePatternsEngine() string {
 	return FailurePatternsEngineInline
 }
 
-func (s *Service) DiscoverSemanticWeeks(ctx context.Context) ([]string, error) {
+func (s *Service) DiscoverAvailableWeeks(ctx context.Context) ([]string, error) {
 	if s == nil {
 		return nil, fmt.Errorf("service is required")
 	}
-	weeks, err := s.discoverAllSemanticWeeks(ctx)
+	weeks, err := s.discoverAvailableWeekStarts(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +93,7 @@ func (s *Service) DiscoverSemanticWeeks(ctx context.Context) ([]string, error) {
 	return weeks, nil
 }
 
-func (s *Service) discoverAllSemanticWeeks(ctx context.Context) ([]string, error) {
+func (s *Service) discoverAvailableWeekStarts(ctx context.Context) ([]string, error) {
 	store, err := s.OpenStore()
 	if err != nil {
 		return nil, err
@@ -122,12 +113,11 @@ func (s *Service) discoverAllSemanticWeeks(ctx context.Context) ([]string, error
 
 	weekSet := map[string]struct{}{}
 	for _, dateLabel := range append(append([]string(nil), runDates...), metricDates...) {
-		dateLabel, dateValue, parseErr := normalizeDateLabel(dateLabel)
+		_, dateValue, parseErr := readmodelwindow.NormalizeDateLabel(dateLabel)
 		if parseErr != nil {
 			continue
 		}
-		_ = dateLabel
-		weekSet[weekStartForDate(dateValue).Format("2006-01-02")] = struct{}{}
+		weekSet[readmodelwindow.WeekStartForDate(dateValue).Format("2006-01-02")] = struct{}{}
 	}
 	if len(weekSet) == 0 {
 		return nil, nil
@@ -140,41 +130,19 @@ func (s *Service) discoverAllSemanticWeeks(ctx context.Context) ([]string, error
 	return weeks, nil
 }
 
-func (s *Service) semanticWeekSchemaVersion(ctx context.Context, week string) (string, error) {
-	if s == nil {
-		return "", fmt.Errorf("service is required")
-	}
-	if _, err := s.ensureWeekExists(ctx, week); err != nil {
-		return "", err
-	}
-	return failurepatterncontracts.CurrentSchemaVersion, nil
-}
-
-func (s *Service) explainUnavailableWeek(ctx context.Context, week string) error {
-	rawWeeks, err := s.discoverAllSemanticWeeks(ctx)
-	if err != nil {
-		return err
-	}
-	index := sort.SearchStrings(rawWeeks, week)
-	if index >= len(rawWeeks) || rawWeeks[index] != week {
-		return fmt.Errorf("%w: %s", ErrWeekNotFound, week)
-	}
-	return fmt.Errorf("%w: %s", ErrWeekNotFound, week)
-}
-
-func (s *Service) ResolveWeekWindow(ctx context.Context, requestedWeek string, now time.Time) (WeekWindow, error) {
+func (s *Service) ResolveWeekWindow(ctx context.Context, requestedWeek string, now time.Time) (readmodelwindow.WeekWindow, error) {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	weeks, err := s.DiscoverSemanticWeeks(ctx)
+	weeks, err := s.DiscoverAvailableWeeks(ctx)
 	if err != nil {
-		return WeekWindow{}, err
+		return readmodelwindow.WeekWindow{}, err
 	}
-	week, previousWeek, nextWeek, index := ResolveWindow(weeks, strings.TrimSpace(requestedWeek), s.defaultWeek, now.UTC())
+	week, previousWeek, nextWeek, index := readmodelwindow.ResolveWindow(weeks, strings.TrimSpace(requestedWeek), s.defaultWeek, now.UTC())
 	if strings.TrimSpace(week) == "" {
-		return WeekWindow{}, ErrNoAvailableWeeks
+		return readmodelwindow.WeekWindow{}, ErrNoAvailableWeeks
 	}
-	return WeekWindow{
+	return readmodelwindow.WeekWindow{
 		Weeks:        append([]string(nil), weeks...),
 		CurrentWeek:  week,
 		PreviousWeek: previousWeek,
@@ -194,15 +162,7 @@ func (s *Service) OpenStore() (storecontracts.Store, error) {
 	return store, nil
 }
 
-func (s *Service) BuildHistoryResolver(ctx context.Context, week string) (failurepatterns.PresenceResolver, error) {
-	return s.BuildHistoryResolverForWeek(ctx, week, "")
-}
-
-func (s *Service) BuildHistoryResolverForWeek(
-	ctx context.Context,
-	week string,
-	currentSchemaVersion string,
-) (failurepatterns.PresenceResolver, error) {
+func (s *Service) BuildHistoryResolver(ctx context.Context, endTime time.Time) (failurepatterns.PresenceResolver, error) {
 	if s == nil {
 		return nil, fmt.Errorf("service is required")
 	}
@@ -215,28 +175,9 @@ func (s *Service) BuildHistoryResolverForWeek(
 	}()
 	return failurepatterns.BuildPresenceResolver(ctx, failurepatterns.BuildPresenceOptions{
 		Store:         store,
-		AnchorWeek:    strings.TrimSpace(week),
+		EndTime:       endTime.UTC(),
 		LookbackWeeks: s.historyWeeks,
 	})
-}
-
-func (s *Service) ensureWeekExists(ctx context.Context, week string) (string, error) {
-	normalizedWeek, err := postgresstore.NormalizeWeek(week)
-	if err != nil {
-		return "", fmt.Errorf("invalid semantic week %q: %w", strings.TrimSpace(week), err)
-	}
-	if normalizedWeek == "" {
-		return "", fmt.Errorf("week is required")
-	}
-	weeks, err := s.DiscoverSemanticWeeks(ctx)
-	if err != nil {
-		return "", err
-	}
-	index := sort.SearchStrings(weeks, normalizedWeek)
-	if index >= len(weeks) || weeks[index] != normalizedWeek {
-		return "", s.explainUnavailableWeek(ctx, normalizedWeek)
-	}
-	return normalizedWeek, nil
 }
 
 func normalizeFailurePatternsEngine(value string) (string, error) {

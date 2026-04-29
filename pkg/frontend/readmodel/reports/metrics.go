@@ -1,4 +1,4 @@
-package readmodel
+package reports
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 )
 
@@ -18,7 +19,7 @@ func loadMetricsDailyForDates(
 	if store == nil {
 		return nil, fmt.Errorf("store is required")
 	}
-	normalizedEnvironments := normalizeStringSlice(environments)
+	normalizedEnvironments := readmodelmodel.NormalizeStringSlice(environments)
 	normalizedDates := normalizeMetricDateLabels(dates)
 	if len(normalizedEnvironments) == 0 || len(normalizedDates) == 0 {
 		return nil, nil
@@ -41,7 +42,7 @@ func sumMetricByEnvironmentForDates(
 	if trimmedMetric == "" {
 		return totals, nil
 	}
-	normalizedEnvironments := normalizeStringSlice(environments)
+	normalizedEnvironments := readmodelmodel.NormalizeStringSlice(environments)
 	normalizedDates := normalizeMetricDateLabels(dates)
 	if len(normalizedEnvironments) == 0 || len(normalizedDates) == 0 {
 		return totals, nil
@@ -51,7 +52,7 @@ func sumMetricByEnvironmentForDates(
 		return nil, err
 	}
 	for environment, value := range sums {
-		normalizedEnvironment := normalizeEnvironment(environment)
+		normalizedEnvironment := readmodelmodel.NormalizeEnvironment(environment)
 		intValue := int(value)
 		if normalizedEnvironment == "" || intValue <= 0 {
 			continue
@@ -84,5 +85,5 @@ func normalizeMetricDateLabels(values []string) []string {
 		}
 		set[trimmed] = struct{}{}
 	}
-	return sortedStringSet(set)
+	return readmodelmodel.SortedStringSet(set)
 }

@@ -1,4 +1,4 @@
-package readmodel
+package patterns
 
 import (
 	"context"
@@ -9,11 +9,14 @@ import (
 
 	"ci-failure-atlas/pkg/failurepatterns"
 	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
+	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
+	readmodelwindow "ci-failure-atlas/pkg/frontend/readmodel/window"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 	postgresstore "ci-failure-atlas/pkg/store/postgres"
 )
 
 const failurePatternReportFullErrorExamplesLimit = 3
+const defaultHistoryWeeks = 4
 
 type FailurePatternReportBuildOptions struct {
 	Week                string
@@ -40,7 +43,6 @@ type FailurePatternReportContributingTest struct {
 
 type FailurePatternReportCluster struct {
 	Environment             string                                 `json:"environment"`
-	SchemaVersion           string                                 `json:"schema_version"`
 	Phase2ClusterID         string                                 `json:"failure_pattern_id"`
 	CanonicalEvidencePhrase string                                 `json:"failure_pattern"`
 	SearchQueryPhrase       string                                 `json:"search_query"`
@@ -57,7 +59,6 @@ type FailurePatternReportCluster struct {
 }
 
 type FailurePatternReportData struct {
-	WeekSchemaVersion              string
 	FailurePatternClusters         []FailurePatternReportCluster
 	TargetEnvironments             []string
 	OverallJobsByEnvironment       map[string]int
@@ -105,11 +106,11 @@ func BuildFailurePatternReportData(ctx context.Context, store storecontracts.Sto
 	if historyResolver == nil {
 		lookbackWeeks := opts.HistoryHorizonWeeks
 		if lookbackWeeks <= 0 {
-			lookbackWeeks = DefaultHistoryWeeks
+			lookbackWeeks = defaultHistoryWeeks
 		}
 		historyResolver, err = failurepatterns.BuildPresenceResolver(ctx, failurepatterns.BuildPresenceOptions{
 			Store:         store,
-			AnchorWeek:    strings.TrimSpace(opts.Week),
+			EndTime:       metricWindowEnd,
 			LookbackWeeks: lookbackWeeks,
 			Environments:  targetEnvironments,
 		})
@@ -121,7 +122,6 @@ func BuildFailurePatternReportData(ctx context.Context, store storecontracts.Sto
 	failurePatternRows := failurePatternReportAttachFullErrorSamples(reportRows, failurePatternReportFullErrorExamplesLimit, rawFailuresByRun)
 
 	return FailurePatternReportData{
-		WeekSchemaVersion:              weekData.SchemaVersion,
 		FailurePatternClusters:         failurePatternRows,
 		TargetEnvironments:             append([]string(nil), targetEnvironments...),
 		OverallJobsByEnvironment:       cloneIntMap(overallJobsByEnvironment),
@@ -173,23 +173,77 @@ func failurePatternReportMetricRunTotalsByEnvironment(
 	windowEnd time.Time,
 ) (map[string]int, error) {
 	totals := map[string]int{}
-	normalizedEnvironments := normalizeStringSlice(environments)
+	normalizedEnvironments := readmodelmodel.NormalizeStringSlice(environments)
 	if len(normalizedEnvironments) == 0 {
 		return totals, nil
 	}
-	metricDates := metricDateLabelsFromWindow(windowStart, windowEnd)
+	metricDates := readmodelwindow.MetricDateLabelsFromWindow(windowStart, windowEnd)
 	if len(metricDates) == 0 {
 		return totals, nil
 	}
 	return sumMetricByEnvironmentForDates(ctx, store, "run_count", normalizedEnvironments, metricDates)
 }
 
+func sumMetricByEnvironmentForDates(
+	ctx context.Context,
+	store storecontracts.Store,
+	metric string,
+	environments []string,
+	dates []string,
+) (map[string]int, error) {
+	totals := map[string]int{}
+	if store == nil {
+		return totals, nil
+	}
+	trimmedMetric := strings.TrimSpace(metric)
+	if trimmedMetric == "" {
+		return totals, nil
+	}
+	normalizedEnvironments := readmodelmodel.NormalizeStringSlice(environments)
+	normalizedDates := normalizeMetricDateLabels(dates)
+	if len(normalizedEnvironments) == 0 || len(normalizedDates) == 0 {
+		return totals, nil
+	}
+	sums, err := store.SumMetricByEnvironmentForDates(ctx, trimmedMetric, normalizedEnvironments, normalizedDates)
+	if err != nil {
+		return nil, err
+	}
+	for environment, value := range sums {
+		normalizedEnvironment := readmodelmodel.NormalizeEnvironment(environment)
+		intValue := int(value)
+		if normalizedEnvironment == "" || intValue <= 0 {
+			continue
+		}
+		totals[normalizedEnvironment] += intValue
+	}
+	return totals, nil
+}
+
+func normalizeMetricDateLabels(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	set := map[string]struct{}{}
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		set[trimmed] = struct{}{}
+	}
+	out := make([]string, 0, len(set))
+	for value := range set {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func toFailurePatternReportClusters(rows []failurepatterncontracts.FailurePatternRecord) []FailurePatternReportCluster {
 	out := make([]FailurePatternReportCluster, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, FailurePatternReportCluster{
-			Environment:             normalizeEnvironment(row.Environment),
-			SchemaVersion:           strings.TrimSpace(row.SchemaVersion),
+			Environment:             readmodelmodel.NormalizeEnvironment(row.Environment),
 			Phase2ClusterID:         strings.TrimSpace(row.Phase2ClusterID),
 			CanonicalEvidencePhrase: strings.TrimSpace(row.CanonicalEvidencePhrase),
 			SearchQueryPhrase:       strings.TrimSpace(row.SearchQueryPhrase),
@@ -237,7 +291,7 @@ func toFailurePatternReportReferences(rows []failurepatterncontracts.ReferenceRe
 func failurePatternReportIndexRawFailuresByEnvironmentRun(rows []storecontracts.RawFailureRecord) map[string][]storecontracts.RawFailureRecord {
 	byRun := map[string][]storecontracts.RawFailureRecord{}
 	for _, row := range rows {
-		environment := normalizeEnvironment(row.Environment)
+		environment := readmodelmodel.NormalizeEnvironment(row.Environment)
 		runURL := strings.TrimSpace(row.RunURL)
 		if environment == "" || runURL == "" {
 			continue
@@ -280,8 +334,8 @@ func failurePatternReportAttachFullErrorSamples(
 		samples := make([]string, 0, limit)
 		orderedRefs := append([]FailurePatternReportReference(nil), cluster.References...)
 		sort.Slice(orderedRefs, func(i, j int) bool {
-			ti, okI := ParseReferenceTimestamp(orderedRefs[i].OccurredAt)
-			tj, okJ := ParseReferenceTimestamp(orderedRefs[j].OccurredAt)
+			ti, okI := readmodelmodel.ParseReferenceTimestamp(orderedRefs[i].OccurredAt)
+			tj, okJ := readmodelmodel.ParseReferenceTimestamp(orderedRefs[j].OccurredAt)
 			switch {
 			case okI && okJ && !ti.Equal(tj):
 				return ti.After(tj)
@@ -291,7 +345,7 @@ func failurePatternReportAttachFullErrorSamples(
 			return strings.TrimSpace(orderedRefs[i].RunURL) < strings.TrimSpace(orderedRefs[j].RunURL)
 		})
 
-		environment := normalizeEnvironment(cluster.Environment)
+		environment := readmodelmodel.NormalizeEnvironment(cluster.Environment)
 		for _, ref := range orderedRefs {
 			if len(samples) >= limit {
 				break

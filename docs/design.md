@@ -89,15 +89,13 @@ For the detailed historical background and terminology drift, see `docs/semantic
 
 ## Failure-Pattern Identity V2
 
-The current failure-pattern contract is schema version `v2`.
+The current inline engine implements the `v2` failure-pattern identity rules.
 
 Key rules:
 
 - failure-pattern identity is driven by extracted `failure_pattern` text, not by the raw `signature_id`
 - `signature_id` is still retained as provenance/debug context and as one possible search pivot
 - durable raw-to-failure-pattern joins use row/run anchors, especially `(environment, run_url, row_id)`
-- inline loads carry an explicit `schema_version`
-- history/window composition only combines schema-compatible ranges
 
 This matters because failure-pattern quality problems now tend to fall into three classes:
 

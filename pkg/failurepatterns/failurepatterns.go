@@ -16,7 +16,6 @@ import (
 const DefaultHistoryWeeks = 4
 
 type RangeData struct {
-	SchemaVersion             string
 	SourceFailurePatterns     []failurepatterncontracts.FailurePatternRecord
 	FailurePatterns           []failurepatterncontracts.FailurePatternRecord
 	ReviewItems               []failurepatterncontracts.ReviewItemRecord
@@ -47,6 +46,8 @@ type PatternPresence struct {
 	PriorWeekStarts   []string
 	PriorJobsAffected int
 	PriorLastSeenAt   time.Time
+	BadPRScore        int
+	BadPRReasons      []string
 }
 
 type PresenceResolver interface {
@@ -55,7 +56,7 @@ type PresenceResolver interface {
 
 type BuildPresenceOptions struct {
 	Store         storecontracts.Store
-	AnchorWeek    string
+	EndTime       time.Time
 	LookbackWeeks int
 	Environments  []string
 }
@@ -65,9 +66,13 @@ type presenceResolver struct {
 }
 
 type presenceAggregate struct {
-	weeks    map[string]struct{}
-	jobs     map[string]struct{}
-	lastSeen time.Time
+	weeks               map[string]struct{}
+	jobs                map[string]struct{}
+	lastSeen            time.Time
+	signalReferences    map[string]BadPRSignalReference
+	signalPostGoodCount int
+	environment         string
+	phraseKey           string
 }
 
 func (r *presenceResolver) PresenceFor(key PatternKey) PatternPresence {
@@ -114,8 +119,6 @@ func LoadRange(
 		return RangeData{}, err
 	}
 
-	schemaVersion := failurepatterncontracts.CurrentSchemaVersion
-
 	factsByEnvironment := prepared.FactsByEnvironment()
 	rawFailures := []storecontracts.RawFailureRecord(nil)
 	if opts.IncludeRawFailures {
@@ -123,7 +126,6 @@ func LoadRange(
 	}
 
 	return RangeData{
-		SchemaVersion:             schemaVersion,
 		SourceFailurePatterns:     append([]failurepatterncontracts.FailurePatternRecord(nil), result.FailurePatterns...),
 		FailurePatterns:           append([]failurepatterncontracts.FailurePatternRecord(nil), result.FailurePatterns...),
 		ReviewItems:               append([]failurepatterncontracts.ReviewItemRecord(nil), result.ReviewItems...),
@@ -219,16 +221,19 @@ func BuildPresenceResolver(
 	ctx context.Context,
 	opts BuildPresenceOptions,
 ) (PresenceResolver, error) {
-	anchorWeek := strings.TrimSpace(opts.AnchorWeek)
-	if anchorWeek == "" {
+	anchorEnd := opts.EndTime.UTC()
+	if anchorEnd.IsZero() {
 		return &presenceResolver{byKey: map[string]PatternPresence{}}, nil
 	}
 	if opts.Store == nil {
 		return nil, fmt.Errorf("store is required")
 	}
 
-	anchorStart, ok := parseWeekStart(anchorWeek)
-	if !ok {
+	// Preserve the current calendar-week history behavior while letting callers
+	// anchor the resolver using the resolved window end time instead of passing
+	// a separate week label through readmodel.
+	anchorStart := weekStartForDate(anchorEnd.Add(-time.Nanosecond))
+	if anchorStart.IsZero() {
 		return &presenceResolver{byKey: map[string]PatternPresence{}}, nil
 	}
 
@@ -249,7 +254,7 @@ func BuildPresenceResolver(
 	result, err := failurepatternwindow.Compute(ctx, opts.Store, failurepatternwindow.ComputeOptions{
 		Environments:  targetEnvironments,
 		StartTime:     lookbackStart,
-		EndTime:       anchorStart,
+		EndTime:       anchorEnd,
 		IncludeReview: false,
 	})
 	if err != nil {
@@ -257,7 +262,18 @@ func BuildPresenceResolver(
 	}
 
 	aggregates := map[string]*presenceAggregate{}
+	phraseEnvironments := map[string]map[string]struct{}{}
 	for _, row := range result.FailurePatterns {
+		environment := normalizeEnvironment(row.Environment)
+		phraseKey := normalizePhrase(row.CanonicalEvidencePhrase)
+		if environment != "" && phraseKey != "" {
+			set := phraseEnvironments[phraseKey]
+			if set == nil {
+				set = map[string]struct{}{}
+				phraseEnvironments[phraseKey] = set
+			}
+			set[environment] = struct{}{}
+		}
 		key := presenceKey(row.Environment, row.CanonicalEvidencePhrase, row.SearchQueryPhrase)
 		if key == "" {
 			continue
@@ -265,14 +281,38 @@ func BuildPresenceResolver(
 		item := aggregates[key]
 		if item == nil {
 			item = &presenceAggregate{
-				weeks: map[string]struct{}{},
-				jobs:  map[string]struct{}{},
+				weeks:            map[string]struct{}{},
+				jobs:             map[string]struct{}{},
+				signalReferences: map[string]BadPRSignalReference{},
+				environment:      environment,
+				phraseKey:        phraseKey,
 			}
 			aggregates[key] = item
 		}
 		for _, reference := range row.References {
+			if refKey := normalizedRunReferenceKey(
+				reference.RunURL,
+				reference.SignatureID,
+				reference.OccurredAt,
+				reference.PRNumber,
+			); refKey != "" {
+				if _, exists := item.signalReferences[refKey]; !exists {
+					item.signalReferences[refKey] = BadPRSignalReference{
+						RunURL:      strings.TrimSpace(reference.RunURL),
+						OccurredAt:  strings.TrimSpace(reference.OccurredAt),
+						SignatureID: strings.TrimSpace(reference.SignatureID),
+						PRNumber:    reference.PRNumber,
+					}
+					if reference.PostGoodCommit {
+						item.signalPostGoodCount++
+					}
+				}
+			} else if reference.PostGoodCommit {
+				item.signalPostGoodCount++
+			}
+
 			referenceTime, ok := ParseReferenceTimestamp(reference.OccurredAt)
-			if ok {
+			if ok && referenceTime.Before(anchorStart) {
 				weekStart := weekStartForDate(referenceTime)
 				if !weekStart.IsZero() && weekStart.Before(anchorStart) && !weekStart.Before(lookbackStart) {
 					item.weeks[weekStart.Format("2006-01-02")] = struct{}{}
@@ -300,11 +340,24 @@ func BuildPresenceResolver(
 			weeks = append(weeks, week)
 		}
 		sort.Strings(weeks)
+		signalReferences := make([]BadPRSignalReference, 0, len(item.signalReferences))
+		for _, reference := range item.signalReferences {
+			signalReferences = append(signalReferences, reference)
+		}
+		badPRScore, badPRReasons := BadPRScoreAndReasons(BadPRSignalEvidence{
+			Environment:             item.environment,
+			AfterLastPushCount:      item.signalPostGoodCount,
+			SeenInOtherEnvironments: presenceSeenInOtherEnvironments(phraseEnvironments[item.phraseKey], item.environment),
+			References:              signalReferences,
+			PriorWeeksPresent:       len(weeks),
+		})
 		byKey[key] = PatternPresence{
 			PriorWeeksPresent: len(weeks),
 			PriorWeekStarts:   weeks,
 			PriorJobsAffected: len(item.jobs),
 			PriorLastSeenAt:   item.lastSeen,
+			BadPRScore:        badPRScore,
+			BadPRReasons:      append([]string(nil), badPRReasons...),
 		}
 	}
 	return &presenceResolver{byKey: byKey}, nil
@@ -453,14 +506,6 @@ func availableEnvironments(
 	return out
 }
 
-func parseWeekStart(value string) (time.Time, bool) {
-	parsed, err := time.Parse("2006-01-02", strings.TrimSpace(value))
-	if err != nil {
-		return time.Time{}, false
-	}
-	return parsed.UTC(), true
-}
-
 func weekStartForDate(value time.Time) time.Time {
 	if value.IsZero() {
 		return time.Time{}
@@ -508,4 +553,21 @@ func normalizedRunReferenceKey(runURL string, signatureID string, occurredAt str
 		return ""
 	}
 	return key
+}
+
+func presenceSeenInOtherEnvironments(seenByEnvironment map[string]struct{}, currentEnvironment string) []string {
+	if len(seenByEnvironment) == 0 {
+		return nil
+	}
+	currentEnvironment = normalizeEnvironment(currentEnvironment)
+	out := make([]string, 0, len(seenByEnvironment))
+	for environment := range seenByEnvironment {
+		normalizedEnvironment := normalizeEnvironment(environment)
+		if normalizedEnvironment == "" || normalizedEnvironment == currentEnvironment {
+			continue
+		}
+		out = append(out, normalizedEnvironment)
+	}
+	sort.Strings(out)
+	return out
 }

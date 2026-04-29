@@ -1,8 +1,10 @@
-package readmodel
+package window_test
 
 import (
 	"testing"
 	"time"
+
+	readmodelwindow "ci-failure-atlas/pkg/frontend/readmodel/window"
 )
 
 func TestSprintWindowForDateAnchorAlignment(t *testing.T) {
@@ -50,7 +52,7 @@ func TestSprintWindowForDateAnchorAlignment(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			now, _ := time.Parse("2006-01-02", tc.now)
-			start, end := SprintWindowForDate(now)
+			start, end := readmodelwindow.SprintWindowForDate(now)
 			gotStart := start.Format("2006-01-02")
 			gotEnd := end.Format("2006-01-02")
 			if gotStart != tc.wantStart || gotEnd != tc.wantEnd {
@@ -66,7 +68,7 @@ func TestShiftSprintWindow(t *testing.T) {
 
 	ref, _ := time.Parse("2006-01-02", "2026-01-10")
 
-	start, end := ShiftSprintWindow(ref, 1)
+	start, end := readmodelwindow.ShiftSprintWindow(ref, 1)
 	if got := start.Format("2006-01-02"); got != "2026-01-19" {
 		t.Fatalf("next sprint start = %s, want 2026-01-19", got)
 	}
@@ -74,7 +76,7 @@ func TestShiftSprintWindow(t *testing.T) {
 		t.Fatalf("next sprint end = %s, want 2026-02-01", got)
 	}
 
-	start, end = ShiftSprintWindow(ref, -1)
+	start, end = readmodelwindow.ShiftSprintWindow(ref, -1)
 	if got := start.Format("2006-01-02"); got != "2025-12-22" {
 		t.Fatalf("previous sprint start = %s, want 2025-12-22", got)
 	}
@@ -85,7 +87,7 @@ func TestShiftSprintWindow(t *testing.T) {
 
 func TestSprintDurationDays(t *testing.T) {
 	t.Parallel()
-	if got := SprintDurationDays(); got != 14 {
+	if got := readmodelwindow.SprintDurationDays(); got != 14 {
 		t.Fatalf("SprintDurationDays() = %d, want 14", got)
 	}
 }

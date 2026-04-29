@@ -741,7 +741,6 @@ func compileFailurePattern(bucket *aggregateBucket) failurepatterncontracts.Fail
 	}
 
 	return failurepatterncontracts.FailurePatternRecord{
-		SchemaVersion:                failurepatterncontracts.CurrentSchemaVersion,
 		Environment:                  bucket.environment,
 		Phase2ClusterID:              fingerprint(bucket.environment + "|phase2|" + bucket.identitySeed),
 		CanonicalEvidencePhrase:      strings.TrimSpace(canonical),
@@ -767,7 +766,6 @@ func buildWeakCanonicalReviewItem(
 		firstRow = bucket.rows[0]
 	}
 	return failurepatterncontracts.ReviewItemRecord{
-		SchemaVersion:                        failurepatterncontracts.CurrentSchemaVersion,
 		Environment:                          bucket.environment,
 		ReviewItemID:                         fingerprint(bucket.environment + "|phase2|weak_canonical_needs_review|" + bucket.identitySeed),
 		Phase:                                "phase2",
@@ -798,7 +796,6 @@ func buildAmbiguousProviderReviewItem(
 		return failurepatterncontracts.ReviewItemRecord{}, false
 	}
 	return failurepatterncontracts.ReviewItemRecord{
-		SchemaVersion:                        failurepatterncontracts.CurrentSchemaVersion,
 		Environment:                          bucket.environment,
 		ReviewItemID:                         fingerprint(bucket.environment + "|phase2|ambiguous_provider_anchor|" + bucket.identitySeed),
 		Phase:                                "phase2",

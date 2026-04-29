@@ -1,4 +1,4 @@
-package readmodel
+package review
 
 import (
 	"context"
@@ -9,6 +9,9 @@ import (
 
 	"ci-failure-atlas/pkg/failurepatterns"
 	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
+	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
+	readmodelwindow "ci-failure-atlas/pkg/frontend/readmodel/window"
+	storecontracts "ci-failure-atlas/pkg/store/contracts"
 )
 
 type ReviewSignalReference struct {
@@ -55,16 +58,24 @@ type ReviewSignalsWeekSnapshot struct {
 	Rows              []ReviewSignalRow `json:"rows"`
 }
 
-func (s *Service) BuildReviewSignalsWeek(ctx context.Context, requestedWeek string) (ReviewSignalsWeekSnapshot, error) {
-	if s == nil {
-		return ReviewSignalsWeekSnapshot{}, fmt.Errorf("service is required")
+type BuilderDeps interface {
+	OpenStore() (storecontracts.Store, error)
+	BuildHistoryResolver(context.Context, time.Time) (failurepatterns.PresenceResolver, error)
+}
+
+func BuildWeek(
+	ctx context.Context,
+	deps BuilderDeps,
+	window readmodelwindow.WeekWindow,
+) (ReviewSignalsWeekSnapshot, error) {
+	if deps == nil {
+		return ReviewSignalsWeekSnapshot{}, fmt.Errorf("builder dependencies are required")
 	}
-	window, err := s.ResolveWeekWindow(ctx, requestedWeek, time.Time{})
-	if err != nil {
-		return ReviewSignalsWeekSnapshot{}, err
+	week := strings.TrimSpace(window.CurrentWeek)
+	if week == "" {
+		return ReviewSignalsWeekSnapshot{}, fmt.Errorf("week is required")
 	}
-	week := window.CurrentWeek
-	store, err := s.OpenStore()
+	store, err := deps.OpenStore()
 	if err != nil {
 		return ReviewSignalsWeekSnapshot{}, fmt.Errorf("open postgres fact store for week %q: %w", week, err)
 	}
@@ -72,7 +83,7 @@ func (s *Service) BuildReviewSignalsWeek(ctx context.Context, requestedWeek stri
 		_ = store.Close()
 	}()
 
-	weekStart, weekEnd, err := semanticWeekTimeRange(week)
+	weekStart, weekEnd, err := readmodelwindow.CompatWeekTimeRange(week)
 	if err != nil {
 		return ReviewSignalsWeekSnapshot{}, err
 	}
@@ -85,7 +96,7 @@ func (s *Service) BuildReviewSignalsWeek(ctx context.Context, requestedWeek stri
 		return ReviewSignalsWeekSnapshot{}, err
 	}
 
-	historyResolver, err := s.BuildHistoryResolverForWeek(ctx, week, weekData.SchemaVersion)
+	historyResolver, err := deps.BuildHistoryResolver(ctx, weekEnd)
 	if err != nil {
 		return ReviewSignalsWeekSnapshot{}, fmt.Errorf("build history resolver for review signals: %w", err)
 	}
@@ -109,7 +120,7 @@ func (s *Service) BuildReviewSignalsWeek(ctx context.Context, requestedWeek stri
 			signalsByReason[reason]++
 		}
 		rows = append(rows, ReviewSignalRow{
-			Environment:                          normalizeEnvironment(item.Environment),
+			Environment:                          readmodelmodel.NormalizeEnvironment(item.Environment),
 			ReviewItemID:                         strings.TrimSpace(item.ReviewItemID),
 			Phase:                                strings.TrimSpace(item.Phase),
 			Reason:                               reason,
@@ -189,7 +200,7 @@ func reviewSignalMatchedFailurePatterns(
 	if len(clusters) == 0 {
 		return nil
 	}
-	environment := normalizeEnvironment(item.Environment)
+	environment := readmodelmodel.NormalizeEnvironment(item.Environment)
 	if environment == "" {
 		return nil
 	}
@@ -209,7 +220,7 @@ func reviewSignalMatchedFailurePatterns(
 	out := make([]ReviewSignalMatchedFailurePattern, 0, 2)
 	seen := map[string]struct{}{}
 	for _, cluster := range clusters {
-		clusterEnvironment := normalizeEnvironment(cluster.Environment)
+		clusterEnvironment := readmodelmodel.NormalizeEnvironment(cluster.Environment)
 		if clusterEnvironment == "" || clusterEnvironment != environment {
 			continue
 		}
@@ -266,7 +277,7 @@ func reviewSignalReferenceKeys(environment string, references []failurepatternco
 	if len(references) == 0 {
 		return nil
 	}
-	normalizedEnvironment := normalizeEnvironment(environment)
+	normalizedEnvironment := readmodelmodel.NormalizeEnvironment(environment)
 	if normalizedEnvironment == "" {
 		return nil
 	}
@@ -332,7 +343,7 @@ func crossWeekNewPatternSignals(
 	}
 	rows := make([]ReviewSignalRow, 0)
 	for _, fp := range currentPatterns {
-		env := normalizeEnvironment(fp.Environment)
+		env := readmodelmodel.NormalizeEnvironment(fp.Environment)
 		canonical := strings.TrimSpace(fp.CanonicalEvidencePhrase)
 		searchQuery := strings.TrimSpace(fp.SearchQueryPhrase)
 

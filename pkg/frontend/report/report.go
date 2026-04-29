@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"ci-failure-atlas/pkg/failurepatterns"
-	frontservice "ci-failure-atlas/pkg/frontend/readmodel"
+	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
+	readmodelpatterns "ci-failure-atlas/pkg/frontend/readmodel/patterns"
+	readmodelreports "ci-failure-atlas/pkg/frontend/readmodel/reports"
 	frontui "ci-failure-atlas/pkg/frontend/ui"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 	postgresstore "ci-failure-atlas/pkg/store/postgres"
@@ -52,15 +54,15 @@ type validatedOptions struct {
 	Chrome              frontui.ReportChromeOptions
 }
 
-type counts = frontservice.WeeklyCounts
-type runOutcomes = frontservice.WeeklyRunOutcomes
-type dayReport = frontservice.WeeklyDayReport
-type envReport = frontservice.WeeklyEnvReport
-type semanticEnvSummary = frontservice.WeeklySemanticEnvSummary
-type semanticSnapshot = frontservice.WeeklySemanticSnapshot
-type belowTargetTest = frontservice.WeeklyBelowTargetTest
-type topSignature = frontservice.WeeklyTopSignature
-type reportData = frontservice.ReportData
+type counts = readmodelreports.WeeklyCounts
+type runOutcomes = readmodelreports.WeeklyRunOutcomes
+type dayReport = readmodelreports.WeeklyDayReport
+type envReport = readmodelreports.WeeklyEnvReport
+type semanticEnvSummary = readmodelreports.WeeklySemanticEnvSummary
+type semanticSnapshot = readmodelreports.WeeklySemanticSnapshot
+type belowTargetTest = readmodelreports.WeeklyBelowTargetTest
+type topSignature = readmodelreports.WeeklyTopSignature
+type reportData = readmodelreports.ReportData
 
 func DefaultOptions() Options {
 	return Options{
@@ -107,7 +109,7 @@ func GenerateWithComparison(
 		return fmt.Errorf("store is required")
 	}
 
-	data, err := frontservice.BuildWeeklyReportData(ctx, store, previousSemanticStore, frontservice.WeeklyReportBuildOptions{
+	data, err := readmodelreports.BuildWeeklyReportData(ctx, store, previousSemanticStore, readmodelreports.WeeklyReportBuildOptions{
 		StartDate:           validated.StartDate,
 		TargetRate:          validated.TargetRate,
 		Week:                validated.Week,
@@ -218,7 +220,7 @@ func buildHTML(
 	previousReports []envReport,
 	targetRate float64,
 	testsBelowTargetByEnv map[string][]belowTargetTest,
-	topSignaturesByEnv map[string][]frontservice.FailurePatternRow,
+	topSignaturesByEnv map[string][]readmodelmodel.FailurePatternRow,
 	runLogDayBasePath string,
 	chrome frontui.ReportChromeOptions,
 ) string {
@@ -516,7 +518,7 @@ func buildHTML(
 				html.EscapeString(failurePatternReportHref),
 			))
 		}
-		failurePatternRows := make([]frontservice.FailurePatternRow, 0, len(topSignaturesByEnv[environment]))
+		failurePatternRows := make([]readmodelmodel.FailurePatternRow, 0, len(topSignaturesByEnv[environment]))
 		for _, row := range topSignaturesByEnv[environment] {
 			if weeklyFailurePatternRowImpactPercent(row, report.Totals.RunCount) < weeklySignatureMinImpactPct {
 				continue
@@ -593,20 +595,20 @@ func weeklyTopSignatureImpactPercent(item topSignature, overallJobs int) float64
 
 func weeklyTopSignatureJobsAffected(item topSignature) int {
 	if len(item.LinkedChildren) == 0 {
-		return len(frontservice.OrderedUniqueReferences(item.References))
+		return len(readmodelmodel.OrderedUniqueReferences(item.References))
 	}
 	total := 0
 	for _, child := range item.LinkedChildren {
-		total += len(frontservice.OrderedUniqueReferences(child.References))
+		total += len(readmodelmodel.OrderedUniqueReferences(child.References))
 	}
 	if total > 0 {
 		return total
 	}
-	return len(frontservice.OrderedUniqueReferences(item.References))
+	return len(readmodelmodel.OrderedUniqueReferences(item.References))
 }
 
-func topSignatureToFailurePatternRow(item topSignature) frontservice.FailurePatternRow {
-	row := frontservice.FailurePatternRow{
+func topSignatureToFailurePatternRow(item topSignature) readmodelmodel.FailurePatternRow {
+	row := readmodelmodel.FailurePatternRow{
 		Environment:        item.Environment,
 		FailurePattern:     item.Phrase,
 		FailurePatternID:   item.ClusterID,
@@ -617,14 +619,17 @@ func topSignatureToFailurePatternRow(item topSignature) frontservice.FailurePatt
 		AlsoIn:             append([]string(nil), item.SeenInOtherEnvs...),
 		QualityScore:       item.QualityScore,
 		QualityNoteLabels:  append([]string(nil), item.QualityNoteLabels...),
-		ContributingTests:  append([]frontservice.ContributingTest(nil), item.ContributingTests...),
+		ContributingTests:  append([]readmodelmodel.ContributingTest(nil), item.ContributingTests...),
 		FullErrorSamples:   append([]string(nil), item.FullErrorSamples...),
-		AffectedRuns:       append([]frontservice.RunReference(nil), item.References...),
+		AffectedRuns:       append([]readmodelmodel.RunReference(nil), item.References...),
+		BadPRScore:         item.BadPRScore,
+		BadPRReasons:       append([]string(nil), item.BadPRReasons...),
+		BadPREvaluated:     item.BadPREvaluated,
 	}
 	if len(item.LinkedChildren) == 0 {
 		return row
 	}
-	row.LinkedPatterns = make([]frontservice.FailurePatternRow, 0, len(item.LinkedChildren))
+	row.LinkedPatterns = make([]readmodelmodel.FailurePatternRow, 0, len(item.LinkedChildren))
 	for _, child := range item.LinkedChildren {
 		childRow := topSignatureToFailurePatternRow(child)
 		childRow.LinkedPatterns = nil
@@ -637,10 +642,10 @@ func legacyWeeklyFailurePatternRowsByEnv(
 	source map[string][]topSignature,
 	historyResolver failurepatterns.PresenceResolver,
 	endDate time.Time,
-) map[string][]frontservice.FailurePatternRow {
-	out := make(map[string][]frontservice.FailurePatternRow, len(source))
+) map[string][]readmodelmodel.FailurePatternRow {
+	out := make(map[string][]readmodelmodel.FailurePatternRow, len(source))
 	for environment, items := range source {
-		rows := make([]frontservice.FailurePatternRow, 0, len(items))
+		rows := make([]readmodelmodel.FailurePatternRow, 0, len(items))
 		for _, item := range items {
 			failurePatternRow := topSignatureToFailurePatternRow(item)
 			if historyResolver != nil {
@@ -655,8 +660,11 @@ func legacyWeeklyFailurePatternRowsByEnv(
 				if !presence.PriorLastSeenAt.IsZero() {
 					failurePatternRow.PriorLastSeenAt = presence.PriorLastSeenAt.UTC().Format(time.RFC3339)
 				}
+				failurePatternRow.BadPRScore = presence.BadPRScore
+				failurePatternRow.BadPRReasons = append([]string(nil), presence.BadPRReasons...)
+				failurePatternRow.BadPREvaluated = true
 			}
-			if sparkline, counts, sparkRange, ok := frontservice.DailyDensitySparkline(
+			if sparkline, counts, sparkRange, ok := readmodelmodel.DailyDensitySparkline(
 				failurePatternRow.AffectedRuns,
 				windowDays,
 				endDate,
@@ -673,9 +681,9 @@ func legacyWeeklyFailurePatternRowsByEnv(
 }
 
 func reportWindowedFailurePatternRowsByEnv(
-	source map[string][]frontservice.FailurePatternsRow,
-) map[string][]frontservice.FailurePatternRow {
-	out := make(map[string][]frontservice.FailurePatternRow, len(source))
+	source map[string][]readmodelpatterns.FailurePatternsRow,
+) map[string][]readmodelmodel.FailurePatternRow {
+	out := make(map[string][]readmodelmodel.FailurePatternRow, len(source))
 	for environment, rows := range source {
 		out[environment] = reportWindowedFailurePatternRows(rows, reportWindowedFailureTotal(rows))
 	}
@@ -683,12 +691,12 @@ func reportWindowedFailurePatternRowsByEnv(
 }
 
 func reportWindowedFailurePatternRows(
-	rows []frontservice.FailurePatternsRow,
+	rows []readmodelpatterns.FailurePatternsRow,
 	totalEnvironmentFailures int,
-) []frontservice.FailurePatternRow {
-	out := make([]frontservice.FailurePatternRow, 0, len(rows))
+) []readmodelmodel.FailurePatternRow {
+	out := make([]readmodelmodel.FailurePatternRow, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, frontservice.FailurePatternRow{
+		out = append(out, readmodelmodel.FailurePatternRow{
 			Environment:        strings.TrimSpace(row.Environment),
 			FailedAt:           strings.TrimSpace(row.Lane),
 			JobName:            strings.TrimSpace(row.JobName),
@@ -711,6 +719,9 @@ func reportWindowedFailurePatternRows(
 			PriorWeekStarts:    append([]string(nil), row.PriorWeekStarts...),
 			PriorRunsAffected:  row.PriorJobsAffected,
 			PriorLastSeenAt:    strings.TrimSpace(row.PriorLastSeenAt),
+			BadPRScore:         row.BadPRScore,
+			BadPRReasons:       append([]string(nil), row.BadPRReasons...),
+			BadPREvaluated:     row.BadPREvaluated,
 			LinkedPatterns:     reportWindowedFailurePatternRows(row.LinkedChildren, totalEnvironmentFailures),
 		})
 	}
@@ -726,10 +737,10 @@ func reportWindowedFailurePatternRows(
 	return out
 }
 
-func reportWindowedRunReferences(rows []frontservice.FailurePatternReportReference) []frontservice.RunReference {
-	out := make([]frontservice.RunReference, 0, len(rows))
+func reportWindowedRunReferences(rows []readmodelpatterns.FailurePatternReportReference) []readmodelmodel.RunReference {
+	out := make([]readmodelmodel.RunReference, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, frontservice.RunReference{
+		out = append(out, readmodelmodel.RunReference{
 			RunURL:      strings.TrimSpace(row.RunURL),
 			OccurredAt:  strings.TrimSpace(row.OccurredAt),
 			SignatureID: strings.TrimSpace(row.SignatureID),
@@ -739,10 +750,10 @@ func reportWindowedRunReferences(rows []frontservice.FailurePatternReportReferen
 	return out
 }
 
-func reportWindowedContributingTests(rows []frontservice.FailurePatternReportContributingTest) []frontservice.ContributingTest {
-	out := make([]frontservice.ContributingTest, 0, len(rows))
+func reportWindowedContributingTests(rows []readmodelpatterns.FailurePatternReportContributingTest) []readmodelmodel.ContributingTest {
+	out := make([]readmodelmodel.ContributingTest, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, frontservice.ContributingTest{
+		out = append(out, readmodelmodel.ContributingTest{
 			FailedAt:    strings.TrimSpace(row.Lane),
 			JobName:     strings.TrimSpace(row.JobName),
 			TestName:    strings.TrimSpace(row.TestName),
@@ -752,7 +763,7 @@ func reportWindowedContributingTests(rows []frontservice.FailurePatternReportCon
 	return out
 }
 
-func reportWindowedFailureTotal(rows []frontservice.FailurePatternsRow) int {
+func reportWindowedFailureTotal(rows []readmodelpatterns.FailurePatternsRow) int {
 	total := 0
 	for _, row := range rows {
 		total += row.WindowFailureCount
@@ -767,7 +778,7 @@ func reportWindowedPercent(value int, total int) float64 {
 	return (float64(value) * 100.0) / float64(total)
 }
 
-func weeklyFailurePatternRowImpactPercent(item frontservice.FailurePatternRow, overallJobs int) float64 {
+func weeklyFailurePatternRowImpactPercent(item readmodelmodel.FailurePatternRow, overallJobs int) float64 {
 	if overallJobs <= 0 {
 		return 0
 	}
@@ -778,18 +789,18 @@ func weeklyFailurePatternRowImpactPercent(item frontservice.FailurePatternRow, o
 	return (float64(jobsAffected) * 100.0) / float64(overallJobs)
 }
 
-func weeklyFailurePatternRowJobsAffected(item frontservice.FailurePatternRow) int {
+func weeklyFailurePatternRowJobsAffected(item readmodelmodel.FailurePatternRow) int {
 	if len(item.LinkedPatterns) == 0 {
-		return len(frontservice.OrderedUniqueReferences(item.AffectedRuns))
+		return len(readmodelmodel.OrderedUniqueReferences(item.AffectedRuns))
 	}
 	total := 0
 	for _, child := range item.LinkedPatterns {
-		total += len(frontservice.OrderedUniqueReferences(child.AffectedRuns))
+		total += len(readmodelmodel.OrderedUniqueReferences(child.AffectedRuns))
 	}
 	if total > 0 {
 		return total
 	}
-	return len(frontservice.OrderedUniqueReferences(item.AffectedRuns))
+	return len(readmodelmodel.OrderedUniqueReferences(item.AffectedRuns))
 }
 
 func dailyRunOutcomeCounts(day counts) (successfulRuns int, ciInfraFailedRuns int, provisionFailedRuns int, e2eFailedRuns int) {

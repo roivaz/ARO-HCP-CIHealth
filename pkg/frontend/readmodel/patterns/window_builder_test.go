@@ -1,24 +1,26 @@
-package readmodel
+package patterns_test
 
 import (
 	"context"
 	"testing"
 
-	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
+	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
+	readmodelpatterns "ci-failure-atlas/pkg/frontend/readmodel/patterns"
+	"ci-failure-atlas/pkg/frontend/readmodel/testsupport"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
 )
 
-func TestBuildFailurePatternsBuildsWindowRowsFromFacts(t *testing.T) {
+func TestBuildWindowDataBuildsWindowRowsFromFacts(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	fixture := newIntegrationFixture(t, "")
-	currentStore := fixture.openWeekStore(t, "2026-03-16")
+	fixture := testsupport.NewIntegrationFixture(t, "")
+	currentStore := fixture.OpenWeekStore(t, "2026-03-16")
 
-	if err := currentStore.UpsertRuns(ctx, append(sampleRunsFixture(), previousSampleRunsFixture()...)); err != nil {
+	if err := currentStore.UpsertRuns(ctx, append(testsupport.SampleRunsFixture(), testsupport.PreviousSampleRunsFixture()...)); err != nil {
 		t.Fatalf("seed runs: %v", err)
 	}
-	if err := currentStore.UpsertRawFailures(ctx, append(sampleRawFailuresFixture(), previousSampleRawFailuresFixture()...)); err != nil {
+	if err := currentStore.UpsertRawFailures(ctx, append(testsupport.SampleRawFailuresFixture(), testsupport.PreviousSampleRawFailuresFixture()...)); err != nil {
 		t.Fatalf("seed raw failures: %v", err)
 	}
 	if err := currentStore.UpsertMetricsDaily(ctx, []storecontracts.MetricDailyRecord{
@@ -27,7 +29,7 @@ func TestBuildFailurePatternsBuildsWindowRowsFromFacts(t *testing.T) {
 		t.Fatalf("seed metrics daily: %v", err)
 	}
 
-	data, err := fixture.service.BuildFailurePatterns(ctx, FailurePatternsQuery{
+	data, err := readmodelpatterns.BuildWindowData(ctx, fixture.Service, readmodelpatterns.FailurePatternsQuery{
 		StartDate:    "2026-03-16",
 		EndDate:      "2026-03-16",
 		Environments: []string{"dev"},
@@ -66,7 +68,7 @@ func TestBuildFailurePatternsBuildsWindowRowsFromFacts(t *testing.T) {
 		t.Fatalf("unexpected row count: got=%d want=%d", got, want)
 	}
 
-	rowsByPhrase := map[string]FailurePatternsRow{}
+	rowsByPhrase := map[string]readmodelpatterns.FailurePatternsRow{}
 	for _, row := range environment.Rows {
 		rowsByPhrase[row.CanonicalEvidencePhrase] = row
 	}
@@ -95,17 +97,17 @@ func TestBuildFailurePatternsBuildsWindowRowsFromFacts(t *testing.T) {
 	}
 }
 
-func TestBuildFailurePatternsIgnoresDeprecatedPhase3Links(t *testing.T) {
+func TestBuildWindowDataIgnoresDeprecatedPhase3Links(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	fixture := newIntegrationFixture(t, "")
-	store := fixture.openWeekStore(t, "2026-03-16")
+	fixture := testsupport.NewIntegrationFixture(t, "")
+	store := fixture.OpenWeekStore(t, "2026-03-16")
 
-	if err := store.UpsertRuns(ctx, sampleRunsFixture()); err != nil {
+	if err := store.UpsertRuns(ctx, testsupport.SampleRunsFixture()); err != nil {
 		t.Fatalf("seed runs: %v", err)
 	}
-	rawFailures := append(sampleRawFailuresFixture(), storecontracts.RawFailureRecord{
+	rawFailures := append(testsupport.SampleRawFailuresFixture(), storecontracts.RawFailureRecord{
 		Environment:    "dev",
 		RowID:          "row-4",
 		RunURL:         "https://prow.example.com/view/1",
@@ -124,26 +126,24 @@ func TestBuildFailurePatternsIgnoresDeprecatedPhase3Links(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed metrics daily: %v", err)
 	}
-	fixture.seedDeprecatedPhase3Links(t,
-		deprecatedPhase3LinkRecord{
-			SchemaVersion: failurepatterncontracts.CurrentSchemaVersion,
-			IssueID:       "QE-123",
-			Environment:   "dev",
-			RunURL:        "https://prow.example.com/view/1",
-			RowID:         "row-1",
-			UpdatedAt:     "2026-03-16T12:00:00Z",
+	fixture.SeedDeprecatedPhase3Links(t,
+		testsupport.DeprecatedPhase3LinkRecord{
+			IssueID:     "QE-123",
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/view/1",
+			RowID:       "row-1",
+			UpdatedAt:   "2026-03-16T12:00:00Z",
 		},
-		deprecatedPhase3LinkRecord{
-			SchemaVersion: failurepatterncontracts.CurrentSchemaVersion,
-			IssueID:       "QE-123",
-			Environment:   "dev",
-			RunURL:        "https://prow.example.com/view/1",
-			RowID:         "row-4",
-			UpdatedAt:     "2026-03-16T12:00:00Z",
+		testsupport.DeprecatedPhase3LinkRecord{
+			IssueID:     "QE-123",
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/view/1",
+			RowID:       "row-4",
+			UpdatedAt:   "2026-03-16T12:00:00Z",
 		},
 	)
 
-	data, err := fixture.service.BuildFailurePatterns(ctx, FailurePatternsQuery{
+	data, err := readmodelpatterns.BuildWindowData(ctx, fixture.Service, readmodelpatterns.FailurePatternsQuery{
 		StartDate:    "2026-03-16",
 		EndDate:      "2026-03-16",
 		Environments: []string{"dev"},
@@ -176,13 +176,13 @@ func TestBuildFailurePatternsIgnoresDeprecatedPhase3Links(t *testing.T) {
 	}
 }
 
-func TestBuildFailurePatternsComposesCrossWeekWindows(t *testing.T) {
+func TestBuildWindowDataComposesCrossWeekWindows(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	fixture := newIntegrationFixture(t, "")
-	currentStore := fixture.openWeekStore(t, "2026-03-16")
-	if err := currentStore.UpsertRuns(ctx, append(sampleRunsFixture(), storecontracts.RunRecord{
+	fixture := testsupport.NewIntegrationFixture(t, "")
+	currentStore := fixture.OpenWeekStore(t, "2026-03-16")
+	if err := currentStore.UpsertRuns(ctx, append(testsupport.SampleRunsFixture(), storecontracts.RunRecord{
 		Environment: "dev",
 		RunURL:      "https://prow.example.com/view/22",
 		JobName:     "periodic-ci",
@@ -191,7 +191,7 @@ func TestBuildFailurePatternsComposesCrossWeekWindows(t *testing.T) {
 	})); err != nil {
 		t.Fatalf("seed cross-week runs: %v", err)
 	}
-	if err := currentStore.UpsertRawFailures(ctx, append(sampleRawFailuresFixture(), storecontracts.RawFailureRecord{
+	if err := currentStore.UpsertRawFailures(ctx, append(testsupport.SampleRawFailuresFixture(), storecontracts.RawFailureRecord{
 		Environment:    "dev",
 		RowID:          "row-22",
 		RunURL:         "https://prow.example.com/view/22",
@@ -211,7 +211,7 @@ func TestBuildFailurePatternsComposesCrossWeekWindows(t *testing.T) {
 		t.Fatalf("seed cross-week metrics daily: %v", err)
 	}
 
-	data, err := fixture.service.BuildFailurePatterns(ctx, FailurePatternsQuery{
+	data, err := readmodelpatterns.BuildWindowData(ctx, fixture.Service, readmodelpatterns.FailurePatternsQuery{
 		StartDate:    "2026-03-16",
 		EndDate:      "2026-03-23",
 		Environments: []string{"dev"},
@@ -224,7 +224,7 @@ func TestBuildFailurePatternsComposesCrossWeekWindows(t *testing.T) {
 	if got, want := len(environment.Rows), 2; got != want {
 		t.Fatalf("unexpected row count across cross-week window: got=%d want=%d", got, want)
 	}
-	rowsByPhrase := map[string]FailurePatternsRow{}
+	rowsByPhrase := map[string]readmodelpatterns.FailurePatternsRow{}
 	for _, row := range environment.Rows {
 		rowsByPhrase[row.CanonicalEvidencePhrase] = row
 	}
@@ -246,12 +246,12 @@ func TestBuildFailurePatternsComposesCrossWeekWindows(t *testing.T) {
 	}
 }
 
-func TestBuildFailurePatternsUsesCalendarAnchorWeekWithoutStoredSchemas(t *testing.T) {
+func TestBuildWindowDataUsesCalendarAnchorWeekWithoutStoredSchemas(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	fixture := newIntegrationFixture(t, "")
-	currentStore := fixture.openWeekStore(t, "2026-03-16")
+	fixture := testsupport.NewIntegrationFixture(t, "")
+	currentStore := fixture.OpenWeekStore(t, "2026-03-16")
 	if err := currentStore.UpsertRuns(ctx, []storecontracts.RunRecord{
 		{
 			Environment: "dev",
@@ -279,7 +279,7 @@ func TestBuildFailurePatternsUsesCalendarAnchorWeekWithoutStoredSchemas(t *testi
 		t.Fatalf("seed raw failures: %v", err)
 	}
 
-	data, err := fixture.service.BuildFailurePatterns(ctx, FailurePatternsQuery{
+	data, err := readmodelpatterns.BuildWindowData(ctx, fixture.Service, readmodelpatterns.FailurePatternsQuery{
 		StartDate:    "2026-03-16",
 		EndDate:      "2026-03-23",
 		Environments: []string{"dev"},
@@ -292,12 +292,12 @@ func TestBuildFailurePatternsUsesCalendarAnchorWeekWithoutStoredSchemas(t *testi
 	}
 }
 
-func TestBuildFailurePatternsBadPRScoreUsesWindowReferenceSpread(t *testing.T) {
+func TestBuildWindowDataBadPRScoreUsesWindowReferenceSpread(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	fixture := newIntegrationFixture(t, "")
-	currentStore := fixture.openWeekStore(t, "2026-03-16")
+	fixture := testsupport.NewIntegrationFixture(t, "")
+	currentStore := fixture.OpenWeekStore(t, "2026-03-16")
 
 	if err := currentStore.UpsertRuns(ctx, []storecontracts.RunRecord{
 		{
@@ -352,7 +352,7 @@ func TestBuildFailurePatternsBadPRScoreUsesWindowReferenceSpread(t *testing.T) {
 		t.Fatalf("seed cross-week metrics daily: %v", err)
 	}
 
-	data, err := fixture.service.BuildFailurePatterns(ctx, FailurePatternsQuery{
+	data, err := readmodelpatterns.BuildWindowData(ctx, fixture.Service, readmodelpatterns.FailurePatternsQuery{
 		StartDate:    "2026-03-16",
 		EndDate:      "2026-03-23",
 		Environments: []string{"dev"},
@@ -362,12 +362,12 @@ func TestBuildFailurePatternsBadPRScoreUsesWindowReferenceSpread(t *testing.T) {
 	}
 
 	row := data.Environments[0].Rows[0]
-	score, reasons := BadPRScoreAndReasons(FailurePatternRow{
+	score, reasons := readmodelmodel.BadPRScoreAndReasons(readmodelmodel.FailurePatternRow{
 		Environment:        row.Environment,
 		AfterLastPushCount: row.WeeklyPostGoodCount,
 		AlsoIn:             row.SeenIn,
-		AffectedRuns:       toWindowedHTMLRunReferences(row.References),
-		ScoringReferences:  toWindowedHTMLRunReferences(row.ScoringReferences),
+		AffectedRuns:       testRunReferences(row.References),
+		ScoringReferences:  testRunReferences(row.ScoringReferences),
 	})
 	if got, want := row.WeeklyPostGoodCount, 0; got != want {
 		t.Fatalf("unexpected window post-good count: got=%d want=%d", got, want)
@@ -385,12 +385,12 @@ func TestBuildFailurePatternsBadPRScoreUsesWindowReferenceSpread(t *testing.T) {
 	}
 }
 
-func TestBuildFailurePatternsUsesRowLevelReferencesWhenClustersShareSignature(t *testing.T) {
+func TestBuildWindowDataUsesRowLevelReferencesWhenClustersShareSignature(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	fixture := newIntegrationFixture(t, "")
-	store := fixture.openWeekStore(t, "2026-03-16")
+	fixture := testsupport.NewIntegrationFixture(t, "")
+	store := fixture.OpenWeekStore(t, "2026-03-16")
 	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
 		{
 			Environment: "dev",
@@ -441,7 +441,7 @@ func TestBuildFailurePatternsUsesRowLevelReferencesWhenClustersShareSignature(t 
 		t.Fatalf("seed metrics daily: %v", err)
 	}
 
-	data, err := fixture.service.BuildFailurePatterns(ctx, FailurePatternsQuery{
+	data, err := readmodelpatterns.BuildWindowData(ctx, fixture.Service, readmodelpatterns.FailurePatternsQuery{
 		StartDate:    "2026-03-16",
 		EndDate:      "2026-03-16",
 		Environments: []string{"dev"},
@@ -456,7 +456,7 @@ func TestBuildFailurePatternsUsesRowLevelReferencesWhenClustersShareSignature(t 
 		t.Fatalf("unexpected row count: got=%d want=%d", got, want)
 	}
 
-	rowsByPhrase := map[string]FailurePatternsRow{}
+	rowsByPhrase := map[string]readmodelpatterns.FailurePatternsRow{}
 	for _, row := range data.Environments[0].Rows {
 		rowsByPhrase[row.CanonicalEvidencePhrase] = row
 	}
@@ -500,4 +500,17 @@ func TestBuildFailurePatternsUsesRowLevelReferencesWhenClustersShareSignature(t 
 	if got, want := propagatorRow.FullErrorSamples[0], "resource not ready, name: grc-policy-propagator"; got != want {
 		t.Fatalf("unexpected propagator sample: got=%q want=%q", got, want)
 	}
+}
+
+func testRunReferences(rows []readmodelpatterns.FailurePatternReportReference) []readmodelmodel.RunReference {
+	out := make([]readmodelmodel.RunReference, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, readmodelmodel.RunReference{
+			RunURL:      row.RunURL,
+			OccurredAt:  row.OccurredAt,
+			SignatureID: row.SignatureID,
+			PRNumber:    row.PRNumber,
+		})
+	}
+	return out
 }

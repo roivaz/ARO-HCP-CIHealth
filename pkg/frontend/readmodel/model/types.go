@@ -1,4 +1,4 @@
-package readmodel
+package model
 
 type RunReference struct {
 	RunURL      string
@@ -42,6 +42,9 @@ type FailurePatternRow struct {
 	PriorWeekStarts     []string
 	PriorRunsAffected   int
 	PriorLastSeenAt     string
+	BadPRScore          int
+	BadPRReasons        []string
+	BadPREvaluated      bool
 	ManualIssueID       string
 	ManualIssueConflict bool
 	SelectionValue      string

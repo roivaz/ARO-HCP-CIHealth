@@ -1,7 +1,5 @@
 package contracts
 
-const CurrentSchemaVersion = "v2"
-
 type ReferenceRecord struct {
 	RowID          string `json:"row_id,omitempty"`
 	RunURL         string `json:"run_url"`
@@ -19,7 +17,6 @@ type ContributingTestRecord struct {
 }
 
 type FailurePatternRecord struct {
-	SchemaVersion                string                   `json:"schema_version"`
 	Environment                  string                   `json:"environment"`
 	Phase2ClusterID              string                   `json:"phase2_cluster_id"`
 	CanonicalEvidencePhrase      string                   `json:"canonical_evidence_phrase"`
@@ -37,7 +34,6 @@ type FailurePatternRecord struct {
 }
 
 type ReviewItemRecord struct {
-	SchemaVersion                        string            `json:"schema_version"`
 	Environment                          string            `json:"environment"`
 	ReviewItemID                         string            `json:"review_item_id"`
 	Phase                                string            `json:"phase"`

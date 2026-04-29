@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	frontservice "ci-failure-atlas/pkg/frontend/readmodel"
+	readmodelrunlog "ci-failure-atlas/pkg/frontend/readmodel/runlog"
 	frontui "ci-failure-atlas/pkg/frontend/ui"
 	sourceoptions "ci-failure-atlas/pkg/source/options"
 	storecontracts "ci-failure-atlas/pkg/store/contracts"
@@ -15,12 +15,12 @@ import (
 
 type PageOptions struct {
 	Chrome              frontui.ReportChromeOptions
-	Query               frontservice.RunLogDayQuery
+	Query               readmodelrunlog.RunLogDayQuery
 	FailurePatternsHref string
 }
 
 func RenderHTML(
-	data frontservice.RunLogDayData,
+	data readmodelrunlog.RunLogDayData,
 	options PageOptions,
 ) string {
 	var b strings.Builder
@@ -141,7 +141,7 @@ func runLogDayCardHTML(label string, value string) string {
 	)
 }
 
-func runLogDayRunRowHTML(row frontservice.JobHistoryRunRow) string {
+func runLogDayRunRowHTML(row readmodelrunlog.JobHistoryRunRow) string {
 	var b strings.Builder
 	b.WriteString("        <tr>\n")
 	b.WriteString(fmt.Sprintf("          <td class=\"time-col\">%s</td>\n", html.EscapeString(runLogDayRunTime(row.Run.OccurredAt))))
@@ -237,7 +237,7 @@ func runLogDayResultBadgeHTML(run storecontracts.RunRecord) string {
 	return fmt.Sprintf("<span class=\"%s\">%s</span>", className, html.EscapeString(label))
 }
 
-func runLogDayPRHTML(row frontservice.JobHistoryRunRow) string {
+func runLogDayPRHTML(row readmodelrunlog.JobHistoryRunRow) string {
 	run := row.Run
 	if run.PRNumber <= 0 {
 		return "<span class=\"muted\">n/a</span>"
@@ -272,7 +272,7 @@ func runLogDayPRStateLabel(run storecontracts.RunRecord) string {
 	}
 }
 
-func runLogDaySignalIconsHTML(row frontservice.JobHistoryRunRow) string {
+func runLogDaySignalIconsHTML(row readmodelrunlog.JobHistoryRunRow) string {
 	if !row.Run.Failed || row.SemanticRollups.ClusteredRows == 0 {
 		return ""
 	}
@@ -294,14 +294,14 @@ func runLogDaySignalIconsHTML(row frontservice.JobHistoryRunRow) string {
 	return icons.String()
 }
 
-func runLogDayBestRegression(row frontservice.JobHistoryRunRow) (bool, []string) {
+func runLogDayBestRegression(row readmodelrunlog.JobHistoryRunRow) (bool, []string) {
 	if row.BadPRScore <= 0 {
 		return false, nil
 	}
 	return true, append([]string(nil), row.BadPRReasons...)
 }
 
-func runLogDayHasNewPattern(row frontservice.JobHistoryRunRow) bool {
+func runLogDayHasNewPattern(row readmodelrunlog.JobHistoryRunRow) bool {
 	for _, f := range row.FailureRows {
 		if strings.TrimSpace(f.SemanticAttachment.Status) == "clustered" && f.PriorWeeksPresent == 0 {
 			return true
@@ -310,7 +310,7 @@ func runLogDayHasNewPattern(row frontservice.JobHistoryRunRow) bool {
 	return false
 }
 
-func runLogDayPrimaryPhrase(row frontservice.JobHistoryRunRow) string {
+func runLogDayPrimaryPhrase(row readmodelrunlog.JobHistoryRunRow) string {
 	if len(row.FailureRows) == 0 {
 		if row.Run.Failed {
 			return "Failure details unavailable"
@@ -340,7 +340,7 @@ func runLogDayPrimaryPhrase(row frontservice.JobHistoryRunRow) string {
 	return fmt.Sprintf("%d failure rows", len(row.FailureRows))
 }
 
-func runLogDayPrimaryPhraseSubmeta(row frontservice.JobHistoryRunRow) string {
+func runLogDayPrimaryPhraseSubmeta(row readmodelrunlog.JobHistoryRunRow) string {
 	if len(row.FailureRows) == 0 {
 		if row.Run.Failed {
 			return "Failure details are not available for this run yet."
@@ -350,7 +350,7 @@ func runLogDayPrimaryPhraseSubmeta(row frontservice.JobHistoryRunRow) string {
 	return ""
 }
 
-func runLogDayFailureDetailsHTML(row frontservice.JobHistoryRunRow) string {
+func runLogDayFailureDetailsHTML(row readmodelrunlog.JobHistoryRunRow) string {
 	if len(row.FailureRows) == 0 {
 		return ""
 	}
@@ -375,7 +375,7 @@ func runLogDayFailureDetailsHTML(row frontservice.JobHistoryRunRow) string {
 	return b.String()
 }
 
-func runLogDayAllFailuresNonArtifactBacked(rows []frontservice.JobHistoryFailureRow) bool {
+func runLogDayAllFailuresNonArtifactBacked(rows []readmodelrunlog.JobHistoryFailureRow) bool {
 	if len(rows) == 0 {
 		return false
 	}
@@ -387,7 +387,7 @@ func runLogDayAllFailuresNonArtifactBacked(rows []frontservice.JobHistoryFailure
 	return true
 }
 
-func runLogDayFailureTitle(row frontservice.JobHistoryFailureRow) string {
+func runLogDayFailureTitle(row readmodelrunlog.JobHistoryFailureRow) string {
 	if phrase := strings.TrimSpace(row.SemanticAttachment.CanonicalEvidencePhrase); phrase != "" {
 		return phrase
 	}
@@ -397,7 +397,7 @@ func runLogDayFailureTitle(row frontservice.JobHistoryFailureRow) string {
 	return "Failure detail"
 }
 
-func runLogDayFailureMeta(row frontservice.JobHistoryFailureRow) string {
+func runLogDayFailureMeta(row readmodelrunlog.JobHistoryFailureRow) string {
 	parts := make([]string, 0, 4)
 	if occurredAt := runLogDayRunTime(row.OccurredAt); occurredAt != "" {
 		parts = append(parts, occurredAt)
@@ -414,7 +414,7 @@ func runLogDayFailureMeta(row frontservice.JobHistoryFailureRow) string {
 	return strings.Join(parts, " · ")
 }
 
-func runLogDayFailureFlagsHTML(row frontservice.JobHistoryFailureRow) string {
+func runLogDayFailureFlagsHTML(row readmodelrunlog.JobHistoryFailureRow) string {
 	flags := make([]string, 0, 1)
 	if row.NonArtifactBacked {
 		flags = append(flags, "synthetic raw row")
@@ -431,7 +431,7 @@ func runLogDayFailureFlagsHTML(row frontservice.JobHistoryFailureRow) string {
 	return b.String()
 }
 
-func runLogDayRawFailureToggleHTML(row frontservice.JobHistoryFailureRow) string {
+func runLogDayRawFailureToggleHTML(row readmodelrunlog.JobHistoryFailureRow) string {
 	text := strings.TrimSpace(row.FailureText)
 	if text == "" {
 		return ""
@@ -442,7 +442,7 @@ func runLogDayRawFailureToggleHTML(row frontservice.JobHistoryFailureRow) string
 	)
 }
 
-func runLogDaySemanticPhrases(row frontservice.JobHistoryRunRow) []string {
+func runLogDaySemanticPhrases(row readmodelrunlog.JobHistoryRunRow) []string {
 	set := map[string]struct{}{}
 	for _, failure := range row.FailureRows {
 		phrase := strings.TrimSpace(failure.SemanticAttachment.CanonicalEvidencePhrase)
@@ -490,14 +490,14 @@ func normalizedQueryEnvironments(values []string) []string {
 	return out
 }
 
-func runLogDayLaneSummary(row frontservice.JobHistoryRunRow) string {
+func runLogDayLaneSummary(row readmodelrunlog.JobHistoryRunRow) string {
 	if len(row.Lanes) == 0 {
 		return "n/a"
 	}
 	return strings.Join(row.Lanes, ", ")
 }
 
-func runLogDayFailedTestsLabel(row frontservice.JobHistoryRunRow) string {
+func runLogDayFailedTestsLabel(row readmodelrunlog.JobHistoryRunRow) string {
 	if len(row.FailureRows) == 0 && row.Run.Failed {
 		return "n/a"
 	}

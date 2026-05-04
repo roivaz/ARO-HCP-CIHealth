@@ -18,6 +18,8 @@ import (
 type FailurePatternsQuery struct {
 	StartDate    string
 	EndDate      string
+	StartAt      string
+	EndAt        string
 	Week         string
 	Mode         string
 	Environments []string
@@ -32,6 +34,8 @@ type FailurePatternsData struct {
 type FailurePatternsMeta struct {
 	StartDate    string   `json:"start_date"`
 	EndDate      string   `json:"end_date"`
+	StartAt      string   `json:"start_at,omitempty"`
+	EndAt        string   `json:"end_at,omitempty"`
 	AnchorWeek   string   `json:"-"`
 	Timezone     string   `json:"timezone"`
 	GeneratedAt  string   `json:"generated_at"`
@@ -111,6 +115,8 @@ func BuildWindowData(ctx context.Context, deps WindowBuilderDeps, query FailureP
 	scope, err := readmodelwindow.Resolve(ctx, deps, readmodelwindow.Request{
 		StartDate:   query.StartDate,
 		EndDate:     query.EndDate,
+		StartAt:     query.StartAt,
+		EndAt:       query.EndAt,
 		Week:        query.Week,
 		DefaultMode: readmodelwindow.DefaultLatestWeek,
 	})
@@ -171,15 +177,22 @@ func buildFailurePatternsInline(
 		return FailurePatternsData{}, fmt.Errorf("build signal-horizon history resolver: %w", err)
 	}
 
-	metricRunTotals, err := failurePatternReportMetricRunTotalsByEnvironment(
-		ctx,
-		factsStore,
-		targetEnvironments,
-		scope.StartTime,
-		scope.EndTime,
-	)
-	if err != nil {
-		return FailurePatternsData{}, fmt.Errorf("load failure-pattern metric run totals: %w", err)
+	metricRunTotals := map[string]int{}
+	if scope.HasExactBounds {
+		for environment, total := range currentResult.Diagnostics.RunsByEnvironment {
+			metricRunTotals[environment] = total
+		}
+	} else {
+		metricRunTotals, err = failurePatternReportMetricRunTotalsByEnvironment(
+			ctx,
+			factsStore,
+			targetEnvironments,
+			scope.StartTime,
+			scope.EndTime,
+		)
+		if err != nil {
+			return FailurePatternsData{}, fmt.Errorf("load failure-pattern metric run totals: %w", err)
+		}
 	}
 
 	currentClusters := toFailurePatternReportClusters(currentResult.FailurePatterns)
@@ -241,6 +254,8 @@ func buildFailurePatternsInline(
 		Meta: FailurePatternsMeta{
 			StartDate:    scope.StartDate,
 			EndDate:      scope.EndDate,
+			StartAt:      scope.StartAt,
+			EndAt:        scope.EndAt,
 			AnchorWeek:   scope.AnchorWeek,
 			Timezone:     "UTC",
 			GeneratedAt:  generatedAt.UTC().Format(time.RFC3339),

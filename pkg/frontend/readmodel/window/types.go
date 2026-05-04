@@ -15,6 +15,8 @@ type Request struct {
 	Date        string
 	StartDate   string
 	EndDate     string
+	StartAt     string
+	EndAt       string
 	Week        string
 	Now         time.Time
 	DefaultMode DefaultMode
@@ -22,12 +24,15 @@ type Request struct {
 }
 
 type Scope struct {
-	StartDate  string
-	EndDate    string
-	StartTime  time.Time
-	EndTime    time.Time
-	DateLabels []string
-	AnchorWeek string
+	StartDate      string
+	EndDate        string
+	StartAt        string
+	EndAt          string
+	StartTime      time.Time
+	EndTime        time.Time
+	DateLabels     []string
+	AnchorWeek     string
+	HasExactBounds bool
 }
 
 type WeekWindow struct {

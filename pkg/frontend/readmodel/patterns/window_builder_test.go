@@ -246,6 +246,96 @@ func TestBuildWindowDataComposesCrossWeekWindows(t *testing.T) {
 	}
 }
 
+func TestBuildWindowDataUsesExactRunTotalsForTimestampWindow(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	fixture := testsupport.NewIntegrationFixture(t, "")
+	store := fixture.OpenWeekStore(t, "2026-03-16")
+
+	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
+		{
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/view/before",
+			JobName:     "periodic-ci",
+			Failed:      true,
+			OccurredAt:  "2026-03-16T07:30:00Z",
+		},
+		{
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/view/inside-1",
+			JobName:     "periodic-ci",
+			Failed:      true,
+			OccurredAt:  "2026-03-16T08:30:00Z",
+		},
+		{
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/view/inside-2",
+			JobName:     "periodic-ci",
+			Failed:      true,
+			OccurredAt:  "2026-03-16T09:15:00Z",
+		},
+		{
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/view/after",
+			JobName:     "periodic-ci",
+			Failed:      false,
+			OccurredAt:  "2026-03-16T12:15:00Z",
+		},
+	}); err != nil {
+		t.Fatalf("seed exact-window runs: %v", err)
+	}
+	if err := store.UpsertRawFailures(ctx, []storecontracts.RawFailureRecord{
+		{
+			Environment:    "dev",
+			RowID:          "row-inside-1",
+			RunURL:         "https://prow.example.com/view/inside-1",
+			TestName:       "should oauth",
+			TestSuite:      "suite-a",
+			SignatureID:    "sig-a",
+			OccurredAt:     "2026-03-16T08:31:00Z",
+			RawText:        "OAuth timeout while waiting for cluster operator",
+			NormalizedText: "oauth timeout while waiting for cluster operator",
+		},
+	}); err != nil {
+		t.Fatalf("seed exact-window raw failures: %v", err)
+	}
+	if err := store.UpsertMetricsDaily(ctx, []storecontracts.MetricDailyRecord{
+		{Environment: "dev", Date: "2026-03-16", Metric: "run_count", Value: 10},
+	}); err != nil {
+		t.Fatalf("seed exact-window metrics daily: %v", err)
+	}
+
+	data, err := readmodelpatterns.BuildWindowData(ctx, fixture.Service, readmodelpatterns.FailurePatternsQuery{
+		StartAt:      "2026-03-16T08:00:00Z",
+		EndAt:        "2026-03-16T10:00:00Z",
+		Environments: []string{"dev"},
+	})
+	if err != nil {
+		t.Fatalf("build failure patterns: %v", err)
+	}
+
+	if got, want := data.Meta.StartAt, "2026-03-16T08:00:00Z"; got != want {
+		t.Fatalf("unexpected meta start_at: got=%q want=%q", got, want)
+	}
+	if got, want := data.Meta.EndAt, "2026-03-16T10:00:00Z"; got != want {
+		t.Fatalf("unexpected meta end_at: got=%q want=%q", got, want)
+	}
+	environment := data.Environments[0]
+	if got, want := environment.Summary.TotalRuns, 2; got != want {
+		t.Fatalf("unexpected exact-window total runs: got=%d want=%d", got, want)
+	}
+	if got, want := environment.Summary.FailedRuns, 2; got != want {
+		t.Fatalf("unexpected exact-window failed runs: got=%d want=%d", got, want)
+	}
+	if got, want := len(environment.Rows), 1; got != want {
+		t.Fatalf("unexpected exact-window row count: got=%d want=%d", got, want)
+	}
+	if got, want := environment.Rows[0].ImpactPercent, 50.0; got != want {
+		t.Fatalf("unexpected exact-window impact percent: got=%v want=%v", got, want)
+	}
+}
+
 func TestBuildWindowDataUsesCalendarAnchorWeekWithoutStoredSchemas(t *testing.T) {
 	t.Parallel()
 

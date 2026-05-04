@@ -19,6 +19,38 @@ func NormalizeDateLabel(value string) (string, time.Time, error) {
 	return parsed.UTC().Format("2006-01-02"), parsed.UTC(), nil
 }
 
+func NormalizeTimestampLabel(fieldName string, value string) (string, time.Time, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", time.Time{}, fmt.Errorf("%s is required", strings.TrimSpace(fieldName))
+	}
+	layouts := []struct {
+		layout  string
+		hasZone bool
+	}{
+		{layout: time.RFC3339Nano, hasZone: true},
+		{layout: time.RFC3339, hasZone: true},
+		{layout: "2006-01-02T15:04:05", hasZone: false},
+		{layout: "2006-01-02T15:04", hasZone: false},
+	}
+	for _, candidate := range layouts {
+		var (
+			parsed time.Time
+			err    error
+		)
+		if candidate.hasZone {
+			parsed, err = time.Parse(candidate.layout, trimmed)
+		} else {
+			parsed, err = time.ParseInLocation(candidate.layout, trimmed, time.UTC)
+		}
+		if err != nil {
+			continue
+		}
+		return parsed.UTC().Format(time.RFC3339), parsed.UTC(), nil
+	}
+	return "", time.Time{}, fmt.Errorf("%s must use RFC3339 or YYYY-MM-DDTHH:MM[:SS] format", strings.TrimSpace(fieldName))
+}
+
 func NormalizeWeekLabel(value string) (string, error) {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -75,11 +107,28 @@ func MetricDateLabelsFromWindow(start time.Time, end time.Time) []string {
 	if start.IsZero() || end.IsZero() || !start.Before(end) {
 		return nil
 	}
-	out := make([]string, 0, int(end.Sub(start)/(24*time.Hour)))
-	for date := start.UTC(); date.Before(end.UTC()); date = date.AddDate(0, 0, 1) {
+	current := time.Date(start.UTC().Year(), start.UTC().Month(), start.UTC().Day(), 0, 0, 0, 0, time.UTC)
+	lastIncluded := end.UTC().Add(-time.Nanosecond)
+	lastDate := time.Date(lastIncluded.Year(), lastIncluded.Month(), lastIncluded.Day(), 0, 0, 0, 0, time.UTC)
+	if lastDate.Before(current) {
+		return nil
+	}
+	out := make([]string, 0, int(lastDate.Sub(current)/(24*time.Hour))+1)
+	for date := current; !date.After(lastDate); date = date.AddDate(0, 0, 1) {
 		out = append(out, date.Format("2006-01-02"))
 	}
 	return NormalizeMetricDateLabels(out)
+}
+
+func FormatDatetimeLocalValue(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	value = value.UTC()
+	if value.Second() != 0 || value.Nanosecond() != 0 {
+		return value.Format("2006-01-02T15:04:05")
+	}
+	return value.Format("2006-01-02T15:04")
 }
 
 func NormalizeMetricDateLabels(values []string) []string {

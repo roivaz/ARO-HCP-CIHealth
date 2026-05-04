@@ -183,6 +183,12 @@ func TestHandleAPIFailurePatternsReturnsJSON(t *testing.T) {
 	if got, want := payload.Meta.Timezone, "UTC"; got != want {
 		t.Fatalf("unexpected failure-pattern payload timezone: got=%q want=%q", got, want)
 	}
+	if got, want := payload.Meta.StartAt, "2026-03-16T00:00:00Z"; got != want {
+		t.Fatalf("unexpected failure-pattern payload start_at: got=%q want=%q", got, want)
+	}
+	if got, want := payload.Meta.EndAt, "2026-03-17T00:00:00Z"; got != want {
+		t.Fatalf("unexpected failure-pattern payload end_at: got=%q want=%q", got, want)
+	}
 	if got, want := len(payload.Environments), 1; got != want {
 		t.Fatalf("unexpected environment count: got=%d want=%d", got, want)
 	}
@@ -235,6 +241,34 @@ func TestHandleAPIFailurePatternsReturnsJSONError(t *testing.T) {
 		t.Fatalf("decode error response: %v", err)
 	}
 	if got := payload["error"]; !strings.Contains(got, "start_date and end_date must both be set") {
+		t.Fatalf("unexpected error message: %q", got)
+	}
+}
+
+func TestHandleAPIFailurePatternsRejectsPartialExactWindow(t *testing.T) {
+	t.Parallel()
+
+	fixture := newHandlerFixture(t)
+	handler, err := NewHandler(HandlerOptions{
+		PostgresPool: fixture.pool,
+	})
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/failure-patterns/window?start_at=2026-03-16T08:00:00Z", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if got, want := recorder.Code, http.StatusBadRequest; got != want {
+		t.Fatalf("unexpected status code: got=%d want=%d body=%s", got, want, recorder.Body.String())
+	}
+
+	var payload map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if got := payload["error"]; !strings.Contains(got, "start_at and end_at must both be set") {
 		t.Fatalf("unexpected error message: %q", got)
 	}
 }
@@ -297,11 +331,11 @@ func TestHandleFailurePatternsPageWindowRendersHTML(t *testing.T) {
 	if !strings.Contains(body, "Single Day: Mar 16") {
 		t.Fatalf("expected single-day time selector label in body, got %q", body)
 	}
-	if !strings.Contains(body, `name="start_date" value="2026-03-16"`) {
-		t.Fatalf("expected start_date control in body, got %q", body)
+	if !strings.Contains(body, `type="datetime-local" name="start_at" value="2026-03-16T00:00"`) {
+		t.Fatalf("expected start_at control in body, got %q", body)
 	}
-	if !strings.Contains(body, `name="end_date" value="2026-03-16"`) {
-		t.Fatalf("expected end_date control in body, got %q", body)
+	if !strings.Contains(body, `type="datetime-local" name="end_at" value="2026-03-17T00:00"`) {
+		t.Fatalf("expected end_at control in body, got %q", body)
 	}
 	if !strings.Contains(body, `name="env"`) || !strings.Contains(body, `option value="dev" selected="selected">DEV</option>`) {
 		t.Fatalf("expected env control in body, got %q", body)
@@ -329,6 +363,63 @@ func TestHandleFailurePatternsPageWindowRendersHTML(t *testing.T) {
 	}
 }
 
+func TestHandleFailurePatternsPageExactWindowRendersHTML(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	fixture := newHandlerFixture(t)
+	targetStore := fixture.openWeekStore(t, "2026-03-16")
+	if err := targetStore.UpsertRuns(ctx, []storecontracts.RunRecord{
+		{
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/view/1",
+			JobName:     "periodic-ci",
+			Failed:      true,
+			OccurredAt:  "2026-03-16T08:30:00Z",
+		},
+		{
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/view/2",
+			JobName:     "periodic-ci-nodepool",
+			Failed:      true,
+			OccurredAt:  "2026-03-16T09:00:00Z",
+		},
+	}); err != nil {
+		t.Fatalf("seed runs: %v", err)
+	}
+	if err := targetStore.UpsertRawFailures(ctx, reviewAPIRawFailures()); err != nil {
+		t.Fatalf("seed raw failures: %v", err)
+	}
+
+	handler, err := NewHandler(HandlerOptions{
+		PostgresPool: fixture.pool,
+	})
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/failure-patterns?start_at=2026-03-16T08:00:00Z&end_at=2026-03-16T10:00:00Z&env=dev", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if got, want := recorder.Code, http.StatusOK; got != want {
+		t.Fatalf("unexpected status code: got=%d want=%d body=%s", got, want, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "Custom: Mar 16 08:00 - Mar 16 10:00 UTC") {
+		t.Fatalf("expected exact custom label in body, got %q", body)
+	}
+	if !strings.Contains(body, `name="start_at" value="2026-03-16T08:00"`) {
+		t.Fatalf("expected exact start_at control in body, got %q", body)
+	}
+	if !strings.Contains(body, `name="end_at" value="2026-03-16T10:00"`) {
+		t.Fatalf("expected exact end_at control in body, got %q", body)
+	}
+	if !strings.Contains(body, `start_at=2026-03-16T08%3A00%3A00Z`) || !strings.Contains(body, `end_at=2026-03-16T10%3A00%3A00Z`) {
+		t.Fatalf("expected exact-window JSON API href in body, got %q", body)
+	}
+}
+
 func TestHandleFailurePatternsPageDefaultsToRollingWindow(t *testing.T) {
 	fixture := newHandlerFixture(t)
 
@@ -349,12 +440,12 @@ func TestHandleFailurePatternsPageDefaultsToRollingWindow(t *testing.T) {
 	body := recorder.Body.String()
 	now := time.Now().UTC()
 	startDate := now.AddDate(0, 0, -6).Format("2006-01-02")
-	endDate := now.Format("2006-01-02")
-	if !strings.Contains(body, `name="start_date" value="`+startDate+`"`) {
-		t.Fatalf("expected default start_date in body, got %q", body)
+	if !strings.Contains(body, `name="start_at" value="`+startDate+`T00:00"`) {
+		t.Fatalf("expected default start_at in body, got %q", body)
 	}
-	if !strings.Contains(body, `name="end_date" value="`+endDate+`"`) {
-		t.Fatalf("expected default end_date in body, got %q", body)
+	nextDay := now.AddDate(0, 0, 1).Format("2006-01-02")
+	if !strings.Contains(body, `name="end_at" value="`+nextDay+`T00:00"`) {
+		t.Fatalf("expected default end_at in body, got %q", body)
 	}
 	if !strings.Contains(body, "Last 7 Days") {
 		t.Fatalf("expected Last 7 Days selector label in body, got %q", body)
@@ -407,11 +498,11 @@ func TestHandleFailurePatternsPageWeekQueryUsesFullWeekWindow(t *testing.T) {
 		t.Fatalf("unexpected status code: got=%d want=%d body=%s", got, want, recorder.Body.String())
 	}
 	body := recorder.Body.String()
-	if !strings.Contains(body, `name="start_date" value="2026-03-16"`) {
-		t.Fatalf("expected default start_date in body, got %q", body)
+	if !strings.Contains(body, `name="start_at" value="2026-03-16T00:00"`) {
+		t.Fatalf("expected default start_at in body, got %q", body)
 	}
-	if !strings.Contains(body, `name="end_date" value="2026-03-22"`) {
-		t.Fatalf("expected default end_date in body, got %q", body)
+	if !strings.Contains(body, `name="end_at" value="2026-03-23T00:00"`) {
+		t.Fatalf("expected default end_at in body, got %q", body)
 	}
 	if !strings.Contains(body, "Weekly: Mar 16 - Mar 22") {
 		t.Fatalf("expected weekly time selector label in body, got %q", body)

@@ -257,6 +257,8 @@ type TimeSelectorOptions struct {
 	ShowRangeInputs bool
 	RangeStartDate  string
 	RangeEndDate    string
+	RangeStartAt    string
+	RangeEndAt      string
 	ShowDateInput   bool
 	DateValue       string
 	AutoSubmit      bool
@@ -565,16 +567,33 @@ func renderChromeTimeControls(options ReportChromeOptions) string {
 	}
 	if timeSelector.ShowRangeInputs {
 		b.WriteString("              <div class=\"time-selector-fields\">\n")
-		b.WriteString("                <span class=\"time-selector-fields-title\">Custom range</span>\n")
+		title := "Custom range"
+		if strings.TrimSpace(timeSelector.RangeStartAt) != "" || strings.TrimSpace(timeSelector.RangeEndAt) != "" {
+			title = "Custom time window"
+		}
+		b.WriteString("                <span class=\"time-selector-fields-title\">")
+		b.WriteString(html.EscapeString(title))
+		b.WriteString("</span>\n")
 		b.WriteString("                <div class=\"time-selector-fields-grid\">\n")
-		b.WriteString(fmt.Sprintf(
-			"                  <label>Start date<input type=\"date\" name=\"start_date\" value=\"%s\" required title=\"Start date (UTC)\" /></label>\n",
-			html.EscapeString(strings.TrimSpace(timeSelector.RangeStartDate)),
-		))
-		b.WriteString(fmt.Sprintf(
-			"                  <label>End date<input type=\"date\" name=\"end_date\" value=\"%s\" required title=\"End date (UTC)\" /></label>\n",
-			html.EscapeString(strings.TrimSpace(timeSelector.RangeEndDate)),
-		))
+		if strings.TrimSpace(timeSelector.RangeStartAt) != "" || strings.TrimSpace(timeSelector.RangeEndAt) != "" {
+			b.WriteString(fmt.Sprintf(
+				"                  <label>Start time<input type=\"datetime-local\" name=\"start_at\" value=\"%s\" step=\"1\" required title=\"Start time (UTC)\" /></label>\n",
+				html.EscapeString(strings.TrimSpace(timeSelector.RangeStartAt)),
+			))
+			b.WriteString(fmt.Sprintf(
+				"                  <label>End time<input type=\"datetime-local\" name=\"end_at\" value=\"%s\" step=\"1\" required title=\"End time (UTC, exclusive)\" /></label>\n",
+				html.EscapeString(strings.TrimSpace(timeSelector.RangeEndAt)),
+			))
+		} else {
+			b.WriteString(fmt.Sprintf(
+				"                  <label>Start date<input type=\"date\" name=\"start_date\" value=\"%s\" required title=\"Start date (UTC)\" /></label>\n",
+				html.EscapeString(strings.TrimSpace(timeSelector.RangeStartDate)),
+			))
+			b.WriteString(fmt.Sprintf(
+				"                  <label>End date<input type=\"date\" name=\"end_date\" value=\"%s\" required title=\"End date (UTC)\" /></label>\n",
+				html.EscapeString(strings.TrimSpace(timeSelector.RangeEndDate)),
+			))
+		}
 		b.WriteString("                </div>\n")
 		b.WriteString("              </div>\n")
 	}
@@ -812,6 +831,8 @@ func normalizedTimeSelectorOptions(options TimeSelectorOptions) TimeSelectorOpti
 	options.NextHref = strings.TrimSpace(options.NextHref)
 	options.RangeStartDate = strings.TrimSpace(options.RangeStartDate)
 	options.RangeEndDate = strings.TrimSpace(options.RangeEndDate)
+	options.RangeStartAt = strings.TrimSpace(options.RangeStartAt)
+	options.RangeEndAt = strings.TrimSpace(options.RangeEndAt)
 	options.DateValue = strings.TrimSpace(options.DateValue)
 	filteredLinks := make([]ChromeLink, 0, len(options.MenuLinks))
 	for _, link := range options.MenuLinks {

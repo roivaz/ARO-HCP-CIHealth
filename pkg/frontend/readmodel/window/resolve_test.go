@@ -3,11 +3,67 @@ package window_test
 import (
 	"context"
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	readmodelwindow "ci-failure-atlas/pkg/frontend/readmodel/window"
 )
+
+type stubWeekWindowResolver struct{}
+
+func (stubWeekWindowResolver) ResolveWeekWindow(context.Context, string, time.Time) (readmodelwindow.WeekWindow, error) {
+	return readmodelwindow.WeekWindow{CurrentWeek: "2026-03-16"}, nil
+}
+
+func TestResolveSupportsExactTimestampWindow(t *testing.T) {
+	t.Parallel()
+
+	scope, err := readmodelwindow.Resolve(context.Background(), stubWeekWindowResolver{}, readmodelwindow.Request{
+		StartAt: "2026-03-16T23:30",
+		EndAt:   "2026-03-17T00:30",
+	})
+	if err != nil {
+		t.Fatalf("resolve exact window: %v", err)
+	}
+	if !scope.HasExactBounds {
+		t.Fatalf("expected exact bounds flag to be set")
+	}
+	if got, want := scope.StartAt, "2026-03-16T23:30:00Z"; got != want {
+		t.Fatalf("unexpected normalized start_at: got=%q want=%q", got, want)
+	}
+	if got, want := scope.EndAt, "2026-03-17T00:30:00Z"; got != want {
+		t.Fatalf("unexpected normalized end_at: got=%q want=%q", got, want)
+	}
+	if got, want := scope.StartDate, "2026-03-16"; got != want {
+		t.Fatalf("unexpected derived start date: got=%q want=%q", got, want)
+	}
+	if got, want := scope.EndDate, "2026-03-17"; got != want {
+		t.Fatalf("unexpected derived end date: got=%q want=%q", got, want)
+	}
+	wantDates := []string{"2026-03-16", "2026-03-17"}
+	if !reflect.DeepEqual(scope.DateLabels, wantDates) {
+		t.Fatalf("unexpected metric date labels: got=%v want=%v", scope.DateLabels, wantDates)
+	}
+}
+
+func TestResolveRejectsMixedExactAndDateBounds(t *testing.T) {
+	t.Parallel()
+
+	_, err := readmodelwindow.Resolve(context.Background(), stubWeekWindowResolver{}, readmodelwindow.Request{
+		StartAt:   "2026-03-16T08:30",
+		EndAt:     "2026-03-16T12:30",
+		StartDate: "2026-03-16",
+		EndDate:   "2026-03-16",
+	})
+	if err == nil {
+		t.Fatalf("expected mixed exact/date bounds to fail")
+	}
+	if !strings.Contains(err.Error(), "start_at/end_at cannot be combined") {
+		t.Fatalf("unexpected mixed-bound error: %v", err)
+	}
+}
 
 type unexpectedWeekResolver struct{}
 

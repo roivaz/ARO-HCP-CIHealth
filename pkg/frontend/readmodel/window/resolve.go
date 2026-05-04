@@ -18,10 +18,19 @@ func Resolve(ctx context.Context, resolver WeekWindowResolver, request Request) 
 
 	startDate := strings.TrimSpace(request.StartDate)
 	endDate := strings.TrimSpace(request.EndDate)
+	startAt := strings.TrimSpace(request.StartAt)
+	endAt := strings.TrimSpace(request.EndAt)
 	week := strings.TrimSpace(request.Week)
 	date := strings.TrimSpace(request.Date)
 
 	switch {
+	case startAt != "" || endAt != "":
+		if startAt == "" || endAt == "" {
+			return Scope{}, fmt.Errorf("start_at and end_at must both be set")
+		}
+		if startDate != "" || endDate != "" || week != "" || date != "" {
+			return Scope{}, fmt.Errorf("start_at/end_at cannot be combined with start_date, end_date, date, or week")
+		}
 	case date != "":
 		startDate = date
 		endDate = date
@@ -68,32 +77,66 @@ func Resolve(ctx context.Context, resolver WeekWindowResolver, request Request) 
 		}
 	}
 
-	startLabel, startValue, err := NormalizeDateLabel(startDate)
-	if err != nil {
-		return Scope{}, fmt.Errorf("invalid start_date: %w", err)
-	}
-	endLabel, endValue, err := NormalizeDateLabel(endDate)
-	if err != nil {
-		return Scope{}, fmt.Errorf("invalid end_date: %w", err)
-	}
-	if endValue.Before(startValue) {
-		return Scope{}, fmt.Errorf("end_date %s must be on or after start_date %s", endLabel, startLabel)
-	}
+	var (
+		startLabel     string
+		endLabel       string
+		startAtLabel   string
+		endAtLabel     string
+		startTime      time.Time
+		endTime        time.Time
+		hasExactBounds bool
+		err            error
+	)
 
-	startTime := time.Date(startValue.Year(), startValue.Month(), startValue.Day(), 0, 0, 0, 0, time.UTC)
-	endInclusive := time.Date(endValue.Year(), endValue.Month(), endValue.Day(), 0, 0, 0, 0, time.UTC)
-	endTime := endInclusive.AddDate(0, 0, 1).UTC()
+	if startAt != "" || endAt != "" {
+		startAtLabel, startTime, err = NormalizeTimestampLabel("start_at", startAt)
+		if err != nil {
+			return Scope{}, fmt.Errorf("invalid start_at: %w", err)
+		}
+		endAtLabel, endTime, err = NormalizeTimestampLabel("end_at", endAt)
+		if err != nil {
+			return Scope{}, fmt.Errorf("invalid end_at: %w", err)
+		}
+		if !startTime.Before(endTime) {
+			return Scope{}, fmt.Errorf("end_at %s must be after start_at %s", endAtLabel, startAtLabel)
+		}
+		startLabel = startTime.UTC().Format("2006-01-02")
+		endLabel = endTime.UTC().Add(-time.Nanosecond).Format("2006-01-02")
+		hasExactBounds = true
+	} else {
+		var startValue time.Time
+		var endValue time.Time
+		startLabel, startValue, err = NormalizeDateLabel(startDate)
+		if err != nil {
+			return Scope{}, fmt.Errorf("invalid start_date: %w", err)
+		}
+		endLabel, endValue, err = NormalizeDateLabel(endDate)
+		if err != nil {
+			return Scope{}, fmt.Errorf("invalid end_date: %w", err)
+		}
+		if endValue.Before(startValue) {
+			return Scope{}, fmt.Errorf("end_date %s must be on or after start_date %s", endLabel, startLabel)
+		}
+		startTime = time.Date(startValue.Year(), startValue.Month(), startValue.Day(), 0, 0, 0, 0, time.UTC)
+		endInclusive := time.Date(endValue.Year(), endValue.Month(), endValue.Day(), 0, 0, 0, 0, time.UTC)
+		endTime = endInclusive.AddDate(0, 0, 1).UTC()
+		startAtLabel = startTime.Format(time.RFC3339)
+		endAtLabel = endTime.Format(time.RFC3339)
+	}
 	anchorWeek := ""
-	if weekStart := WeekStartForDate(endInclusive); !weekStart.IsZero() {
+	if weekStart := WeekStartForDate(endTime.Add(-time.Nanosecond)); !weekStart.IsZero() {
 		anchorWeek = weekStart.Format("2006-01-02")
 	}
 
 	return Scope{
-		StartDate:  startLabel,
-		EndDate:    endLabel,
-		StartTime:  startTime,
-		EndTime:    endTime,
-		DateLabels: MetricDateLabelsFromWindow(startTime, endTime),
-		AnchorWeek: anchorWeek,
+		StartDate:      startLabel,
+		EndDate:        endLabel,
+		StartAt:        startAtLabel,
+		EndAt:          endAtLabel,
+		StartTime:      startTime,
+		EndTime:        endTime,
+		DateLabels:     MetricDateLabelsFromWindow(startTime, endTime),
+		AnchorWeek:     anchorWeek,
+		HasExactBounds: hasExactBounds,
 	}, nil
 }

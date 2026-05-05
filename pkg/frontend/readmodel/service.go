@@ -31,12 +31,14 @@ type Options struct {
 	HistoryHorizonWeeks   int
 	FailurePatternsEngine string
 	PostgresPool          *pgxpool.Pool
+	PreparedWindowCache   PreparedWindowCacheOptions
 }
 
 type Service struct {
-	defaultWeek  string
-	historyWeeks int
-	postgresPool *pgxpool.Pool
+	defaultWeek         string
+	historyWeeks        int
+	postgresPool        *pgxpool.Pool
+	preparedWindowCache *preparedWindowCacheManager
 }
 
 func New(opts Options) (*Service, error) {
@@ -54,10 +56,15 @@ func New(opts Options) (*Service, error) {
 	if _, err := normalizeFailurePatternsEngine(opts.FailurePatternsEngine); err != nil {
 		return nil, err
 	}
+	preparedWindowCache, err := newPreparedWindowCacheManager(opts.PreparedWindowCache)
+	if err != nil {
+		return nil, err
+	}
 	return &Service{
-		defaultWeek:  defaultWeek,
-		historyWeeks: historyWeeks,
-		postgresPool: opts.PostgresPool,
+		defaultWeek:         defaultWeek,
+		historyWeeks:        historyWeeks,
+		postgresPool:        opts.PostgresPool,
+		preparedWindowCache: preparedWindowCache,
 	}, nil
 }
 

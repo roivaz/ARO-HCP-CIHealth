@@ -108,6 +108,7 @@ type DayBuilderDeps interface {
 	readmodelwindow.WeekWindowResolver
 	OpenStore() (storecontracts.Store, error)
 	HistoryHorizonWeeks() int
+	PrepareFailurePatternWindow(context.Context, failurepatternwindow.PrepareOptions) (failurepatternwindow.PreparedWindow, error)
 	BuildHistoryResolver(context.Context, time.Time) (failurepatterns.PresenceResolver, error)
 }
 
@@ -124,14 +125,6 @@ func BuildDay(ctx context.Context, deps DayBuilderDeps, query RunLogDayQuery) (R
 		return RunLogDayData{}, err
 	}
 
-	store, err := deps.OpenStore()
-	if err != nil {
-		return RunLogDayData{}, err
-	}
-	defer func() {
-		_ = store.Close()
-	}()
-
 	targetEnvironments := readmodelmodel.NormalizeStringSlice(query.Environments)
 	if len(targetEnvironments) == 0 {
 		targetEnvironments = readmodelmodel.NormalizeStringSlice(sourceoptions.SupportedEnvironments())
@@ -146,7 +139,7 @@ func BuildDay(ctx context.Context, deps DayBuilderDeps, query RunLogDayQuery) (R
 		prepareStart = historyWindow.LookbackStart
 	}
 
-	preparedWindow, err := failurepatternwindow.Prepare(ctx, store, failurepatternwindow.PrepareOptions{
+	preparedWindow, err := deps.PrepareFailurePatternWindow(ctx, failurepatternwindow.PrepareOptions{
 		Environments: targetEnvironments,
 		StartTime:    prepareStart,
 		EndTime:      window.EndTime,

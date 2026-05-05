@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"ci-failure-atlas/pkg/frontend"
+	frontreadmodel "ci-failure-atlas/pkg/frontend/readmodel"
 	postgresoptions "ci-failure-atlas/pkg/store/postgres/options"
 )
 
@@ -20,6 +21,10 @@ func NewAppCommand() (*cobra.Command, error) {
 	defaultWeek := ""
 	historyWeeks := 4
 	failurePatternsEngine := "inline"
+	preparedWindowCacheEnabled := true
+	preparedWindowCacheEnvelopeDuration := frontreadmodel.DefaultPreparedWindowCacheEnvelopeDuration
+	preparedWindowCacheRefreshInterval := frontreadmodel.DefaultPreparedWindowCacheRefreshInterval
+	preparedWindowCacheTTL := frontreadmodel.DefaultPreparedWindowCacheTTL
 	servePostgresRaw := postgresoptions.DefaultCLIOptions()
 
 	cmd := &cobra.Command{
@@ -35,10 +40,17 @@ func NewAppCommand() (*cobra.Command, error) {
 			defer postgresCompleted.Cleanup()
 
 			handler, err := frontend.NewHandler(frontend.HandlerOptions{
+				Context:               cmd.Context(),
 				DefaultWeek:           defaultWeek,
 				HistoryHorizonWeeks:   historyWeeks,
 				FailurePatternsEngine: failurePatternsEngine,
 				PostgresPool:          postgresCompleted.Connection,
+				PreparedWindowCache: frontreadmodel.PreparedWindowCacheOptions{
+					Enabled:          preparedWindowCacheEnabled,
+					EnvelopeDuration: preparedWindowCacheEnvelopeDuration,
+					RefreshInterval:  preparedWindowCacheRefreshInterval,
+					TTL:              preparedWindowCacheTTL,
+				},
 			})
 			if err != nil {
 				return err
@@ -79,6 +91,10 @@ func NewAppCommand() (*cobra.Command, error) {
 	cmd.Flags().StringVar(&defaultWeek, "week", defaultWeek, "default week to open when no week query is provided (YYYY-MM-DD)")
 	cmd.Flags().IntVar(&historyWeeks, "history.weeks", historyWeeks, "number of prior calendar weeks used for failure-pattern history scoring")
 	cmd.Flags().StringVar(&failurePatternsEngine, "app.failure-patterns-engine", failurePatternsEngine, "failure-patterns engine to use (inline only)")
+	cmd.Flags().BoolVar(&preparedWindowCacheEnabled, "app.failure-patterns-cache", preparedWindowCacheEnabled, "enable the app-local prepared failure-pattern window cache")
+	cmd.Flags().DurationVar(&preparedWindowCacheEnvelopeDuration, "app.failure-patterns-cache-window", preparedWindowCacheEnvelopeDuration, "prepared window cache envelope duration (for example 840h for 35 days)")
+	cmd.Flags().DurationVar(&preparedWindowCacheRefreshInterval, "app.failure-patterns-cache-refresh", preparedWindowCacheRefreshInterval, "refresh interval for the prepared window cache")
+	cmd.Flags().DurationVar(&preparedWindowCacheTTL, "app.failure-patterns-cache-ttl", preparedWindowCacheTTL, "maximum age for serving prepared window cache entries before on-demand fallback")
 	if err := postgresoptions.BindOptions(servePostgresRaw, cmd); err != nil {
 		return nil, err
 	}

@@ -106,6 +106,7 @@ type WindowBuilderDeps interface {
 	readmodelwindow.WeekWindowResolver
 	OpenStore() (storecontracts.Store, error)
 	HistoryHorizonWeeks() int
+	PrepareFailurePatternWindow(context.Context, failurepatternwindow.PrepareOptions) (failurepatternwindow.PreparedWindow, error)
 	BuildHistoryResolver(context.Context, time.Time) (failurepatterns.PresenceResolver, error)
 }
 
@@ -166,7 +167,7 @@ func buildFailurePatternsInline(
 	}
 
 	prepareStartedAt := time.Now()
-	preparedWindow, err := failurepatternwindow.Prepare(ctx, factsStore, failurepatternwindow.PrepareOptions{
+	preparedWindow, err := deps.PrepareFailurePatternWindow(ctx, failurepatternwindow.PrepareOptions{
 		Environments: targetEnvironments,
 		StartTime:    prepareStart,
 		EndTime:      scope.EndTime,

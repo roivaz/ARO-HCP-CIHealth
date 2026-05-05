@@ -64,3 +64,44 @@ func TestNewAppCommandDoesNotExposeExportSiteSubcommand(t *testing.T) {
 		t.Fatalf("did not expect export-site subcommand to be present")
 	}
 }
+
+func TestNewAppCommandDefaultsPreparedWindowCacheFlags(t *testing.T) {
+	t.Parallel()
+
+	cmd, err := NewAppCommand()
+	if err != nil {
+		t.Fatalf("create app command: %v", err)
+	}
+
+	cacheEnabledFlag := cmd.Flags().Lookup("app.failure-patterns-cache")
+	if cacheEnabledFlag == nil {
+		t.Fatalf("expected app.failure-patterns-cache flag")
+	}
+	if got, want := cacheEnabledFlag.DefValue, "true"; got != want {
+		t.Fatalf("unexpected cache enabled default: got=%q want=%q", got, want)
+	}
+
+	cacheWindowFlag := cmd.Flags().Lookup("app.failure-patterns-cache-window")
+	if cacheWindowFlag == nil {
+		t.Fatalf("expected app.failure-patterns-cache-window flag")
+	}
+	if got, want := cacheWindowFlag.DefValue, "840h0m0s"; got != want {
+		t.Fatalf("unexpected cache window default: got=%q want=%q", got, want)
+	}
+
+	cacheRefreshFlag := cmd.Flags().Lookup("app.failure-patterns-cache-refresh")
+	if cacheRefreshFlag == nil {
+		t.Fatalf("expected app.failure-patterns-cache-refresh flag")
+	}
+	if got, want := cacheRefreshFlag.DefValue, "10m0s"; got != want {
+		t.Fatalf("unexpected cache refresh default: got=%q want=%q", got, want)
+	}
+
+	cacheTTLFlag := cmd.Flags().Lookup("app.failure-patterns-cache-ttl")
+	if cacheTTLFlag == nil {
+		t.Fatalf("expected app.failure-patterns-cache-ttl flag")
+	}
+	if got, want := cacheTTLFlag.DefValue, "12m0s"; got != want {
+		t.Fatalf("unexpected cache ttl default: got=%q want=%q", got, want)
+	}
+}

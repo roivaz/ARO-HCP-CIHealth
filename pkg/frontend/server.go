@@ -26,10 +26,12 @@ import (
 )
 
 type HandlerOptions struct {
+	Context               context.Context
 	DefaultWeek           string
 	HistoryHorizonWeeks   int
 	FailurePatternsEngine string
 	PostgresPool          *pgxpool.Pool
+	PreparedWindowCache   frontservice.PreparedWindowCacheOptions
 }
 
 type handler struct {
@@ -51,10 +53,12 @@ func NewHandler(opts HandlerOptions) (http.Handler, error) {
 		HistoryHorizonWeeks:   opts.HistoryHorizonWeeks,
 		FailurePatternsEngine: opts.FailurePatternsEngine,
 		PostgresPool:          opts.PostgresPool,
+		PreparedWindowCache:   opts.PreparedWindowCache,
 	})
 	if err != nil {
 		return nil, err
 	}
+	service.StartPreparedWindowCache(opts.Context)
 	h := &handler{
 		service:      service,
 		postgresPool: opts.PostgresPool,

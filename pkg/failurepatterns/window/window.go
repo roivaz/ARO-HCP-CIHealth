@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -133,6 +134,7 @@ func Prepare(
 	store storecontracts.Store,
 	opts PrepareOptions,
 ) (PreparedWindow, error) {
+	prepareStartedAt := time.Now()
 	if store == nil {
 		return PreparedWindow{}, fmt.Errorf("store is required")
 	}
@@ -157,6 +159,13 @@ func Prepare(
 		EndTime:      endTime,
 	})
 	if err != nil {
+		log.Printf(
+			"failure-pattern-window prepare status=error window=%s envs=%s stage=load duration=%s err=%v",
+			failurePatternWindowTimingLabel(startTime, endTime),
+			failurePatternWindowTimingEnvironments(normalizedEnvironments),
+			time.Since(loadStarted),
+			err,
+		)
 		return PreparedWindow{}, err
 	}
 	prepared.factsByEnvironment = factsByEnvironment
@@ -165,6 +174,16 @@ func Prepare(
 	extractStarted := time.Now()
 	prepared.extractedRows = buildExtractedFailureRows(factsByEnvironment, nil)
 	prepared.stageTimings.Extract = time.Since(extractStarted)
+	logFailurePatternPrepareSummary(
+		startTime,
+		endTime,
+		normalizedEnvironments,
+		factsByEnvironment,
+		len(prepared.extractedRows),
+		prepared.stageTimings.Load,
+		prepared.stageTimings.Extract,
+		time.Since(prepareStartedAt),
+	)
 
 	return prepared, nil
 }
@@ -197,6 +216,7 @@ func (prepared PreparedWindow) ResultForWindow(
 	endTime time.Time,
 	includeReview bool,
 ) (FailurePatternWindowResult, error) {
+	resultStartedAt := time.Now()
 	requestStart := startTime.UTC()
 	requestEnd := endTime.UTC()
 	if requestStart.IsZero() || requestEnd.IsZero() || !requestStart.Before(requestEnd) {
@@ -233,8 +253,95 @@ func (prepared PreparedWindow) ResultForWindow(
 		&result.Diagnostics,
 	)
 	result.Diagnostics.StageTimings.Aggregate = time.Since(aggregateStarted)
+	logFailurePatternResultSummary(
+		requestStart,
+		requestEnd,
+		prepared.environments,
+		includeReview,
+		result.Diagnostics,
+		len(result.FailurePatterns),
+		len(result.ReviewItems),
+		time.Since(resultStartedAt),
+	)
 
 	return result, nil
+}
+
+func logFailurePatternPrepareSummary(
+	startTime time.Time,
+	endTime time.Time,
+	environments []string,
+	factsByEnvironment map[string]EnvironmentFacts,
+	extractedRows int,
+	loadDuration time.Duration,
+	extractDuration time.Duration,
+	totalDuration time.Duration,
+) {
+	runsLoaded, rawFailuresLoaded := countLoadedFacts(factsByEnvironment, environments)
+	log.Printf(
+		"failure-pattern-window prepare status=success window=%s envs=%s runs=%d raw_failures=%d extracted_rows=%d load=%s extract=%s total=%s",
+		failurePatternWindowTimingLabel(startTime, endTime),
+		failurePatternWindowTimingEnvironments(environments),
+		runsLoaded,
+		rawFailuresLoaded,
+		extractedRows,
+		loadDuration,
+		extractDuration,
+		totalDuration,
+	)
+}
+
+func logFailurePatternResultSummary(
+	startTime time.Time,
+	endTime time.Time,
+	environments []string,
+	includeReview bool,
+	diagnostics FailurePatternWindowDiagnostics,
+	failurePatterns int,
+	reviewItems int,
+	totalDuration time.Duration,
+) {
+	log.Printf(
+		"failure-pattern-window result status=success window=%s envs=%s include_review=%t runs=%d raw_failures=%d extracted_rows=%d failure_patterns=%d review_items=%d load=%s extract=%s aggregate=%s total=%s",
+		failurePatternWindowTimingLabel(startTime, endTime),
+		failurePatternWindowTimingEnvironments(environments),
+		includeReview,
+		diagnostics.RunsLoaded,
+		diagnostics.RawFailuresLoaded,
+		diagnostics.RowsExtracted,
+		failurePatterns,
+		reviewItems,
+		diagnostics.StageTimings.Load,
+		diagnostics.StageTimings.Extract,
+		diagnostics.StageTimings.Aggregate,
+		totalDuration,
+	)
+}
+
+func failurePatternWindowTimingLabel(startTime time.Time, endTime time.Time) string {
+	return failurePatternWindowTimingTimestamp(startTime) + ".." + failurePatternWindowTimingTimestamp(endTime)
+}
+
+func failurePatternWindowTimingTimestamp(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339)
+}
+
+func failurePatternWindowTimingEnvironments(environments []string) string {
+	return strings.Join(environments, ",")
+}
+
+func countLoadedFacts(factsByEnvironment map[string]EnvironmentFacts, environments []string) (int, int) {
+	runsLoaded := 0
+	rawFailuresLoaded := 0
+	for _, environment := range environments {
+		facts := factsByEnvironment[environment]
+		runsLoaded += len(facts.RunsByURL)
+		rawFailuresLoaded += len(facts.RawFailures)
+	}
+	return runsLoaded, rawFailuresLoaded
 }
 
 func LoadDateScopedFacts(

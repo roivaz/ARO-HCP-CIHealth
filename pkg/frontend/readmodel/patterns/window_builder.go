@@ -3,6 +3,7 @@ package patterns
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"time"
@@ -134,6 +135,7 @@ func buildFailurePatternsInline(
 	scope readmodelwindow.Scope,
 	requestedEnvironments []string,
 ) (FailurePatternsData, error) {
+	requestStartedAt := time.Now()
 	targetEnvironments := resolveFailurePatternsTargetEnvironments(requestedEnvironments)
 
 	factsStore, err := deps.OpenStore()
@@ -150,30 +152,71 @@ func buildFailurePatternsInline(
 		prepareStart = horizonStart
 	}
 
+	prepareStartedAt := time.Now()
 	preparedWindow, err := failurepatternwindow.Prepare(ctx, factsStore, failurepatternwindow.PrepareOptions{
 		Environments: targetEnvironments,
 		StartTime:    prepareStart,
 		EndTime:      scope.EndTime,
 	})
+	prepareDuration := time.Since(prepareStartedAt)
 	if err != nil {
+		logFailurePatternsStageTiming(
+			scope,
+			targetEnvironments,
+			prepareStart,
+			"prepare",
+			prepareDuration,
+			err,
+		)
 		return FailurePatternsData{}, fmt.Errorf("prepare inline failure patterns for window %s..%s: %w", scope.StartDate, scope.EndDate, err)
 	}
 
+	currentWindowStartedAt := time.Now()
 	currentResult, err := preparedWindow.ResultForWindow(scope.StartTime, scope.EndTime, false)
+	currentWindowDuration := time.Since(currentWindowStartedAt)
 	if err != nil {
+		logFailurePatternsStageTiming(
+			scope,
+			targetEnvironments,
+			prepareStart,
+			"current_window",
+			currentWindowDuration,
+			err,
+		)
 		return FailurePatternsData{}, fmt.Errorf("compute inline failure patterns for window %s..%s: %w", scope.StartDate, scope.EndDate, err)
 	}
 
 	horizonResult := currentResult
+	horizonWindowDuration := time.Duration(0)
 	if prepareStart.Before(scope.StartTime) {
+		horizonWindowStartedAt := time.Now()
 		horizonResult, err = preparedWindow.ResultForWindow(prepareStart, scope.EndTime, false)
+		horizonWindowDuration = time.Since(horizonWindowStartedAt)
 		if err != nil {
+			logFailurePatternsStageTiming(
+				scope,
+				targetEnvironments,
+				prepareStart,
+				"signal_horizon",
+				horizonWindowDuration,
+				err,
+			)
 			return FailurePatternsData{}, fmt.Errorf("compute inline signal horizon for window %s..%s: %w", scope.StartDate, scope.EndDate, err)
 		}
 	}
 
+	historyResolverStartedAt := time.Now()
 	historyResolver, err := deps.BuildHistoryResolver(ctx, scope.EndTime)
+	historyResolverDuration := time.Since(historyResolverStartedAt)
 	if err != nil {
+		logFailurePatternsStageTiming(
+			scope,
+			targetEnvironments,
+			prepareStart,
+			"history_resolver",
+			historyResolverDuration,
+			err,
+		)
 		return FailurePatternsData{}, fmt.Errorf("build signal-horizon history resolver: %w", err)
 	}
 
@@ -249,6 +292,16 @@ func buildFailurePatternsInline(
 			Rows:        rows,
 		})
 	}
+	logFailurePatternsTimingSummary(
+		scope,
+		targetEnvironments,
+		prepareStart,
+		prepareDuration,
+		currentWindowDuration,
+		horizonWindowDuration,
+		historyResolverDuration,
+		time.Since(requestStartedAt),
+	)
 
 	return FailurePatternsData{
 		Meta: FailurePatternsMeta{
@@ -263,6 +316,64 @@ func buildFailurePatternsInline(
 		},
 		Environments: environments,
 	}, nil
+}
+
+func logFailurePatternsStageTiming(
+	scope readmodelwindow.Scope,
+	environments []string,
+	prepareStart time.Time,
+	stage string,
+	duration time.Duration,
+	err error,
+) {
+	log.Printf(
+		"failure-patterns timings stage=%s status=error window=%s prepare_start=%s exact=%t envs=%s duration=%s err=%v",
+		strings.TrimSpace(stage),
+		failurePatternsTimingWindowLabel(scope),
+		failurePatternsTimingTimestampLabel(prepareStart),
+		scope.HasExactBounds,
+		strings.Join(environments, ","),
+		duration,
+		err,
+	)
+}
+
+func logFailurePatternsTimingSummary(
+	scope readmodelwindow.Scope,
+	environments []string,
+	prepareStart time.Time,
+	prepareDuration time.Duration,
+	currentWindowDuration time.Duration,
+	horizonWindowDuration time.Duration,
+	historyResolverDuration time.Duration,
+	totalDuration time.Duration,
+) {
+	log.Printf(
+		"failure-patterns timings stage=summary window=%s prepare_start=%s exact=%t envs=%s prepare=%s current_window=%s signal_horizon=%s history_resolver=%s total=%s",
+		failurePatternsTimingWindowLabel(scope),
+		failurePatternsTimingTimestampLabel(prepareStart),
+		scope.HasExactBounds,
+		strings.Join(environments, ","),
+		prepareDuration,
+		currentWindowDuration,
+		horizonWindowDuration,
+		historyResolverDuration,
+		totalDuration,
+	)
+}
+
+func failurePatternsTimingWindowLabel(scope readmodelwindow.Scope) string {
+	if strings.TrimSpace(scope.StartAt) != "" || strings.TrimSpace(scope.EndAt) != "" {
+		return strings.TrimSpace(scope.StartAt) + ".." + strings.TrimSpace(scope.EndAt)
+	}
+	return strings.TrimSpace(scope.StartDate) + ".." + strings.TrimSpace(scope.EndDate)
+}
+
+func failurePatternsTimingTimestampLabel(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339)
 }
 
 func resolveFailurePatternsTargetEnvironments(requestedEnvironments []string) []string {

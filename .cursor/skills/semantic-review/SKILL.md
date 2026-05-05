@@ -1,18 +1,19 @@
 ---
 name: semantic-review
 description: >-
-  Review semantic materialization quality in CI Failure Atlas by querying the
-  local failure-pattern and review-signals APIs, identifying overmerged,
+  Review failure-pattern quality in CI Failure Atlas by querying the local
+  failure-pattern and review-signals window APIs, identifying overmerged,
   undermerged, and low-quality failure patterns, and proposing concrete engine
   improvements. Use when the user asks to review failure patterns, check
-  materialization quality, audit semantic output, or run a review pass.
+  extraction quality, audit semantic output, or run a review pass.
 ---
 
-# Semantic Materialization Review
+# Failure Pattern Review
 
-Review the currently materialized failure patterns from the local app, identify
-semantic quality problems, and propose concrete improvements to the semantic
-workflow. Work read-only unless the user explicitly asks for implementation.
+Review the currently extracted failure patterns from the local app, identify
+semantic quality problems, and propose concrete improvements to the inline
+failure-pattern workflow. Work read-only unless the user explicitly asks for
+implementation.
 
 ## Review Categories
 
@@ -22,26 +23,27 @@ workflow. Work read-only unless the user explicitly asks for implementation.
 
 ## Workflow
 
-### Step 1 — Determine the target week
+### Step 1 — Determine the target window
 
-- Default to the current UTC week unless the user specifies one.
-- Compute Monday-starting UTC week boundaries.
-- The user may ask for a specific week date or "go back N weeks."
+- Default to the last 7 UTC calendar days unless the user specifies a window.
+- If the user asks for a specific week or "go back N weeks," convert that into
+  explicit `start_date` / `end_date` bounds (Monday-starting UTC weeks).
+- The user may also ask for an explicit date range.
 
 ### Step 2 — Fetch failure patterns
 
 ```
 Base URL: http://127.0.0.1:8082
-GET /api/failure-patterns/window?start_date=<monday>&end_date=<sunday>
+GET /api/failure-patterns/window?start_date=<start>&end_date=<end>
 ```
 
 If the response has zero rows across all environments, step back one week at a
-time (up to 8 attempts) until a non-empty week is found.
+time (up to 8 attempts) until a non-empty window is found.
 
 ### Step 3 — Fetch review signals
 
 ```
-GET /api/review/signals/week?week=<semantic-week>
+GET /api/review/signals/window?start_date=<start>&end_date=<end>
 ```
 
 Treat signals as a **prioritization input**, not ground truth. Start with
@@ -51,14 +53,10 @@ Key signal reasons and what they mean:
 
 | Reason | What it detects |
 |--------|-----------------|
-| `likely_undermerged` | Near-duplicate canonicals across clusters (≥80% token overlap) |
-| `high_sample_variance` | ≥3 distinct Azure ERROR CODEs within one cluster |
-| `ambiguous_provider_merge` | Multiple Azure providers merged under one generic canonical |
-| `low_confidence_evidence` | Assignment-level confidence was low |
-| `placeholder_dominated_canonical` | >50% of tokens are placeholders |
-| `short_uninformative_canonical` | <15 chars and generically named |
-| `single_occurrence` | Only one supporting sample |
-| `new_this_week` | Pattern didn't exist in the previous week |
+| `new_pattern` | Pattern is absent from the configured prior-history window |
+| `recurrence` | Pattern existed in prior history but not in the immediately previous equal-length window |
+| `weak_canonical_needs_review` | Pattern canonical is too weak or generic to trust without inspection |
+| `ambiguous_provider_anchor` | Multiple provider anchors were merged into one pattern |
 
 Signals include a `severity` field (`high` / `medium` / `low`).
 
@@ -87,10 +85,9 @@ suspected merge boundaries with real log-level evidence.
 
 When inspecting the engine to understand why a problem occurs:
 
-- `pkg/semantic/engine/phase1` — evidence extraction, canonicalization, classification
-- `pkg/semantic/engine/phase2` — cross-test merge identity
-- `pkg/semantic/workflow` — orchestration
-- `pkg/semantic/query` — data loading
+- `pkg/failurepatterns/extractor` — evidence extraction and canonicalization
+- `pkg/failurepatterns/window` — load/extract/aggregate flow and review-item generation
+- `pkg/failurepatterns/failurepatterns.go` — pattern presence / history helpers
 - `pkg/frontend/readmodel` — review signal computation, API models
 
 ## Finding Template
@@ -104,7 +101,7 @@ For each finding, produce:
 - **Current failure pattern text**
 - **Why it looks wrong**
 - **Evidence**: relevant API fields, representative `full_error_samples`, CI-search observations
-- **Likely pipeline layer**: phase1 extraction, phase2 merge, readmodel, review-signal heuristics
+- **Likely pipeline layer**: extraction, merge identity, readmodel, review-signal heuristics
 - **Recommended improvement**
 - **Suggested regression coverage**
 
@@ -112,7 +109,7 @@ For each finding, produce:
 
 1. Findings ordered by severity (high first).
 2. Short **Improvement plan** grouping recommendations by pipeline layer.
-3. Short **Validation plan** describing how to verify after rematerialization.
+3. Short **Validation plan** describing how to verify after the next app run.
 
 ## Constraints
 

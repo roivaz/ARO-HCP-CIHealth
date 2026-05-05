@@ -9,9 +9,10 @@ import (
 
 	"ci-failure-atlas/pkg/failurepatterns"
 	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
+	failurepatternwindow "ci-failure-atlas/pkg/failurepatterns/window"
 	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
 	readmodelwindow "ci-failure-atlas/pkg/frontend/readmodel/window"
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
+	sourceoptions "ci-failure-atlas/pkg/source/options"
 )
 
 type ReviewSignalReference struct {
@@ -46,75 +47,112 @@ type ReviewSignalRow struct {
 	MatchedFailurePatterns               []ReviewSignalMatchedFailurePattern `json:"matched_failure_patterns,omitempty"`
 }
 
-type ReviewSignalsWeekSnapshot struct {
-	Weeks             []string          `json:"weeks,omitempty"`
-	Week              string            `json:"week"`
-	PreviousWeek      string            `json:"previous_week,omitempty"`
-	NextWeek          string            `json:"next_week,omitempty"`
-	Timezone          string            `json:"timezone"`
+type WindowQuery struct {
+	StartDate   string
+	EndDate     string
+	GeneratedAt time.Time
+}
+
+type WindowData struct {
+	Meta              WindowMeta        `json:"meta"`
 	TotalSignals      int               `json:"total_signals"`
 	SignalsByReason   map[string]int    `json:"signals_by_reason,omitempty"`
 	SignalsBySeverity map[string]int    `json:"signals_by_severity,omitempty"`
 	Rows              []ReviewSignalRow `json:"rows"`
 }
 
-type BuilderDeps interface {
-	OpenStore() (storecontracts.Store, error)
-	BuildHistoryResolver(context.Context, time.Time) (failurepatterns.PresenceResolver, error)
+type WindowMeta struct {
+	StartDate    string   `json:"start_date"`
+	EndDate      string   `json:"end_date"`
+	Timezone     string   `json:"timezone"`
+	GeneratedAt  string   `json:"generated_at"`
+	Environments []string `json:"environments"`
 }
 
-func BuildWeek(
+type BuilderDeps interface {
+	readmodelwindow.WeekWindowResolver
+	HistoryHorizonWeeks() int
+	PrepareFailurePatternWindow(context.Context, failurepatternwindow.PrepareOptions) (failurepatternwindow.PreparedWindow, error)
+}
+
+func BuildWindow(
 	ctx context.Context,
 	deps BuilderDeps,
-	window readmodelwindow.WeekWindow,
-) (ReviewSignalsWeekSnapshot, error) {
+	query WindowQuery,
+) (WindowData, error) {
 	if deps == nil {
-		return ReviewSignalsWeekSnapshot{}, fmt.Errorf("builder dependencies are required")
+		return WindowData{}, fmt.Errorf("builder dependencies are required")
 	}
-	week := strings.TrimSpace(window.CurrentWeek)
-	if week == "" {
-		return ReviewSignalsWeekSnapshot{}, fmt.Errorf("week is required")
-	}
-	store, err := deps.OpenStore()
-	if err != nil {
-		return ReviewSignalsWeekSnapshot{}, fmt.Errorf("open postgres fact store for week %q: %w", week, err)
-	}
-	defer func() {
-		_ = store.Close()
-	}()
-
-	weekStart, weekEnd, err := readmodelwindow.CompatWeekTimeRange(week)
-	if err != nil {
-		return ReviewSignalsWeekSnapshot{}, err
-	}
-	weekData, err := failurepatterns.LoadRange(ctx, store, failurepatterns.LoadRangeOptions{
-		StartTime:     weekStart,
-		EndTime:       weekEnd,
-		IncludeReview: true,
+	scope, err := readmodelwindow.Resolve(ctx, deps, readmodelwindow.Request{
+		StartDate:   query.StartDate,
+		EndDate:     query.EndDate,
+		DefaultMode: readmodelwindow.DefaultRolling,
+		RollingDays: 7,
 	})
 	if err != nil {
-		return ReviewSignalsWeekSnapshot{}, err
+		return WindowData{}, err
 	}
 
-	historyResolver, err := deps.BuildHistoryResolver(ctx, weekEnd)
+	targetEnvironments := reviewTargetEnvironments()
+	windowDuration := scope.EndTime.Sub(scope.StartTime)
+	if windowDuration <= 0 {
+		return WindowData{}, fmt.Errorf("valid review window duration is required")
+	}
+
+	historyWeeks := deps.HistoryHorizonWeeks()
+	if historyWeeks <= 0 {
+		historyWeeks = failurepatterns.DefaultHistoryWeeks
+	}
+	compareStart := scope.StartTime.Add(-windowDuration).UTC()
+	historyStart := scope.StartTime.AddDate(0, 0, -(historyWeeks * 7)).UTC()
+	prepareStart := scope.StartTime
+	if compareStart.Before(prepareStart) {
+		prepareStart = compareStart
+	}
+	if historyStart.Before(prepareStart) {
+		prepareStart = historyStart
+	}
+
+	preparedWindow, err := deps.PrepareFailurePatternWindow(ctx, failurepatternwindow.PrepareOptions{
+		Environments: targetEnvironments,
+		StartTime:    prepareStart,
+		EndTime:      scope.EndTime,
+	})
 	if err != nil {
-		return ReviewSignalsWeekSnapshot{}, fmt.Errorf("build history resolver for review signals: %w", err)
+		return WindowData{}, fmt.Errorf("prepare review signals window %s..%s: %w", scope.StartDate, scope.EndDate, err)
 	}
 
-	sourceClusters := append([]failurepatterncontracts.FailurePatternRecord(nil), weekData.SourceFailurePatterns...)
-	rows := make([]ReviewSignalRow, 0, len(weekData.ReviewItems))
+	currentResult, err := preparedWindow.ResultForWindow(scope.StartTime, scope.EndTime, true)
+	if err != nil {
+		return WindowData{}, fmt.Errorf("compute review signals window %s..%s: %w", scope.StartDate, scope.EndDate, err)
+	}
+	previousResult, err := preparedWindow.ResultForWindow(compareStart, scope.StartTime, false)
+	if err != nil {
+		return WindowData{}, fmt.Errorf("compute previous review comparison window %s..%s: %w", compareStart.Format(time.RFC3339), scope.StartTime.Format(time.RFC3339), err)
+	}
+	historyResult, err := preparedWindow.ResultForWindow(historyStart, scope.StartTime, false)
+	if err != nil {
+		return WindowData{}, fmt.Errorf("compute prior review history window %s..%s: %w", historyStart.Format(time.RFC3339), scope.StartTime.Format(time.RFC3339), err)
+	}
+
+	sourceClusters := append([]failurepatterncontracts.FailurePatternRecord(nil), currentResult.FailurePatterns...)
+	rows := make([]ReviewSignalRow, 0, len(currentResult.ReviewItems))
 	signalsByReason := map[string]int{}
 
-	newPatternRows := crossWeekNewPatternSignals(weekData.SourceFailurePatterns, historyResolver, window.PreviousWeek)
-	for i := range newPatternRows {
-		reason := newPatternRows[i].Reason
+	windowSignalRows := crossWindowPatternSignals(
+		currentResult.FailurePatterns,
+		previousResult.FailurePatterns,
+		historyResult.FailurePatterns,
+	)
+	for i := range windowSignalRows {
+		reason := windowSignalRows[i].Reason
 		if reason != "" {
 			signalsByReason[reason]++
 		}
-		rows = append(rows, newPatternRows[i])
+		rows = append(rows, windowSignalRows[i])
 	}
 
-	for _, item := range weekData.ReviewItems {
+	for _, item := range currentResult.ReviewItems {
 		reason := strings.TrimSpace(item.Reason)
 		if reason != "" {
 			signalsByReason[reason]++
@@ -135,6 +173,7 @@ func BuildWeek(
 			MatchedFailurePatterns:               reviewSignalMatchedFailurePatterns(item, sourceClusters),
 		})
 	}
+
 	sort.Slice(rows, func(i, j int) bool {
 		si := reviewSignalSeverityRank(rows[i].Severity)
 		sj := reviewSignalSeverityRank(rows[j].Severity)
@@ -162,12 +201,19 @@ func BuildWeek(
 		signalsBySeverity[sev]++
 	}
 
-	return ReviewSignalsWeekSnapshot{
-		Weeks:             append([]string(nil), window.Weeks...),
-		Week:              week,
-		PreviousWeek:      window.PreviousWeek,
-		NextWeek:          window.NextWeek,
-		Timezone:          "UTC",
+	generatedAt := query.GeneratedAt
+	if generatedAt.IsZero() {
+		generatedAt = time.Now().UTC()
+	}
+
+	return WindowData{
+		Meta: WindowMeta{
+			StartDate:    scope.StartDate,
+			EndDate:      scope.EndDate,
+			Timezone:     "UTC",
+			GeneratedAt:  generatedAt.UTC().Format(time.RFC3339),
+			Environments: append([]string(nil), targetEnvironments...),
+		},
 		TotalSignals:      len(rows),
 		SignalsByReason:   signalsByReason,
 		SignalsBySeverity: signalsBySeverity,
@@ -191,6 +237,10 @@ func reviewSignalReferences(rows []failurepatterncontracts.ReferenceRecord) []Re
 		})
 	}
 	return out
+}
+
+func reviewTargetEnvironments() []string {
+	return readmodelmodel.NormalizeStringSlice(sourceoptions.SupportedEnvironments())
 }
 
 func reviewSignalMatchedFailurePatterns(
@@ -253,6 +303,24 @@ func reviewSignalMatchedFailurePatterns(
 		return out[i].FailurePatternID < out[j].FailurePatternID
 	})
 	return out
+}
+
+func reviewSignalCurrentPatternMatchedFailurePatterns(
+	pattern failurepatterncontracts.FailurePatternRecord,
+) []ReviewSignalMatchedFailurePattern {
+	environment := readmodelmodel.NormalizeEnvironment(pattern.Environment)
+	failurePatternID := strings.TrimSpace(pattern.Phase2ClusterID)
+	failurePattern := strings.TrimSpace(pattern.CanonicalEvidencePhrase)
+	searchQuery := strings.TrimSpace(pattern.SearchQueryPhrase)
+	if environment == "" && failurePatternID == "" && failurePattern == "" && searchQuery == "" {
+		return nil
+	}
+	return []ReviewSignalMatchedFailurePattern{{
+		Environment:      environment,
+		FailurePatternID: failurePatternID,
+		FailurePattern:   failurePattern,
+		SearchQuery:      searchQuery,
+	}}
 }
 
 func reviewSignalMatchesCluster(
@@ -329,44 +397,42 @@ func reviewSignalSeverityRank(severity string) int {
 	}
 }
 
-// crossWeekNewPatternSignals generates review signals for failure patterns
-// that are genuinely new (absent from the entire history horizon) or that
-// have recurred after a gap (present in history but absent in the
-// immediately previous week).
-func crossWeekNewPatternSignals(
+// crossWindowPatternSignals generates review signals for failure patterns
+// that are genuinely new within the configured history horizon or that have
+// recurred after being absent from the immediately previous equal-length
+// comparison window.
+func crossWindowPatternSignals(
 	currentPatterns []failurepatterncontracts.FailurePatternRecord,
-	historyResolver failurepatterns.PresenceResolver,
-	previousWeek string,
+	previousPatterns []failurepatterncontracts.FailurePatternRecord,
+	historyPatterns []failurepatterncontracts.FailurePatternRecord,
 ) []ReviewSignalRow {
-	if historyResolver == nil {
+	if len(currentPatterns) == 0 {
 		return nil
 	}
+	previousKeys := reviewSignalPatternKeySet(previousPatterns)
+	historyKeys := reviewSignalPatternKeySet(historyPatterns)
 	rows := make([]ReviewSignalRow, 0)
 	for _, fp := range currentPatterns {
+		patternKey := reviewSignalPatternKey(fp)
+		if patternKey == "" {
+			continue
+		}
+		if _, exists := previousKeys[patternKey]; exists {
+			continue
+		}
+
 		env := readmodelmodel.NormalizeEnvironment(fp.Environment)
 		canonical := strings.TrimSpace(fp.CanonicalEvidencePhrase)
 		searchQuery := strings.TrimSpace(fp.SearchQueryPhrase)
 
-		presence := historyResolver.PresenceFor(failurepatterns.PatternKey{
-			Environment: env,
-			Phrase:      canonical,
-			SearchQuery: searchQuery,
-		})
-
-		var reason string
-		var severity string
-		switch {
-		case presence.PriorWeeksPresent == 0:
+		reason := "recurrence"
+		severity := "low"
+		if _, exists := historyKeys[patternKey]; !exists {
 			reason = "new_pattern"
 			severity = "medium"
 			if fp.SupportCount >= 5 {
 				severity = "high"
 			}
-		case !isInPriorWeek(presence.PriorWeekStarts, previousWeek):
-			reason = "recurrence"
-			severity = "low"
-		default:
-			continue
 		}
 
 		refs := make([]ReviewSignalReference, 0, len(fp.References))
@@ -382,8 +448,8 @@ func crossWeekNewPatternSignals(
 		}
 		rows = append(rows, ReviewSignalRow{
 			Environment:                          env,
-			ReviewItemID:                         "crossweek-" + strings.TrimSpace(fp.Phase2ClusterID),
-			Phase:                                "crossweek",
+			ReviewItemID:                         "crosswindow-" + strings.TrimSpace(fp.Phase2ClusterID),
+			Phase:                                "crosswindow",
 			Reason:                               reason,
 			Severity:                             severity,
 			ProposedFailurePattern:               canonical,
@@ -393,20 +459,32 @@ func crossWeekNewPatternSignals(
 			SourcePhase1ClusterIDs:               reviewSignalCopyStrings(fp.MemberPhase1ClusterIDs),
 			MemberSignatureIDs:                   reviewSignalCopyStrings(fp.MemberSignatureIDs),
 			References:                           refs,
+			MatchedFailurePatterns:               reviewSignalCurrentPatternMatchedFailurePatterns(fp),
 		})
 	}
 	return rows
 }
 
-func isInPriorWeek(priorWeekStarts []string, previousWeek string) bool {
-	trimmedPrev := strings.TrimSpace(previousWeek)
-	if trimmedPrev == "" {
-		return false
-	}
-	for _, w := range priorWeekStarts {
-		if strings.TrimSpace(w) == trimmedPrev {
-			return true
+func reviewSignalPatternKeySet(
+	patterns []failurepatterncontracts.FailurePatternRecord,
+) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, pattern := range patterns {
+		key := reviewSignalPatternKey(pattern)
+		if key == "" {
+			continue
 		}
+		out[key] = struct{}{}
 	}
-	return false
+	return out
+}
+
+func reviewSignalPatternKey(pattern failurepatterncontracts.FailurePatternRecord) string {
+	environment := readmodelmodel.NormalizeEnvironment(pattern.Environment)
+	canonical := strings.TrimSpace(pattern.CanonicalEvidencePhrase)
+	searchQuery := strings.TrimSpace(pattern.SearchQueryPhrase)
+	if environment == "" || canonical == "" {
+		return ""
+	}
+	return environment + "|" + canonical + "|" + searchQuery
 }

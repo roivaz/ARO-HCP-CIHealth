@@ -813,7 +813,7 @@ func TestHandleRunsPageDefaultsWhenDateIsOmitted(t *testing.T) {
 	}
 }
 
-func TestHandleAPIReviewSignalsWeekReturnsJSON(t *testing.T) {
+func TestHandleAPIReviewSignalsWindowReturnsJSON(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -833,7 +833,7 @@ func TestHandleAPIReviewSignalsWeekReturnsJSON(t *testing.T) {
 		t.Fatalf("new handler: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/review/signals/week?week=2026-03-16", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/review/signals/window?start_date=2026-03-10&end_date=2026-03-16", nil)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, req)
 
@@ -844,14 +844,17 @@ func TestHandleAPIReviewSignalsWeekReturnsJSON(t *testing.T) {
 		t.Fatalf("unexpected content type: %q", got)
 	}
 
-	var payload readmodelreview.ReviewSignalsWeekSnapshot
+	var payload readmodelreview.WindowData
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if got, want := payload.Week, "2026-03-16"; got != want {
-		t.Fatalf("unexpected week: got=%q want=%q", got, want)
+	if got, want := payload.Meta.StartDate, "2026-03-10"; got != want {
+		t.Fatalf("unexpected start date: got=%q want=%q", got, want)
 	}
-	if got, want := payload.Timezone, "UTC"; got != want {
+	if got, want := payload.Meta.EndDate, "2026-03-16"; got != want {
+		t.Fatalf("unexpected end date: got=%q want=%q", got, want)
+	}
+	if got, want := payload.Meta.Timezone, "UTC"; got != want {
 		t.Fatalf("unexpected review-signals timezone: got=%q want=%q", got, want)
 	}
 	if got, want := payload.TotalSignals, 1; got != want {
@@ -872,6 +875,116 @@ func TestHandleAPIReviewSignalsWeekReturnsJSON(t *testing.T) {
 	}
 	if got, want := newPattern.ProposedFailurePattern, "Installer failed to reach bootstrap machine"; got != want {
 		t.Fatalf("unexpected new-pattern phrase: got=%q want=%q", got, want)
+	}
+}
+
+func TestHandleAPIReviewSignalsWindowDefaultsToRollingSevenDays(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	fixture := newHandlerFixture(t)
+	store := fixture.openWeekStore(t, "")
+	currentDate := time.Now().UTC().Format("2006-01-02")
+	currentOccurredAt := currentDate + "T08:00:00Z"
+	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
+		{
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/view/review-default-1",
+			JobName:     "periodic-ci-install",
+			Failed:      true,
+			OccurredAt:  currentOccurredAt,
+		},
+	}); err != nil {
+		t.Fatalf("seed runs: %v", err)
+	}
+	if err := store.UpsertRawFailures(ctx, []storecontracts.RawFailureRecord{
+		{
+			Environment:    "dev",
+			RowID:          "review-default-row-1",
+			RunURL:         "https://prow.example.com/view/review-default-1",
+			TestName:       "should install",
+			TestSuite:      "suite-b",
+			SignatureID:    "sig-review-default-1",
+			OccurredAt:     currentOccurredAt,
+			RawText:        "Installer failed to reach bootstrap machine",
+			NormalizedText: "installer failed to reach bootstrap machine",
+		},
+	}); err != nil {
+		t.Fatalf("seed raw failures: %v", err)
+	}
+
+	handler, err := NewHandler(HandlerOptions{
+		PostgresPool: fixture.pool,
+	})
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/review/signals/window", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if got, want := recorder.Code, http.StatusOK; got != want {
+		t.Fatalf("unexpected status code: got=%d want=%d body=%s", got, want, recorder.Body.String())
+	}
+
+	var payload readmodelreview.WindowData
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	expectedStartDate := time.Now().UTC().AddDate(0, 0, -6).Format("2006-01-02")
+	expectedEndDate := time.Now().UTC().Format("2006-01-02")
+	if got, want := payload.Meta.StartDate, expectedStartDate; got != want {
+		t.Fatalf("unexpected default rolling start date: got=%q want=%q", got, want)
+	}
+	if got, want := payload.Meta.EndDate, expectedEndDate; got != want {
+		t.Fatalf("unexpected default rolling end date: got=%q want=%q", got, want)
+	}
+	if got, want := payload.TotalSignals, 1; got != want {
+		t.Fatalf("unexpected total signal count: got=%d want=%d", got, want)
+	}
+}
+
+func TestHandleAPIReviewSignalsWeekRouteRemoved(t *testing.T) {
+	t.Parallel()
+
+	fixture := newHandlerFixture(t)
+	handler, err := NewHandler(HandlerOptions{
+		PostgresPool: fixture.pool,
+	})
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/review/signals/week?week=2026-03-16", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if got, want := recorder.Code, http.StatusNotFound; got != want {
+		t.Fatalf("unexpected status code: got=%d want=%d body=%s", got, want, recorder.Body.String())
+	}
+}
+
+func TestHandleAPIReviewSignalsWindowRejectsWeekQuery(t *testing.T) {
+	t.Parallel()
+
+	fixture := newHandlerFixture(t)
+	handler, err := NewHandler(HandlerOptions{
+		PostgresPool: fixture.pool,
+	})
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/review/signals/window?week=2026-03-16", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if got, want := recorder.Code, http.StatusBadRequest; got != want {
+		t.Fatalf("unexpected status code: got=%d want=%d body=%s", got, want, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "week is not supported") {
+		t.Fatalf("expected unsupported week message, got %q", recorder.Body.String())
 	}
 }
 

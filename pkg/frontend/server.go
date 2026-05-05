@@ -70,7 +70,7 @@ func NewHandler(opts HandlerOptions) (http.Handler, error) {
 	mux.HandleFunc("/readyz", h.handleReadyz)
 	mux.HandleFunc("/api/run-log/day", h.handleAPIRunsDay)
 	mux.HandleFunc("/api/failure-patterns/window", h.handleAPIFailurePatterns)
-	mux.HandleFunc("/api/review/signals/week", h.handleAPIReviewSignalsWeek)
+	mux.HandleFunc("/api/review/signals/window", h.handleAPIReviewSignalsWindow)
 	mux.HandleFunc("/report", h.handleReportPage)
 	mux.HandleFunc("/run-log", h.handleRunsPage)
 	mux.HandleFunc("/failure-patterns", h.handleFailurePatternsPage)
@@ -225,27 +225,19 @@ func (h *handler) handleAPIFailurePatterns(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (h *handler) handleAPIReviewSignalsWeek(w http.ResponseWriter, r *http.Request) {
+func (h *handler) handleAPIReviewSignalsWindow(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
 		return
 	}
-	window, err := h.service.ResolveWeekWindow(r.Context(), strings.TrimSpace(r.URL.Query().Get("week")), time.Time{})
+	query, err := reviewSignalsWindowQueryFromRequest(r)
 	if err != nil {
-		statusCode := http.StatusBadRequest
-		if errors.Is(err, frontservice.ErrNoAvailableWeeks) {
-			statusCode = http.StatusNotFound
-		}
-		writeJSONError(w, statusCode, err)
+		writeJSONError(w, http.StatusBadRequest, err)
 		return
 	}
-	response, err := readmodelreview.BuildWeek(r.Context(), h.service, window)
+	response, err := readmodelreview.BuildWindow(r.Context(), h.service, query)
 	if err != nil {
-		statusCode := http.StatusBadRequest
-		if errors.Is(err, frontservice.ErrNoAvailableWeeks) {
-			statusCode = http.StatusNotFound
-		}
-		writeJSONError(w, statusCode, err)
+		writeJSONError(w, http.StatusBadRequest, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -501,6 +493,28 @@ func reportQueryFromRequest(r *http.Request) readmodelreports.ReportQuery {
 		EndDate:   strings.TrimSpace(r.URL.Query().Get("end_date")),
 		Week:      strings.TrimSpace(r.URL.Query().Get("week")),
 	}
+}
+
+func reviewSignalsWindowQueryFromRequest(r *http.Request) (readmodelreview.WindowQuery, error) {
+	if r == nil || r.URL == nil {
+		return readmodelreview.WindowQuery{}, nil
+	}
+	if trimmed := strings.TrimSpace(r.URL.Query().Get("week")); trimmed != "" {
+		return readmodelreview.WindowQuery{}, fmt.Errorf("week is not supported for review signals; use start_date and end_date")
+	}
+	if trimmed := strings.TrimSpace(r.URL.Query().Get("date")); trimmed != "" {
+		return readmodelreview.WindowQuery{}, fmt.Errorf("date is not supported for review signals; use start_date and end_date")
+	}
+	if trimmed := strings.TrimSpace(r.URL.Query().Get("start_at")); trimmed != "" {
+		return readmodelreview.WindowQuery{}, fmt.Errorf("start_at is not supported for review signals; use start_date and end_date")
+	}
+	if trimmed := strings.TrimSpace(r.URL.Query().Get("end_at")); trimmed != "" {
+		return readmodelreview.WindowQuery{}, fmt.Errorf("end_at is not supported for review signals; use start_date and end_date")
+	}
+	return readmodelreview.WindowQuery{
+		StartDate: strings.TrimSpace(r.URL.Query().Get("start_date")),
+		EndDate:   strings.TrimSpace(r.URL.Query().Get("end_date")),
+	}, nil
 }
 
 func (h *handler) resolveFailurePatternsPageQuery(

@@ -219,20 +219,21 @@ func buildFailurePatternsInline(
 	}
 
 	historyResult := currentResult
+	historyWindowDuration := time.Duration(0)
 	if historyStart.Before(scope.StartTime) {
 		if historyStart.Equal(signalStart) && signalStart.Before(scope.StartTime) {
 			historyResult = horizonResult
 		} else {
 			historyWindowStartedAt := time.Now()
 			historyResult, err = preparedWindow.ResultForWindow(historyStart, scope.EndTime, false)
-			horizonWindowDuration += time.Since(historyWindowStartedAt)
+			historyWindowDuration = time.Since(historyWindowStartedAt)
 			if err != nil {
 				logFailurePatternsStageTiming(
 					scope,
 					targetEnvironments,
 					prepareStart,
-					"signal_horizon",
-					horizonWindowDuration,
+					"history_window",
+					historyWindowDuration,
 					err,
 				)
 				return FailurePatternsData{}, fmt.Errorf("compute inline history horizon for window %s..%s: %w", scope.StartDate, scope.EndDate, err)
@@ -340,6 +341,7 @@ func buildFailurePatternsInline(
 		prepareDuration,
 		currentWindowDuration,
 		horizonWindowDuration,
+		historyWindowDuration,
 		historyResolverDuration,
 		time.Since(requestStartedAt),
 	)
@@ -386,11 +388,12 @@ func logFailurePatternsTimingSummary(
 	prepareDuration time.Duration,
 	currentWindowDuration time.Duration,
 	horizonWindowDuration time.Duration,
+	historyWindowDuration time.Duration,
 	historyResolverDuration time.Duration,
 	totalDuration time.Duration,
 ) {
 	log.Printf(
-		"failure-patterns timings stage=summary window=%s prepare_start=%s exact=%t envs=%s prepare=%s current_window=%s signal_horizon=%s history_resolver=%s total=%s",
+		"failure-patterns timings stage=summary window=%s prepare_start=%s exact=%t envs=%s prepare=%s current_window=%s signal_horizon=%s history_window=%s history_resolver=%s total=%s",
 		failurePatternsTimingWindowLabel(scope),
 		failurePatternsTimingTimestampLabel(prepareStart),
 		scope.HasExactBounds,
@@ -398,6 +401,7 @@ func logFailurePatternsTimingSummary(
 		prepareDuration,
 		currentWindowDuration,
 		horizonWindowDuration,
+		historyWindowDuration,
 		historyResolverDuration,
 		totalDuration,
 	)

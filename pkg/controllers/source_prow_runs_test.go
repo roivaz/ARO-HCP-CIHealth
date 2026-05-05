@@ -11,6 +11,7 @@ import (
 	sourceoptions "ci-failure-atlas/pkg/source/options"
 	"ci-failure-atlas/pkg/source/prowjobs"
 	"ci-failure-atlas/pkg/store/contracts"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 func TestMapProwJobToRunRecord(t *testing.T) {
@@ -166,10 +167,20 @@ func TestSyncOnceUsesSharedSnapshotForAllEnvironments(t *testing.T) {
 	t.Parallel()
 
 	opts := testSourceOptions(t, []string{"dev", "int"})
-	devJobName, _ := sourceoptions.ProwJobNameForEnvironment("dev")
-	intJobName, _ := sourceoptions.ProwJobNameForEnvironment("int")
+	devJobNames, _ := sourceoptions.ProwJobNamesForEnvironment("dev")
+	intJobNames, _ := sourceoptions.ProwJobNamesForEnvironment("int")
+	devJobName := "pull-ci-Azure-ARO-HCP-main-e2e-parallel"
+	intPeriodicJobName := "periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel"
+	intBranchJobName := "branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel"
+	if !devJobNames.Has(devJobName) {
+		t.Fatalf("expected dev job set to include %q", devJobName)
+	}
+	if !intJobNames.Has(intPeriodicJobName) || !intJobNames.Has(intBranchJobName) {
+		t.Fatalf("expected int job set to include both periodic and branch CI jobs")
+	}
 	devStartedAt := time.Now().UTC().Add(-20 * time.Minute).Truncate(time.Second)
-	intStartedAt := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
+	intPeriodicStartedAt := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
+	intBranchStartedAt := time.Now().UTC().Add(-8 * time.Minute).Truncate(time.Second)
 
 	client := &fakeProwSnapshotClient{
 		jobs: []prowjobs.Job{
@@ -185,12 +196,22 @@ func TestSyncOnceUsesSharedSnapshotForAllEnvironments(t *testing.T) {
 			},
 			{
 				Spec: prowjobs.JobSpec{
-					Job: intJobName,
+					Job: intPeriodicJobName,
 				},
 				Status: prowjobs.JobStatus{
 					State:     "success",
 					URL:       "gs://test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499",
-					StartTime: intStartedAt,
+					StartTime: intPeriodicStartedAt,
+				},
+			},
+			{
+				Spec: prowjobs.JobSpec{
+					Job: intBranchJobName,
+				},
+				Status: prowjobs.JobStatus{
+					State:     "failure",
+					URL:       "gs://test-platform-results/logs/branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel/2029578186907455500",
+					StartTime: intBranchStartedAt,
 				},
 			},
 			{
@@ -235,8 +256,12 @@ func TestSyncOnceUsesSharedSnapshotForAllEnvironments(t *testing.T) {
 	if _, found := store.GetStoredRun("int", intRunURL); !found {
 		t.Fatalf("expected int periodic run to be stored")
 	}
-	if len(store.runs) != 2 {
-		t.Fatalf("expected exactly two stored runs, got=%d", len(store.runs))
+	intBranchRunURL := "https://prow.ci.openshift.org/view/gs/test-platform-results/logs/branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel/2029578186907455500"
+	if _, found := store.GetStoredRun("int", intBranchRunURL); !found {
+		t.Fatalf("expected int branch-ci run to be stored")
+	}
+	if len(store.runs) != 3 {
+		t.Fatalf("expected exactly three stored runs, got=%d", len(store.runs))
 	}
 
 	devCheckpoint, found := store.checkpoints[prowRunsCheckpointNameForEnvironment("dev")]
@@ -250,12 +275,12 @@ func TestSyncOnceUsesSharedSnapshotForAllEnvironments(t *testing.T) {
 	if !found {
 		t.Fatalf("expected int checkpoint to be stored")
 	}
-	if intCheckpoint.Value != intStartedAt.Format(time.RFC3339Nano) {
-		t.Fatalf("unexpected int checkpoint value: got=%q want=%q", intCheckpoint.Value, intStartedAt.Format(time.RFC3339Nano))
+	if intCheckpoint.Value != intBranchStartedAt.Format(time.RFC3339Nano) {
+		t.Fatalf("unexpected int checkpoint value: got=%q want=%q", intCheckpoint.Value, intBranchStartedAt.Format(time.RFC3339Nano))
 	}
 }
 
-func TestFilterCompletedJobsByNameAndSinceIncludesBatchRuns(t *testing.T) {
+func TestFilterCompletedJobsByNamesAndSinceIncludesBatchRuns(t *testing.T) {
 	t.Parallel()
 
 	since := mustParseRFC3339(t, "2026-04-20T09:00:00Z")
@@ -276,7 +301,7 @@ func TestFilterCompletedJobsByNameAndSinceIncludesBatchRuns(t *testing.T) {
 			},
 		},
 	}
-	filtered := filterCompletedJobsByNameAndSince(jobs, "pull-ci-Azure-ARO-HCP-main-e2e-parallel", since)
+	filtered := filterCompletedJobsByNamesAndSince(jobs, sets.New[string]("pull-ci-Azure-ARO-HCP-main-e2e-parallel"), since)
 	if len(filtered) != 1 {
 		t.Fatalf("unexpected filtered job count: got=%d want=1", len(filtered))
 	}
@@ -285,7 +310,7 @@ func TestFilterCompletedJobsByNameAndSinceIncludesBatchRuns(t *testing.T) {
 	}
 }
 
-func TestFilterCompletedJobsByNameAndSinceUsesStartTime(t *testing.T) {
+func TestFilterCompletedJobsByNamesAndSinceUsesStartTime(t *testing.T) {
 	t.Parallel()
 
 	since := mustParseRFC3339(t, "2026-04-22T18:00:00Z")
@@ -308,7 +333,7 @@ func TestFilterCompletedJobsByNameAndSinceUsesStartTime(t *testing.T) {
 		},
 	}
 
-	filtered := filterCompletedJobsByNameAndSince(jobs, "pull-ci-Azure-ARO-HCP-main-e2e-parallel", since)
+	filtered := filterCompletedJobsByNamesAndSince(jobs, sets.New[string]("pull-ci-Azure-ARO-HCP-main-e2e-parallel"), since)
 	if len(filtered) != 1 {
 		t.Fatalf("unexpected filtered job count: got=%d want=1", len(filtered))
 	}

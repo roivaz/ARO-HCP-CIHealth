@@ -15,6 +15,7 @@ import (
 	"ci-failure-atlas/pkg/store/contracts"
 
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/workqueue"
 )
@@ -56,7 +57,7 @@ func newSourceSippyRunsController(logger logr.Logger, deps Dependencies, client 
 		if strings.TrimSpace(deps.Source.SippyReleaseByEnv[env]) == "" {
 			return nil, fmt.Errorf("source.sippy.runs: missing sippy release mapping for environment %q", env)
 		}
-		if _, ok := sourceoptions.SippyJobNameForEnvironment(env); !ok {
+		if jobNames, ok := sourceoptions.SippyJobNamesForEnvironment(env); !ok || len(jobNames) == 0 {
 			return nil, fmt.Errorf("source.sippy.runs: missing sippy job mapping for environment %q", normalizeEnvironment(env))
 		}
 	}
@@ -181,8 +182,8 @@ func (c *sourceSippyRunsController) syncEnvironment(ctx context.Context, environ
 	if err != nil {
 		return err
 	}
-	jobName, ok := sourceoptions.SippyJobNameForEnvironment(environment)
-	if !ok {
+	jobNames, ok := sourceoptions.SippyJobNamesForEnvironment(environment)
+	if !ok || len(jobNames) == 0 {
 		return fmt.Errorf("missing sippy job mapping for environment %q", normalizeEnvironment(environment))
 	}
 	usePRRepoFilter := sourceoptions.SupportsPRLookupForEnvironment(environment)
@@ -199,19 +200,12 @@ func (c *sourceSippyRunsController) syncEnvironment(ctx context.Context, environ
 	}
 	since := c.resolveSince(checkpointTime)
 
-	allRuns, err := c.sippyClient.ListJobRuns(ctx, sippysource.ListJobRunsOptions{
-		Release:  release,
-		Org:      org,
-		Repo:     repo,
-		JobName:  jobName,
-		Since:    since,
-		PageSize: sourceSippyRunsDefaultPageSize,
-	})
+	allRuns, jobNameList, err := listRunsForJobNames(ctx, c.sippyClient, release, org, repo, since, jobNames)
 	if err != nil {
 		return fmt.Errorf("list sippy job runs for environment %q: %w", environment, err)
 	}
 
-	runs := filterRunsByJobName(allRuns, jobName)
+	runs := filterRunsByJobNames(allRuns, jobNames)
 
 	failedRuns := make([]sippysource.JobRun, 0, len(runs))
 	for _, run := range runs {
@@ -255,7 +249,7 @@ func (c *sourceSippyRunsController) syncEnvironment(ctx context.Context, environ
 	c.logger.Info(
 		"Synced Sippy runs for environment.",
 		"environment", environment,
-		"job_name", jobName,
+		"job_names", jobNameList,
 		"fetched_total", len(allRuns),
 		"fetched_job_matched", len(runs),
 		"failed", len(failedRuns),
@@ -281,8 +275,8 @@ func (c *sourceSippyRunsController) syncSingleRunByKey(ctx context.Context, key 
 	if err != nil {
 		return err
 	}
-	jobName, ok := sourceoptions.SippyJobNameForEnvironment(environment)
-	if !ok {
+	jobNames, ok := sourceoptions.SippyJobNamesForEnvironment(environment)
+	if !ok || len(jobNames) == 0 {
 		return fmt.Errorf("missing sippy job mapping for environment %q", normalizeEnvironment(environment))
 	}
 	usePRRepoFilter := sourceoptions.SupportsPRLookupForEnvironment(environment)
@@ -294,22 +288,15 @@ func (c *sourceSippyRunsController) syncSingleRunByKey(ctx context.Context, key 
 	}
 
 	since := c.resolveSince(time.Time{})
-	allRuns, err := c.sippyClient.ListJobRuns(ctx, sippysource.ListJobRunsOptions{
-		Release:  release,
-		Org:      org,
-		Repo:     repo,
-		JobName:  jobName,
-		Since:    since,
-		PageSize: sourceSippyRunsDefaultPageSize,
-	})
+	allRuns, jobNameList, err := listRunsForJobNames(ctx, c.sippyClient, release, org, repo, since, jobNames)
 	if err != nil {
 		return fmt.Errorf("list sippy job runs for key %q: %w", key, err)
 	}
 
-	runs := filterRunsByJobName(allRuns, jobName)
+	runs := filterRunsByJobNames(allRuns, jobNames)
 	targetRun, found := findRunByURL(c.deps.Source.ProwBaseURL, runs, runURL)
 	if !found {
-		return fmt.Errorf("run not found in lookback window for key %q (job=%q)", key, jobName)
+		return fmt.Errorf("run not found in lookback window for key %q (jobs=%v)", key, jobNameList)
 	}
 
 	existing, foundExisting, err := c.store.GetRun(ctx, environment, runURL)
@@ -378,14 +365,45 @@ func computeNextCheckpoint(previous time.Time, runs []sippysource.JobRun) time.T
 	return next
 }
 
-func filterRunsByJobName(runs []sippysource.JobRun, jobName string) []sippysource.JobRun {
-	normalizedJobName := strings.TrimSpace(jobName)
-	if normalizedJobName == "" {
+func listRunsForJobNames(
+	ctx context.Context,
+	client sippysource.Client,
+	release string,
+	org string,
+	repo string,
+	since time.Time,
+	jobNames sets.Set[string],
+) ([]sippysource.JobRun, []string, error) {
+	jobNameList := sets.List(jobNames)
+	if len(jobNameList) == 0 {
+		return []sippysource.JobRun{}, []string{}, nil
+	}
+
+	allRuns := make([]sippysource.JobRun, 0, len(jobNameList)*sourceSippyRunsDefaultPageSize)
+	for _, jobName := range jobNameList {
+		runs, err := client.ListJobRuns(ctx, sippysource.ListJobRunsOptions{
+			Release:  release,
+			Org:      org,
+			Repo:     repo,
+			JobName:  jobName,
+			Since:    since,
+			PageSize: sourceSippyRunsDefaultPageSize,
+		})
+		if err != nil {
+			return nil, jobNameList, fmt.Errorf("job %q: %w", jobName, err)
+		}
+		allRuns = append(allRuns, runs...)
+	}
+	return allRuns, jobNameList, nil
+}
+
+func filterRunsByJobNames(runs []sippysource.JobRun, jobNames sets.Set[string]) []sippysource.JobRun {
+	if len(jobNames) == 0 {
 		return []sippysource.JobRun{}
 	}
 	filtered := make([]sippysource.JobRun, 0, len(runs))
 	for _, run := range runs {
-		if strings.TrimSpace(run.JobName) != normalizedJobName {
+		if !jobNames.Has(strings.TrimSpace(run.JobName)) {
 			continue
 		}
 		filtered = append(filtered, run)

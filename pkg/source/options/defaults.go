@@ -3,11 +3,13 @@ package options
 import (
 	"strings"
 	"time"
+
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 type EnvironmentDefaults struct {
 	SippyRelease            string
-	SippyJobName            string
+	SippyJobNames           []string
 	DeterministicJUnitPaths []string
 	SupportsPRLookup        bool
 }
@@ -48,18 +50,22 @@ var defaultRuntimeDefaults = RuntimeDefaults{
 	Environments: map[string]EnvironmentDefaults{
 		"dev": {
 			SippyRelease: "Presubmits",
-			SippyJobName: "pull-ci-Azure-ARO-HCP-main-e2e-parallel",
+			SippyJobNames: []string{
+				"pull-ci-Azure-ARO-HCP-main-e2e-parallel",
+			},
 			DeterministicJUnitPaths: []string{
-				"artifacts/e2e-parallel/aro-hcp-test-local-run/artifacts/junit.xml",
+				"artifacts/e2e-parallel/aro-hcp-test-local/artifacts/junit.xml",
 				"artifacts/e2e-parallel/aro-hcp-provision-environment/artifacts/junit_entrypoint.xml",
 				"prowjob_junit.xml",
-				"artifacts/e2e-parallel/aro-hcp-test-local/artifacts/junit.xml",
 			},
 			SupportsPRLookup: true,
 		},
 		"int": {
 			SippyRelease: "aro-integration",
-			SippyJobName: "periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel",
+			SippyJobNames: []string{
+				"periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel",
+				"branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel",
+			},
 			DeterministicJUnitPaths: []string{
 				"artifacts/integration-e2e-parallel/aro-hcp-test-persistent/artifacts/junit.xml",
 				"prowjob_junit.xml",
@@ -67,7 +73,10 @@ var defaultRuntimeDefaults = RuntimeDefaults{
 		},
 		"stg": {
 			SippyRelease: "aro-stage",
-			SippyJobName: "periodic-ci-Azure-ARO-HCP-main-periodic-stage-e2e-parallel",
+			SippyJobNames: []string{
+				"periodic-ci-Azure-ARO-HCP-main-periodic-stage-e2e-parallel",
+				"branch-ci-Azure-ARO-HCP-main-e2e-stage-e2e-parallel",
+			},
 			DeterministicJUnitPaths: []string{
 				"artifacts/stage-e2e-parallel/aro-hcp-test-persistent/artifacts/junit.xml",
 				"prowjob_junit.xml",
@@ -75,7 +84,10 @@ var defaultRuntimeDefaults = RuntimeDefaults{
 		},
 		"prod": {
 			SippyRelease: "aro-production",
-			SippyJobName: "periodic-ci-Azure-ARO-HCP-main-periodic-prod-e2e-parallel",
+			SippyJobNames: []string{
+				"periodic-ci-Azure-ARO-HCP-main-periodic-prod-e2e-parallel",
+				"branch-ci-Azure-ARO-HCP-main-e2e-prod-e2e-parallel",
+			},
 			DeterministicJUnitPaths: []string{
 				"artifacts/prod-e2e-parallel/aro-hcp-test-persistent/artifacts/junit.xml",
 				"prowjob_junit.xml",
@@ -100,17 +112,18 @@ func EnvironmentDefaultsFor(environment string) (EnvironmentDefaults, bool) {
 	return cloneEnvironmentDefaults(defaults), true
 }
 
-func SippyJobNameForEnvironment(environment string) (string, bool) {
+func SippyJobNamesForEnvironment(environment string) (sets.Set[string], bool) {
 	defaults, ok := EnvironmentDefaultsFor(environment)
 	if !ok {
-		return "", false
+		return nil, false
 	}
-	return strings.TrimSpace(defaults.SippyJobName), strings.TrimSpace(defaults.SippyJobName) != ""
+	jobNames := normalizedStringSet(defaults.SippyJobNames...)
+	return jobNames, len(jobNames) > 0
 }
 
 // Prow discovery and Sippy queries share the same canonical job-name mapping.
-func ProwJobNameForEnvironment(environment string) (string, bool) {
-	return SippyJobNameForEnvironment(environment)
+func ProwJobNamesForEnvironment(environment string) (sets.Set[string], bool) {
+	return SippyJobNamesForEnvironment(environment)
 }
 
 func SupportsPRLookupForEnvironment(environment string) bool {
@@ -161,6 +174,19 @@ func cloneRuntimeDefaults(in RuntimeDefaults) RuntimeDefaults {
 
 func cloneEnvironmentDefaults(in EnvironmentDefaults) EnvironmentDefaults {
 	out := in
+	out.SippyJobNames = append([]string(nil), in.SippyJobNames...)
 	out.DeterministicJUnitPaths = append([]string(nil), in.DeterministicJUnitPaths...)
+	return out
+}
+
+func normalizedStringSet(values ...string) sets.Set[string] {
+	out := sets.New[string]()
+	for _, value := range values {
+		normalized := strings.TrimSpace(value)
+		if normalized == "" {
+			continue
+		}
+		out.Insert(normalized)
+	}
 	return out
 }

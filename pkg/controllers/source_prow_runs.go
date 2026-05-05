@@ -14,6 +14,7 @@ import (
 	"ci-failure-atlas/pkg/store/contracts"
 
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/workqueue"
 )
@@ -59,7 +60,7 @@ func newSourceProwRunsController(logger logr.Logger, deps Dependencies, client p
 	}
 
 	for _, env := range deps.Source.Environments {
-		if _, ok := sourceoptions.ProwJobNameForEnvironment(env); !ok {
+		if jobNames, ok := sourceoptions.ProwJobNamesForEnvironment(env); !ok || len(jobNames) == 0 {
 			return nil, fmt.Errorf("source.prow.runs: missing prow job mapping for environment %q", normalizeEnvironment(env))
 		}
 	}
@@ -201,10 +202,11 @@ func (c *sourceProwRunsController) syncEnvironments(ctx context.Context, environ
 }
 
 func (c *sourceProwRunsController) syncEnvironmentFromSnapshot(ctx context.Context, environment string, snapshotJobs []prowjobs.Job, fetchStats prowRunsFetchStats) error {
-	jobName, ok := sourceoptions.ProwJobNameForEnvironment(environment)
-	if !ok {
+	jobNames, ok := sourceoptions.ProwJobNamesForEnvironment(environment)
+	if !ok || len(jobNames) == 0 {
 		return fmt.Errorf("missing prow job mapping for environment %q", normalizeEnvironment(environment))
 	}
+	jobNameList := sets.List(jobNames)
 
 	checkpointTime, err := c.getCheckpointTime(ctx, environment)
 	if err != nil {
@@ -212,7 +214,7 @@ func (c *sourceProwRunsController) syncEnvironmentFromSnapshot(ctx context.Conte
 	}
 	since := c.resolveSince(checkpointTime)
 
-	jobs := filterCompletedJobsByNameAndSince(snapshotJobs, jobName, since)
+	jobs := filterCompletedJobsByNamesAndSince(snapshotJobs, jobNames, since)
 
 	now := time.Now().UTC()
 	runRecords := make([]contracts.RunRecord, 0, len(jobs))
@@ -249,7 +251,7 @@ func (c *sourceProwRunsController) syncEnvironmentFromSnapshot(ctx context.Conte
 	c.logger.Info(
 		"Synced completed Prow runs for environment.",
 		"environment", environment,
-		"job_name", jobName,
+		"job_names", jobNameList,
 		"fetched_total", fetchStats.FetchedJobs,
 		"matched_completed", len(jobs),
 		"upserted_runs", len(runRecords),
@@ -328,15 +330,14 @@ func mapProwJobToRunRecord(prowBaseURL string, environment string, job prowjobs.
 	return record, true
 }
 
-func filterCompletedJobsByNameAndSince(jobs []prowjobs.Job, jobName string, since time.Time) []prowjobs.Job {
-	normalizedJobName := strings.TrimSpace(jobName)
-	if normalizedJobName == "" {
+func filterCompletedJobsByNamesAndSince(jobs []prowjobs.Job, jobNames sets.Set[string], since time.Time) []prowjobs.Job {
+	if len(jobNames) == 0 {
 		return []prowjobs.Job{}
 	}
 
 	filtered := make([]prowjobs.Job, 0, len(jobs))
 	for _, job := range jobs {
-		if strings.TrimSpace(job.Spec.Job) != normalizedJobName {
+		if !jobNames.Has(strings.TrimSpace(job.Spec.Job)) {
 			continue
 		}
 		if !prowjobs.IsTerminalState(job.Status.State) || job.Status.StartTime.IsZero() {

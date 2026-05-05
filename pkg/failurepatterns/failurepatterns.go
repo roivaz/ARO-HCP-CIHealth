@@ -61,6 +61,19 @@ type BuildPresenceOptions struct {
 	Environments  []string
 }
 
+type PresenceWindow struct {
+	EndTime       time.Time
+	AnchorStart   time.Time
+	LookbackStart time.Time
+	LookbackWeeks int
+}
+
+type BuildPresenceFromFailurePatternsOptions struct {
+	EndTime         time.Time
+	LookbackWeeks   int
+	FailurePatterns []failurepatterncontracts.FailurePatternRecord
+}
+
 type presenceResolver struct {
 	byKey map[string]PatternPresence
 }
@@ -228,22 +241,9 @@ func BuildPresenceResolver(
 	if opts.Store == nil {
 		return nil, fmt.Errorf("store is required")
 	}
-
-	// Preserve the current calendar-week history behavior while letting callers
-	// anchor the resolver using the resolved window end time instead of passing
-	// a separate week label through readmodel.
-	anchorStart := weekStartForDate(anchorEnd.Add(-time.Nanosecond))
-	if anchorStart.IsZero() {
-		return &presenceResolver{byKey: map[string]PatternPresence{}}, nil
-	}
-
-	lookbackWeeks := opts.LookbackWeeks
-	if lookbackWeeks <= 0 {
-		lookbackWeeks = DefaultHistoryWeeks
-	}
-	lookbackStart := anchorStart.AddDate(0, 0, -(lookbackWeeks * 7))
-	if !lookbackStart.Before(anchorStart) {
-		return &presenceResolver{byKey: map[string]PatternPresence{}}, nil
+	presenceWindow, err := ResolvePresenceWindow(anchorEnd, opts.LookbackWeeks)
+	if err != nil {
+		return nil, err
 	}
 
 	targetEnvironments := normalizeEnvironments(opts.Environments)
@@ -253,17 +253,76 @@ func BuildPresenceResolver(
 
 	result, err := failurepatternwindow.Compute(ctx, opts.Store, failurepatternwindow.ComputeOptions{
 		Environments:  targetEnvironments,
-		StartTime:     lookbackStart,
-		EndTime:       anchorEnd,
+		StartTime:     presenceWindow.LookbackStart,
+		EndTime:       presenceWindow.EndTime,
 		IncludeReview: false,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("compute failure-pattern history horizon: %w", err)
 	}
+	return BuildPresenceResolverFromFailurePatterns(BuildPresenceFromFailurePatternsOptions{
+		EndTime:         presenceWindow.EndTime,
+		LookbackWeeks:   presenceWindow.LookbackWeeks,
+		FailurePatterns: result.FailurePatterns,
+	})
+}
 
+func ResolvePresenceWindow(endTime time.Time, lookbackWeeks int) (PresenceWindow, error) {
+	anchorEnd := endTime.UTC()
+	if anchorEnd.IsZero() {
+		return PresenceWindow{}, fmt.Errorf("end time is required")
+	}
+	// Preserve the current calendar-week history behavior while letting callers
+	// anchor the resolver using the resolved window end time instead of passing
+	// a separate week label through readmodel.
+	anchorStart := weekStartForDate(anchorEnd.Add(-time.Nanosecond))
+	if anchorStart.IsZero() {
+		return PresenceWindow{}, fmt.Errorf("anchor week start is required")
+	}
+	if lookbackWeeks <= 0 {
+		lookbackWeeks = DefaultHistoryWeeks
+	}
+	lookbackStart := anchorStart.AddDate(0, 0, -(lookbackWeeks * 7))
+	if !lookbackStart.Before(anchorStart) {
+		return PresenceWindow{}, fmt.Errorf("lookback start must be before anchor start")
+	}
+	return PresenceWindow{
+		EndTime:       anchorEnd,
+		AnchorStart:   anchorStart,
+		LookbackStart: lookbackStart,
+		LookbackWeeks: lookbackWeeks,
+	}, nil
+}
+
+func BuildPresenceResolverFromFailurePatterns(
+	opts BuildPresenceFromFailurePatternsOptions,
+) (PresenceResolver, error) {
+	anchorEnd := opts.EndTime.UTC()
+	if anchorEnd.IsZero() {
+		return &presenceResolver{byKey: map[string]PatternPresence{}}, nil
+	}
+	presenceWindow, err := ResolvePresenceWindow(anchorEnd, opts.LookbackWeeks)
+	if err != nil {
+		return nil, err
+	}
+	return buildPresenceResolverFromFailurePatterns(opts.FailurePatterns, presenceWindow), nil
+}
+
+func buildPresenceResolverFromFailurePatterns(
+	rows []failurepatterncontracts.FailurePatternRecord,
+	presenceWindow PresenceWindow,
+) PresenceResolver {
 	aggregates := map[string]*presenceAggregate{}
 	phraseEnvironments := map[string]map[string]struct{}{}
-	for _, row := range result.FailurePatterns {
+	for _, row := range rows {
+		filteredReferences := presenceReferencesWithinWindow(
+			row.References,
+			presenceWindow.LookbackStart,
+			presenceWindow.EndTime,
+		)
+		if len(filteredReferences) == 0 {
+			continue
+		}
 		environment := normalizeEnvironment(row.Environment)
 		phraseKey := normalizePhrase(row.CanonicalEvidencePhrase)
 		if environment != "" && phraseKey != "" {
@@ -289,7 +348,7 @@ func BuildPresenceResolver(
 			}
 			aggregates[key] = item
 		}
-		for _, reference := range row.References {
+		for _, reference := range filteredReferences {
 			if refKey := normalizedRunReferenceKey(
 				reference.RunURL,
 				reference.SignatureID,
@@ -312,9 +371,9 @@ func BuildPresenceResolver(
 			}
 
 			referenceTime, ok := ParseReferenceTimestamp(reference.OccurredAt)
-			if ok && referenceTime.Before(anchorStart) {
+			if ok && referenceTime.Before(presenceWindow.AnchorStart) {
 				weekStart := weekStartForDate(referenceTime)
-				if !weekStart.IsZero() && weekStart.Before(anchorStart) && !weekStart.Before(lookbackStart) {
+				if !weekStart.IsZero() && weekStart.Before(presenceWindow.AnchorStart) && !weekStart.Before(presenceWindow.LookbackStart) {
 					item.weeks[weekStart.Format("2006-01-02")] = struct{}{}
 				}
 				if item.lastSeen.IsZero() || referenceTime.After(item.lastSeen) {
@@ -360,7 +419,26 @@ func BuildPresenceResolver(
 			BadPRReasons:      append([]string(nil), badPRReasons...),
 		}
 	}
-	return &presenceResolver{byKey: byKey}, nil
+	return &presenceResolver{byKey: byKey}
+}
+
+func presenceReferencesWithinWindow(
+	references []failurepatterncontracts.ReferenceRecord,
+	startTime time.Time,
+	endTime time.Time,
+) []failurepatterncontracts.ReferenceRecord {
+	if len(references) == 0 || startTime.IsZero() || endTime.IsZero() || !startTime.Before(endTime) {
+		return nil
+	}
+	filtered := make([]failurepatterncontracts.ReferenceRecord, 0, len(references))
+	for _, reference := range references {
+		referenceTime, ok := ParseReferenceTimestamp(reference.OccurredAt)
+		if !ok || referenceTime.Before(startTime) || !referenceTime.Before(endTime) {
+			continue
+		}
+		filtered = append(filtered, reference)
+	}
+	return filtered
 }
 
 func ParseReferenceTimestamp(value string) (time.Time, bool) {

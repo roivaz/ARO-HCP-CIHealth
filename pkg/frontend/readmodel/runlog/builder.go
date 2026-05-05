@@ -107,6 +107,7 @@ type jobHistoryReferenceCluster struct {
 type DayBuilderDeps interface {
 	readmodelwindow.WeekWindowResolver
 	OpenStore() (storecontracts.Store, error)
+	HistoryHorizonWeeks() int
 	BuildHistoryResolver(context.Context, time.Time) (failurepatterns.PresenceResolver, error)
 }
 
@@ -136,9 +137,18 @@ func BuildDay(ctx context.Context, deps DayBuilderDeps, query RunLogDayQuery) (R
 		targetEnvironments = readmodelmodel.NormalizeStringSlice(sourceoptions.SupportedEnvironments())
 	}
 
+	historyWindow, err := failurepatterns.ResolvePresenceWindow(window.EndTime, deps.HistoryHorizonWeeks())
+	if err != nil {
+		return RunLogDayData{}, fmt.Errorf("resolve run history horizon: %w", err)
+	}
+	prepareStart := window.StartTime
+	if historyWindow.LookbackStart.Before(prepareStart) {
+		prepareStart = historyWindow.LookbackStart
+	}
+
 	preparedWindow, err := failurepatternwindow.Prepare(ctx, store, failurepatternwindow.PrepareOptions{
 		Environments: targetEnvironments,
-		StartTime:    window.StartTime,
+		StartTime:    prepareStart,
 		EndTime:      window.EndTime,
 	})
 	if err != nil {
@@ -153,7 +163,21 @@ func BuildDay(ctx context.Context, deps DayBuilderDeps, query RunLogDayQuery) (R
 	if len(query.Environments) == 0 {
 		targetEnvironments = availableFailurePatternEnvironments(targetEnvironments, currentResult, currentClusters)
 	}
-	historyResolver, err := deps.BuildHistoryResolver(ctx, window.EndTime)
+
+	historyResult := currentResult
+	if historyWindow.LookbackStart.Before(window.StartTime) {
+		historyResult, err = preparedWindow.ResultForWindow(historyWindow.LookbackStart, window.EndTime, false)
+		if err != nil {
+			return RunLogDayData{}, fmt.Errorf("compute failure-pattern history horizon for run history: %w", err)
+		}
+	}
+	historyResolver, err := failurepatterns.BuildPresenceResolverFromFailurePatterns(
+		failurepatterns.BuildPresenceFromFailurePatternsOptions{
+			EndTime:         window.EndTime,
+			LookbackWeeks:   deps.HistoryHorizonWeeks(),
+			FailurePatterns: historyResult.FailurePatterns,
+		},
+	)
 	if err != nil {
 		return RunLogDayData{}, fmt.Errorf("build run history presence resolver: %w", err)
 	}

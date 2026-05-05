@@ -105,6 +105,7 @@ const signalHorizonMinWeeks = 3
 type WindowBuilderDeps interface {
 	readmodelwindow.WeekWindowResolver
 	OpenStore() (storecontracts.Store, error)
+	HistoryHorizonWeeks() int
 	BuildHistoryResolver(context.Context, time.Time) (failurepatterns.PresenceResolver, error)
 }
 
@@ -147,9 +148,21 @@ func buildFailurePatternsInline(
 	}()
 
 	horizonStart := failurePatternsHorizonStart(scope)
-	prepareStart := scope.StartTime
-	if horizonStart.Before(prepareStart) {
-		prepareStart = horizonStart
+	historyWindow, err := failurepatterns.ResolvePresenceWindow(scope.EndTime, deps.HistoryHorizonWeeks())
+	if err != nil {
+		return FailurePatternsData{}, fmt.Errorf("resolve failure-pattern history horizon: %w", err)
+	}
+	signalStart := scope.StartTime
+	if horizonStart.Before(signalStart) {
+		signalStart = horizonStart
+	}
+	historyStart := scope.StartTime
+	if historyWindow.LookbackStart.Before(historyStart) {
+		historyStart = historyWindow.LookbackStart
+	}
+	prepareStart := signalStart
+	if historyStart.Before(prepareStart) {
+		prepareStart = historyStart
 	}
 
 	prepareStartedAt := time.Now()
@@ -188,9 +201,9 @@ func buildFailurePatternsInline(
 
 	horizonResult := currentResult
 	horizonWindowDuration := time.Duration(0)
-	if prepareStart.Before(scope.StartTime) {
+	if signalStart.Before(scope.StartTime) {
 		horizonWindowStartedAt := time.Now()
-		horizonResult, err = preparedWindow.ResultForWindow(prepareStart, scope.EndTime, false)
+		horizonResult, err = preparedWindow.ResultForWindow(signalStart, scope.EndTime, false)
 		horizonWindowDuration = time.Since(horizonWindowStartedAt)
 		if err != nil {
 			logFailurePatternsStageTiming(
@@ -205,8 +218,36 @@ func buildFailurePatternsInline(
 		}
 	}
 
+	historyResult := currentResult
+	if historyStart.Before(scope.StartTime) {
+		if historyStart.Equal(signalStart) && signalStart.Before(scope.StartTime) {
+			historyResult = horizonResult
+		} else {
+			historyWindowStartedAt := time.Now()
+			historyResult, err = preparedWindow.ResultForWindow(historyStart, scope.EndTime, false)
+			horizonWindowDuration += time.Since(historyWindowStartedAt)
+			if err != nil {
+				logFailurePatternsStageTiming(
+					scope,
+					targetEnvironments,
+					prepareStart,
+					"signal_horizon",
+					horizonWindowDuration,
+					err,
+				)
+				return FailurePatternsData{}, fmt.Errorf("compute inline history horizon for window %s..%s: %w", scope.StartDate, scope.EndDate, err)
+			}
+		}
+	}
+
 	historyResolverStartedAt := time.Now()
-	historyResolver, err := deps.BuildHistoryResolver(ctx, scope.EndTime)
+	historyResolver, err := failurepatterns.BuildPresenceResolverFromFailurePatterns(
+		failurepatterns.BuildPresenceFromFailurePatternsOptions{
+			EndTime:         scope.EndTime,
+			LookbackWeeks:   deps.HistoryHorizonWeeks(),
+			FailurePatterns: historyResult.FailurePatterns,
+		},
+	)
 	historyResolverDuration := time.Since(historyResolverStartedAt)
 	if err != nil {
 		logFailurePatternsStageTiming(

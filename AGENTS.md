@@ -3,8 +3,7 @@
 ## Start Here
 
 - Read `README.md` for the operator/developer workflow.
-- Read `docs/design.md` for the architecture and semantic/storage invariants.
-- Read `docs/semantic-materialization.md` only as historical background for older week-materialization terminology; the active runtime is now inline and failure-pattern-native.
+- Read `docs/design.md` for the current architecture and storage/runtime invariants.
 - Treat the PostgreSQL-backed app+DB runtime as the current architecture, not a future target.
 - Treat embedded PostgreSQL as a local-development convenience, not a separate architecture.
 
@@ -16,15 +15,15 @@
 - `pkg/failurepatterns/...`: extraction, range loading, history helpers, and inline failure-pattern aggregation
 - `pkg/frontend/...`: HTTP server, readmodel helpers, shared UI, and the report/failure-patterns/run-log surface packages
 - `pkg/store/contracts`, `pkg/store/postgres`: store abstraction, PostgreSQL runtime, migrations, init/bootstrap
-- `deploy/`: standalone Helm chart for Postgres, app, controllers, and cronjobs
 - `Dockerfile`: container image build
-- `infra/azure/`: Azure static-site storage infrastructure
+- `.github/workflows/`: unit-test and image build/push automation
+- `Makefile`: local developer workflows, image helpers, and redirect-page publishing commands
 - `.cursor/skills/`: project-local skills for review/failure-pattern workflows
 
 ## Invariants
 
-- Semantic weeks are Monday-starting UTC weeks keyed by `YYYY-MM-DD`.
-- Week-shaped routes and history semantics are compatibility shims over date windows; there is no stored semantic-week snapshot runtime anymore.
+- All request windows are UTC.
+- When a surface uses `week=YYYY-MM-DD`, that value is a Monday-starting seven-day UTC window.
 - Semantic identity is driven by extracted failure-pattern text; `signature_id` is provenance/debug context, not the primary merge key.
 - The review queue is diagnostic-only runtime state; the app exposes it via `/api/review/signals/window`.
 - History/window views are computed from current facts through the inline engine and use the current failure-pattern schema.
@@ -40,6 +39,6 @@
 
 ## Current Ops State
 
-- `deploy/` and `Dockerfile` support the current deployment experiments.
+- `Dockerfile` and `.github/workflows/` support the current image build/publish flow.
 - Azure Storage redirect-page publishing remains supported as a compatibility path.
 - Hosted app operation, auth, backups, and full runbooks are still evolving.

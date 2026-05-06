@@ -943,3 +943,55 @@ func TestExtractEvidenceNormalizesCleanupWorkflowDeletionVariants(t *testing.T) 
 		t.Fatalf("expected transport method before cleanup URL to be normalized away, got=%q", gotA)
 	}
 }
+
+func TestExtractEvidenceSplitsCandidateGraphTransportVariants(t *testing.T) {
+	t.Parallel()
+
+	rawDNS := `fail [github.com/Azure/ARO-HCP/test/util/framework/deployment_params.go:127]: failed to get latest install version for candidate channel: query candidate graph for candidate-4.20: Get "https://api.openshift.com/api/upgrades_info/v1/graph?channel=candidate-4.20": dial tcp: lookup api.openshift.com on 172.30.0.10:53: no such host`
+	rawTimeout := `fail [github.com/Azure/ARO-HCP/test/util/framework/deployment_params.go:127]: failed to get latest install version for candidate channel: query candidate graph for candidate-4.20: Get "https://api.openshift.com/api/upgrades_info/v1/graph?channel=candidate-4.20": context deadline exceeded (Client.Timeout exceeded while awaiting headers)`
+	raw503 := `fail [github.com/Azure/ARO-HCP/test/util/framework/deployment_params.go:100]: failed to get latest install version for candidate channel: query candidate graph for candidate-4.20 returned 503 Service Unavailable: upstream connect error or disconnect/reset before headers. reset reason: overflow`
+
+	gotDNS := extractEvidence(rawDNS).CanonicalEvidencePhrase
+	gotTimeout := extractEvidence(rawTimeout).CanonicalEvidencePhrase
+	got503 := extractEvidence(raw503).CanonicalEvidencePhrase
+
+	if gotDNS == gotTimeout || gotDNS == got503 || gotTimeout == got503 {
+		t.Fatalf("expected candidate-graph transport variants to stay distinct:\n  dns=%q\n  timeout=%q\n  503=%q", gotDNS, gotTimeout, got503)
+	}
+	if !strings.Contains(strings.ToLower(gotDNS), "no such host") {
+		t.Fatalf("expected DNS lookup failure detail in canonical phrase, got=%q", gotDNS)
+	}
+	if !strings.Contains(strings.ToLower(gotTimeout), "awaiting headers") {
+		t.Fatalf("expected client-timeout detail in canonical phrase, got=%q", gotTimeout)
+	}
+	if !strings.Contains(strings.ToLower(got503), "503 service unavailable") {
+		t.Fatalf("expected 503 detail in canonical phrase, got=%q", got503)
+	}
+	if strings.Contains(gotDNS, "candidate-4.20") || strings.Contains(gotTimeout, "candidate-4.20") || strings.Contains(got503, "candidate-4.20") {
+		t.Fatalf("expected candidate-channel version to be normalized away:\n  dns=%q\n  timeout=%q\n  503=%q", gotDNS, gotTimeout, got503)
+	}
+}
+
+func TestExtractEvidenceMergesAzureManagedClusterResourceNotFoundVariants(t *testing.T) {
+	t.Parallel()
+
+	rawA := `time=2026-04-30T19:15:08.598Z level=ERROR msg="Step errored." serviceGroup=Microsoft.Azure.ARO.HCP.Management.Infra resourceGroup=management step=svc-mgmt-permissions err="failed to run ARM step: failed to poll deployment: failed to wait for deployment completion
+ERROR CODE: DeploymentFailed
+{ "error": { "code": "DeploymentFailed", "details": [ { "code": "ResourceNotFound", "message": "The Resource 'Microsoft.ContainerService/managedClusters/prow-j1425280-mgmt-1' under resource group 'hcp-underlay-prow-j1425280-mgmt-1' was not found." } ] } }"`
+	rawB := `time=2026-05-04T07:35:50.067Z level=ERROR msg="Step errored." serviceGroup=Microsoft.Azure.ARO.HCP.Management.Infra resourceGroup=management step=svc-mgmt-permissions err="failed to run ARM step: failed to poll deployment: failed to wait for deployment completion
+ERROR CODE: DeploymentFailed
+{ "error": { "code": "DeploymentFailed", "details": [ { "code": "ResourceNotFound", "message": "The Resource 'Microsoft.ContainerService/managedClusters/prow-j7955840-mgmt-1' under resource group 'hcp-underlay-prow-j7955840-mgmt-1' was not found." } ] } }"`
+
+	gotA := extractEvidence(rawA).CanonicalEvidencePhrase
+	gotB := extractEvidence(rawB).CanonicalEvidencePhrase
+
+	if gotA != gotB {
+		t.Fatalf("expected generated managed-cluster names to normalize to the same canonical phrase:\n  A=%q\n  B=%q", gotA, gotB)
+	}
+	if !strings.Contains(gotA, "'Microsoft.ContainerService/managedClusters/<resource>'") {
+		t.Fatalf("expected managed-cluster resource path placeholder, got=%q", gotA)
+	}
+	if !strings.Contains(gotA, "resource group '<resource-group>'") {
+		t.Fatalf("expected quoted resource-group placeholder, got=%q", gotA)
+	}
+}

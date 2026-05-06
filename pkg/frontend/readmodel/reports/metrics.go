@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
+	readmodelmodel "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/model"
+	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
 func loadMetricsDailyForDates(

@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"ci-failure-atlas/pkg/failurepatterns"
-	readmodelwindow "ci-failure-atlas/pkg/frontend/readmodel/window"
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
-	postgresstore "ci-failure-atlas/pkg/store/postgres"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns"
+	readmodelwindow "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/window"
+	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
+	postgresstore "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/postgres"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )

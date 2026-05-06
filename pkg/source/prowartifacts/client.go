@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	sourceoptions "ci-failure-atlas/pkg/source/options"
+	sourceoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/options"
 )
 
 const (

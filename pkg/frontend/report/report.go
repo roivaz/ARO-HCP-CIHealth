@@ -13,13 +13,13 @@ import (
 	"strings"
 	"time"
 
-	"ci-failure-atlas/pkg/failurepatterns"
-	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
-	readmodelpatterns "ci-failure-atlas/pkg/frontend/readmodel/patterns"
-	readmodelreports "ci-failure-atlas/pkg/frontend/readmodel/reports"
-	frontui "ci-failure-atlas/pkg/frontend/ui"
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
-	postgresstore "ci-failure-atlas/pkg/store/postgres"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns"
+	readmodelmodel "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/model"
+	readmodelpatterns "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/patterns"
+	readmodelreports "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/reports"
+	frontui "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/ui"
+	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
+	postgresstore "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/postgres"
 )
 
 const (

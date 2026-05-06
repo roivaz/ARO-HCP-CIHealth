@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	readmodelpatterns "ci-failure-atlas/pkg/frontend/readmodel/patterns"
-	"ci-failure-atlas/pkg/frontend/readmodel/testsupport"
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
+	readmodelpatterns "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/patterns"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/testsupport"
+	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
 func TestBuildFailurePatternReportDataIgnoresDeprecatedPhase3Links(t *testing.T) {

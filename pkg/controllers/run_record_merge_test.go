@@ -3,7 +3,7 @@ package controllers
 import (
 	"testing"
 
-	"ci-failure-atlas/pkg/store/contracts"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
 func TestMergeRunRecordFromSippyPreservesExistingFieldsWhenIncomingMissing(t *testing.T) {

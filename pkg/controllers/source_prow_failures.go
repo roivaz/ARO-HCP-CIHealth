@@ -11,9 +11,9 @@ import (
 
 	"github.com/go-logr/logr"
 
-	sourceoptions "ci-failure-atlas/pkg/source/options"
-	"ci-failure-atlas/pkg/source/prowartifacts"
-	"ci-failure-atlas/pkg/store/contracts"
+	sourceoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/options"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/source/prowartifacts"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"

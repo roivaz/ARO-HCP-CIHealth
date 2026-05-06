@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	readmodelreports "ci-failure-atlas/pkg/frontend/readmodel/reports"
-	"ci-failure-atlas/pkg/frontend/readmodel/testsupport"
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
+	readmodelreports "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/reports"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/testsupport"
+	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
 func TestBuildWeeklyReportDataBuildsCurrentAndPreviousReadModels(t *testing.T) {

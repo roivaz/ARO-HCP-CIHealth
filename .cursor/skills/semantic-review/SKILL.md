@@ -1,7 +1,7 @@
 ---
 name: semantic-review
 description: >-
-  Review failure-pattern quality in CI Failure Atlas by querying the local
+  Review failure-pattern quality in ARO-HCP-CIHealth by querying the local
   failure-pattern and review-signals window APIs, identifying overmerged,
   undermerged, and low-quality failure patterns, and proposing concrete engine
   improvements. Use when the user asks to review failure patterns, check

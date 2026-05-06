@@ -1,11 +1,11 @@
-# CI Failure Atlas Design
+# ARO-HCP-CIHealth Design
 
 Status: current architecture snapshot  
 Last updated: 2026-04-19
 
 ## Purpose
 
-CI Failure Atlas ingests CI run/failure data, derives failure patterns inline from stored facts over arbitrary UTC windows, and serves operator-facing report, failure-patterns, run-log, and review workflows.
+ARO-HCP-CIHealth ingests CI run/failure data, derives failure patterns inline from stored facts over arbitrary UTC windows, and serves operator-facing report, failure-patterns, run-log, and review workflows.
 
 The important architectural point is that the Go app + PostgreSQL runtime is the current architecture, not a future target state.
 
@@ -15,8 +15,8 @@ The runtime has three main planes:
 
 1. **Controllers**
    - Ingest and derive facts into PostgreSQL.
-   - Main entrypoint: `cfa run`
-   - Supporting debug helpers: `cfa run-once`, `cfa sync-once`
+   - Main entrypoint: `cihealth run`
+   - Supporting debug helpers: `cihealth run-once`, `cihealth sync-once`
 
 2. **Inline failure-pattern engine**
    - Loads fact rows from PostgreSQL for the requested UTC time range.
@@ -25,7 +25,7 @@ The runtime has three main planes:
    - Legacy Phase3 link tables may still exist, but the runtime no longer reapplies them in read models.
 
 3. **Product surfaces**
-   - `cfa app` serves report/failure-patterns/run-log views from PostgreSQL plus internal diagnostics APIs.
+   - `cihealth app` serves report/failure-patterns/run-log views from PostgreSQL plus internal diagnostics APIs.
    - Azure Storage can still host a tiny redirect page that points users at the hosted app URL.
 
 ## Codebase Map
@@ -171,7 +171,7 @@ Important persistence rule:
 - read models derive failure patterns and review signals inline from the fact tables
 - legacy semantic/Phase3 rows are ignored by the runtime
 
-NDJSON is no longer part of the runtime architecture. It remains only as a legacy import format for `cfa migrate import-legacy-data`.
+NDJSON is no longer part of the runtime architecture. It remains only as a legacy import format for `cihealth migrate import-legacy-data`.
 
 ## Presentation Windows
 
@@ -203,7 +203,7 @@ Local operation defaults to embedded PostgreSQL with initialization and migratio
 
 In practice:
 
-- `cfa run` and `cfa app` operate against PostgreSQL
+- `cihealth run` and `cihealth app` operate against PostgreSQL
 - embedded Postgres is the default local transport
 - switching to remote PostgreSQL is a configuration detail via `--storage.postgres.*`, not a different runtime model
 
@@ -211,12 +211,12 @@ In practice:
 
 ### Unified app
 
-`cfa app` is the primary operator surface:
+`cihealth app` is the primary operator surface:
 
 - report view (`/report`) with classic week-shaped and arbitrary-window modes
 - failure-patterns view
 - day-scoped run history view (`/run-log`, `/api/run-log/day`)
-- internal review-signals endpoint (`/api/review/signals/week`)
+- internal review-signals endpoint (`/api/review/signals/window`)
 - cross-week history lookups based on fact-backed lookback windows
 
 ### Day run history view and current fact gap
@@ -251,14 +251,14 @@ It is not part of failure-pattern generation or report rendering; it only preser
 
 Primary commands:
 
-- `cfa run`
-- `cfa app`
+- `cihealth run`
+- `cihealth app`
 
 Secondary maintenance/debug commands:
 
-- `cfa run-once`
-- `cfa sync-once`
-- `cfa migrate import-legacy-data`
+- `cihealth run-once`
+- `cihealth sync-once`
+- `cihealth migrate import-legacy-data`
 
 ## Key Design Decisions
 

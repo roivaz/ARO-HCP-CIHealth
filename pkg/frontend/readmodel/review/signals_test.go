@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	readmodelreview "ci-failure-atlas/pkg/frontend/readmodel/review"
-	"ci-failure-atlas/pkg/frontend/readmodel/testsupport"
+	readmodelreview "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/review"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/testsupport"
 )
 
 func TestBuildWindowUsesDateWindowSignals(t *testing.T) {

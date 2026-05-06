@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"ci-failure-atlas/pkg/failurepatterns"
-	failurepatternwindow "ci-failure-atlas/pkg/failurepatterns/window"
-	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
-	readmodelwindow "ci-failure-atlas/pkg/frontend/readmodel/window"
-	sourceoptions "ci-failure-atlas/pkg/source/options"
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns"
+	failurepatternwindow "github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns/window"
+	readmodelmodel "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/model"
+	readmodelwindow "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/window"
+	sourceoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/options"
+	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
 type FailurePatternsQuery struct {

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
+	failurepatterncontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns/contracts"
 )
 
 func TestBuildPresenceResolverFromFailurePatternsFiltersToWindow(t *testing.T) {

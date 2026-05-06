@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
+	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 
 	"github.com/jackc/pgx/v5"
 )

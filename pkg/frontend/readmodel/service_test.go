@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"ci-failure-atlas/pkg/frontend/readmodel/testsupport"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/testsupport"
 )
 
 func TestDiscoverAvailableWeeksUsesFactDates(t *testing.T) {

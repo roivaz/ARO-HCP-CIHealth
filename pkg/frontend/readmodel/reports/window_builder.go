@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	readmodelpatterns "ci-failure-atlas/pkg/frontend/readmodel/patterns"
-	readmodelwindow "ci-failure-atlas/pkg/frontend/readmodel/window"
+	readmodelpatterns "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/patterns"
+	readmodelwindow "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/window"
 )
 
 type ReportQuery struct {

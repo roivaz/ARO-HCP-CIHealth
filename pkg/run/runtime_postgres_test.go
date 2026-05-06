@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"ci-failure-atlas/pkg/testsupport/pgtest"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/testsupport/pgtest"
 )
 
 func TestCompleteUsesPostgresStoreWhenEnabled(t *testing.T) {

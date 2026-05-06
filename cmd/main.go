@@ -10,7 +10,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
 
-	"ci-failure-atlas/pkg/cli"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/cli"
 
 	"k8s.io/klog/v2"
 )
@@ -23,8 +23,8 @@ func main() {
 	defer stop()
 
 	cmd := &cobra.Command{
-		Use:           "cfa",
-		Short:         "CI Failure Atlas command line interface.",
+		Use:           "cihealth",
+		Short:         "ARO-HCP-CIHealth command line interface.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRun: func(cmd *cobra.Command, _ []string) {

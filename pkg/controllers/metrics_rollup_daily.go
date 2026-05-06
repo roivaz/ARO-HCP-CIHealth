@@ -10,8 +10,8 @@ import (
 
 	"github.com/go-logr/logr"
 
-	sourcelanes "ci-failure-atlas/pkg/source/lanes"
-	"ci-failure-atlas/pkg/store/contracts"
+	sourcelanes "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/lanes"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"

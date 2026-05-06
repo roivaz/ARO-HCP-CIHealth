@@ -141,7 +141,7 @@ func (c *HTTPClient) ListPullRequestsPage(ctx context.Context, opts ListPullRequ
 			return nil, RateLimit{}, false, fmt.Errorf("build github request: %w", err)
 		}
 		req.Header.Set("Accept", "application/vnd.github+json")
-		req.Header.Set("User-Agent", "ci-failure-atlas")
+		req.Header.Set("User-Agent", "github.com/roivaz/ARO-HCP-CIHealth")
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {

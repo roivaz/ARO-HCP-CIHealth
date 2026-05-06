@@ -5,12 +5,12 @@ import (
 	"strings"
 	"time"
 
-	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
-	failurepatternwindow "ci-failure-atlas/pkg/failurepatterns/window"
-	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
-	readmodelpatterns "ci-failure-atlas/pkg/frontend/readmodel/patterns"
-	readmodelwindow "ci-failure-atlas/pkg/frontend/readmodel/window"
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
+	failurepatterncontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns/contracts"
+	failurepatternwindow "github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns/window"
+	readmodelmodel "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/model"
+	readmodelpatterns "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/patterns"
+	readmodelwindow "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/window"
+	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
 const signalHorizonMinWeeks = 3

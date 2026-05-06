@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	readmodelrunlog "ci-failure-atlas/pkg/frontend/readmodel/runlog"
-	frontui "ci-failure-atlas/pkg/frontend/ui"
-	sourceoptions "ci-failure-atlas/pkg/source/options"
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
+	readmodelrunlog "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/runlog"
+	frontui "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/ui"
+	sourceoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/options"
+	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
 type PageOptions struct {

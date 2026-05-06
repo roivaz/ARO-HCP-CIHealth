@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
-	failurepatternwindow "ci-failure-atlas/pkg/failurepatterns/window"
-	sourceoptions "ci-failure-atlas/pkg/source/options"
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
+	failurepatterncontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns/contracts"
+	failurepatternwindow "github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns/window"
+	sourceoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/options"
+	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
 const DefaultHistoryWeeks = 4

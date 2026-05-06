@@ -4,11 +4,11 @@ CFA ?= go run cmd/main.go
 GO ?= go
 GO_PACKAGES ?= ./...
 RUN_ARGS ?=
-BINARY ?= bin/cfa
+BINARY ?= bin/cihealth
 COVER_PROFILE ?= .work/coverage.out
 DOCKER ?= docker
 DOCKERFILE ?= Dockerfile
-IMAGE_REPOSITORY ?= quay.io/roivaz/cfa
+IMAGE_REPOSITORY ?= quay.io/roivaz/cihealth
 IMAGE_TAG ?= latest
 IMAGE ?= $(IMAGE_REPOSITORY):$(IMAGE_TAG)
 IMAGE_SOURCES := $(shell find cmd pkg -type f) go.mod go.sum
@@ -132,8 +132,8 @@ help:
 	@echo ""
 	@echo "Example:"
 	@echo "  make app APP_WEEK=2026-03-09"
-	@echo "  make db-dump-remote REMOTE_PGUSER=myuser REMOTE_PGPASSWORD=secret REMOTE_PGDATABASE=mydb DB_DUMP_FILE=.work/cfa-prod.sql"
-	@echo "  make db-restore-local DB_DUMP_FILE=.work/cfa-prod.sql"
+	@echo "  make db-dump-remote REMOTE_PGUSER=myuser REMOTE_PGPASSWORD=secret REMOTE_PGDATABASE=mydb DB_DUMP_FILE=.work/cihealth-prod.sql"
+	@echo "  make db-restore-local DB_DUMP_FILE=.work/cihealth-prod.sql"
 	@echo "  make site-redirect SITE_ROOT=site SITE_REDIRECT_URL=https://cihealth.tools.hcpsvc.osadev.cloud/"
 	@echo "  make site-upload AZ_STORAGE_ACCOUNT=myreportstorage SITE_ROOT=site"
 	@echo "  make run-controllers CONTROLLER_ENVS=dev,int,stg,prod"

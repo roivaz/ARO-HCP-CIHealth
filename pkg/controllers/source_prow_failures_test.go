@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"ci-failure-atlas/pkg/store/contracts"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
 func TestShouldWriteMissingArtifactMarkerWaitsForRetryWindow(t *testing.T) {

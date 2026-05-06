@@ -9,8 +9,8 @@ import (
 
 	"github.com/go-logr/logr"
 
-	sippysource "ci-failure-atlas/pkg/source/sippy"
-	"ci-failure-atlas/pkg/store/contracts"
+	sippysource "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/sippy"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
 func TestSyncEnvironmentFetchesAllConfiguredSippyJobs(t *testing.T) {

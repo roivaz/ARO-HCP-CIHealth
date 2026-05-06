@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
-	failureextractor "ci-failure-atlas/pkg/failurepatterns/extractor"
-	sourcelanes "ci-failure-atlas/pkg/source/lanes"
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
+	failurepatterncontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns/contracts"
+	failureextractor "github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns/extractor"
+	sourcelanes "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/lanes"
+	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
 type ComputeOptions struct {

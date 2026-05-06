@@ -9,7 +9,7 @@ COPY cmd ./cmd
 COPY pkg ./pkg
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} \
-    go build -trimpath -ldflags='-s -w' -o /out/cfa ./cmd
+    go build -trimpath -ldflags='-s -w' -o /out/cihealth ./cmd
 
 FROM debian:bookworm-slim
 
@@ -22,7 +22,7 @@ RUN apt-get update && \
 WORKDIR /workspace
 ENV HOME=/workspace
 
-COPY --from=builder /out/cfa /usr/local/bin/cfa
+COPY --from=builder /out/cihealth /usr/local/bin/cihealth
 
 USER 65532:65532
-ENTRYPOINT ["/usr/local/bin/cfa"]
+ENTRYPOINT ["/usr/local/bin/cihealth"]

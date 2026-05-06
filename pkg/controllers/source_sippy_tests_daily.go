@@ -11,9 +11,9 @@ import (
 
 	"github.com/go-logr/logr"
 
-	sourcelanes "ci-failure-atlas/pkg/source/lanes"
-	sippysource "ci-failure-atlas/pkg/source/sippy"
-	"ci-failure-atlas/pkg/store/contracts"
+	sourcelanes "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/lanes"
+	sippysource "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/sippy"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"

@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"ci-failure-atlas/pkg/failurepatterns"
-	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
-	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
-	readmodelpatterns "ci-failure-atlas/pkg/frontend/readmodel/patterns"
-	sourceoptions "ci-failure-atlas/pkg/source/options"
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns"
+	failurepatterncontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns/contracts"
+	readmodelmodel "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/model"
+	readmodelpatterns "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/patterns"
+	sourceoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/options"
+	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
 const (

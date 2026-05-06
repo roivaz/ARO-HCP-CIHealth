@@ -230,3 +230,23 @@ func TestCleanCanonicalScrubsClusterCreationQuotedName(t *testing.T) {
 		t.Fatalf("expected URL placeholder in canonical phrase, got=%q", got)
 	}
 }
+
+func TestCleanCanonicalScrubsQuotedAzureResourcePathAndResourceGroup(t *testing.T) {
+	t.Parallel()
+
+	input := "ERROR CODE: DeploymentFailed; detail code ResourceNotFound; detail message The Resource 'Microsoft.ContainerService/managedClusters/prow-j7955840-mgmt-1' under resource group 'hcp-underlay-prow-j7955840-mgmt-1' was not found.; provider Microsoft.ContainerService"
+	got := cleanCanonical(input)
+
+	if strings.Contains(got, "prow-j7955840-mgmt-1") {
+		t.Fatalf("expected managed-cluster name to be scrubbed, got=%q", got)
+	}
+	if strings.Contains(got, "hcp-underlay-prow-j7955840-mgmt-1") {
+		t.Fatalf("expected resource-group name to be scrubbed, got=%q", got)
+	}
+	if !strings.Contains(got, "'Microsoft.ContainerService/managedClusters/<resource>'") {
+		t.Fatalf("expected managed-cluster resource path placeholder, got=%q", got)
+	}
+	if !strings.Contains(got, "resource group '<resource-group>'") {
+		t.Fatalf("expected quoted resource-group placeholder, got=%q", got)
+	}
+}

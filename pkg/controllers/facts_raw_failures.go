@@ -9,8 +9,8 @@ import (
 
 	"github.com/go-logr/logr"
 
-	sourcenormalize "ci-failure-atlas/pkg/source/normalize"
-	"ci-failure-atlas/pkg/store/contracts"
+	sourcenormalize "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/normalize"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"

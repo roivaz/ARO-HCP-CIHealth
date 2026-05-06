@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"ci-failure-atlas/pkg/store/postgres/initdb"
-	"ci-failure-atlas/pkg/store/postgres/migrations"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/postgres/initdb"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/postgres/migrations"
 
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 	"github.com/jackc/pgx/v5/pgxpool"

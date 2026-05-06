@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	failureextractor "ci-failure-atlas/pkg/failurepatterns/extractor"
-	sourcelanes "ci-failure-atlas/pkg/source/lanes"
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
-	postgresstore "ci-failure-atlas/pkg/store/postgres"
-	"ci-failure-atlas/pkg/store/postgres/initdb"
-	"ci-failure-atlas/pkg/store/postgres/migrations"
-	"ci-failure-atlas/pkg/testsupport/pgtest"
+	failureextractor "github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns/extractor"
+	sourcelanes "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/lanes"
+	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
+	postgresstore "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/postgres"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/postgres/initdb"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/postgres/migrations"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/testsupport/pgtest"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )

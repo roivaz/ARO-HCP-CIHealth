@@ -3,8 +3,8 @@ package runlog
 import (
 	"testing"
 
-	"ci-failure-atlas/pkg/failurepatterns"
-	readmodelpatterns "ci-failure-atlas/pkg/frontend/readmodel/patterns"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns"
+	readmodelpatterns "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/patterns"
 )
 
 type staticPresenceResolver struct {

@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"ci-failure-atlas/pkg/failurepatterns"
-	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
-	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
-	readmodelwindow "ci-failure-atlas/pkg/frontend/readmodel/window"
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
-	postgresstore "ci-failure-atlas/pkg/store/postgres"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns"
+	failurepatterncontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns/contracts"
+	readmodelmodel "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/model"
+	readmodelwindow "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/window"
+	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
+	postgresstore "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/postgres"
 )
 
 const failurePatternReportFullErrorExamplesLimit = 3

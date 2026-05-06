@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
-	readmodelpatterns "ci-failure-atlas/pkg/frontend/readmodel/patterns"
-	"ci-failure-atlas/pkg/frontend/readmodel/testsupport"
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
+	readmodelmodel "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/model"
+	readmodelpatterns "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/patterns"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/testsupport"
+	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
 func TestBuildWindowDataBuildsWindowRowsFromFacts(t *testing.T) {

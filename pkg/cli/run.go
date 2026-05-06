@@ -6,14 +6,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"ci-failure-atlas/pkg/controllers"
-	"ci-failure-atlas/pkg/run"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/controllers"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/run"
 )
 
 func NewRunCommand() (*cobra.Command, error) {
 	cmd := &cobra.Command{
 		Use:           "run",
-		Short:         "Run CI Failure Atlas controllers continuously.",
+		Short:         "Run ARO-HCP-CIHealth controllers continuously.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

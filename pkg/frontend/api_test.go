@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	readmodelpatterns "ci-failure-atlas/pkg/frontend/readmodel/patterns"
-	readmodelreview "ci-failure-atlas/pkg/frontend/readmodel/review"
-	readmodelrunlog "ci-failure-atlas/pkg/frontend/readmodel/runlog"
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
-	postgresstore "ci-failure-atlas/pkg/store/postgres"
-	"ci-failure-atlas/pkg/store/postgres/initdb"
-	"ci-failure-atlas/pkg/store/postgres/migrations"
-	"ci-failure-atlas/pkg/testsupport/pgtest"
+	readmodelpatterns "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/patterns"
+	readmodelreview "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/review"
+	readmodelrunlog "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/runlog"
+	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
+	postgresstore "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/postgres"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/postgres/initdb"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/postgres/migrations"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/testsupport/pgtest"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )

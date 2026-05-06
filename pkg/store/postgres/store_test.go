@@ -8,10 +8,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
-	"ci-failure-atlas/pkg/store/postgres/initdb"
-	"ci-failure-atlas/pkg/store/postgres/migrations"
-	"ci-failure-atlas/pkg/testsupport/pgtest"
+	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/postgres/initdb"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/postgres/migrations"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/testsupport/pgtest"
 )
 
 func TestNewRequiresPool(t *testing.T) {

@@ -143,3 +143,25 @@ Error: Put "https://arohcpsvcdev.azurecr.io/v2/ci-op-98gxy5d6/pipeline/blobs/upl
 		t.Fatalf("expected canonical phrase to keep the inner transfer failure, got=%q", got)
 	}
 }
+
+func TestExtractEvidenceLogfmtImageMirrorPrefersRegistryResolutionFailure(t *testing.T) {
+	t.Parallel()
+
+	raw := `time=2026-05-05T04:33:39.731Z level=ERROR msg="Step errored." serviceGroup=Microsoft.Azure.ARO.HCP.Velero resourceGroup=global step=mirror-hypershift-plugin-image err="error running Image Mirror Step, failed to execute shell command: Checking USE_OC_LOGIN_REGISTRIES: registry.build05.ci.openshift.org registry.build05.ci.openshift.org registry.build05.ci.openshift.org registry.build05.ci.openshift.org registry.build05.ci.openshift.org
+Fetch pull secret for source registry registry.redhat.io from arohcpdev-global KV.
+Logging into target ACR arohcpsvcdev.
+Login Succeeded
+Mirroring image registry.redhat.io/oadp/oadp-hypershift-velero-plugin-rhel9@sha256:381926cbc8ac3a769b17174452453ddc98c731981332374de7a0927617513a96 to arohcpsvcdev.azurecr.io/oadp/oadp-hypershift-velero-plugin-rhel9:381926cbc8ac3a769b17174452453ddc98c731981332374de7a0927617513a96.
+The image will still be available under it's original digest sha256:381926cbc8ac3a769b17174452453ddc98c731981332374de7a0927617513a96 in the target registry.
+Error response from registry: failed to resolve sha256:381926cbc8ac3a769b17174452453ddc98c731981332374de7a0927617513a96: unavailable: Server error encountered while finding repo
+ exit status 1"`
+
+	got := extractEvidence(raw).CanonicalEvidencePhrase
+	lowered := strings.ToLower(got)
+	if strings.Contains(lowered, "checking use_oc_login_registries") {
+		t.Fatalf("expected canonical phrase to skip image-mirror setup preamble, got=%q", got)
+	}
+	if !strings.Contains(lowered, "failed to resolve") || !strings.Contains(lowered, "server error encountered while finding repo") {
+		t.Fatalf("expected canonical phrase to keep the registry resolution failure, got=%q", got)
+	}
+}

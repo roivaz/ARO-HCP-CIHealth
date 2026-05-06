@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	failurepatternwindow "ci-failure-atlas/pkg/failurepatterns/window"
-	readmodelwindow "ci-failure-atlas/pkg/frontend/readmodel/window"
-	sourceoptions "ci-failure-atlas/pkg/source/options"
+	failurepatternwindow "github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns/window"
+	readmodelwindow "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/window"
+	sourceoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/options"
 
 	"golang.org/x/sync/singleflight"
 )

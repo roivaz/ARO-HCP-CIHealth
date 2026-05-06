@@ -7,7 +7,7 @@ import (
 	"time"
 	"unicode"
 
-	"ci-failure-atlas/pkg/failurepatterns"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns"
 )
 
 func OrderedUniqueReferences(rows []RunReference) []RunReference {

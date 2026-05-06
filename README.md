@@ -1,13 +1,13 @@
-# CI Failure Atlas
+# ARO-HCP-CIHealth
 
-CI Failure Atlas is a PostgreSQL-backed Go application for ingesting ARO CI data, deriving failure patterns inline from stored facts over arbitrary UTC windows, and serving operator-facing report/failure-patterns/run-log views plus internal diagnostics APIs.
+ARO-HCP-CIHealth is a PostgreSQL-backed Go application for ingesting ARO CI data, deriving failure patterns inline from stored facts over arbitrary UTC windows, and serving operator-facing report/failure-patterns/run-log views plus internal diagnostics APIs.
 
 The app+DB runtime is the primary architecture. Dynamic HTML is served directly from PostgreSQL-backed state.
 
 ## Current Architecture
 
-- `cfa run` continuously ingests Sippy, Prow, and GitHub data and derives normalized facts into PostgreSQL.
-- `cfa app` serves the unified report, failure patterns, run log, and internal review-signals API from PostgreSQL, computing failure patterns inline from fact tables.
+- `cihealth run` continuously ingests Sippy, Prow, and GitHub data and derives normalized facts into PostgreSQL.
+- `cihealth app` serves the unified report, failure patterns, run log, and internal review-signals API from PostgreSQL, computing failure patterns inline from fact tables.
 
 Local development defaults to embedded PostgreSQL with initialization and migrations enabled. Remote PostgreSQL is supported through the usual `--storage.postgres.*` flags.
 
@@ -62,7 +62,7 @@ Key app routes:
 - `/report?week=YYYY-MM-DD` renders the classic week-shaped report view
 - `/report?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` renders an arbitrary UTC report window
 - `/failure-patterns?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` renders the failure-patterns window view
-- `/api/review/signals/week?week=YYYY-MM-DD` returns internal review-signal diagnostics for one calendar-week compatibility window
+- `/api/review/signals/window?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` returns internal review-signal diagnostics for a UTC date window
 
 The day-scoped run history surface is:
 
@@ -95,13 +95,13 @@ make db-dump-remote \
   REMOTE_PGUSER=<remote-user> \
   REMOTE_PGPASSWORD=<remote-password> \
   REMOTE_PGDATABASE=<remote-database> \
-  DB_DUMP_FILE=.work/cfa-prod.sql
+  DB_DUMP_FILE=.work/cihealth-prod.sql
 
 # Terminal 3: start the local app (this starts embedded PostgreSQL by default)
 make app
 
 # Terminal 4: restore the dump into the local embedded database
-make db-restore-local DB_DUMP_FILE=.work/cfa-prod.sql
+make db-restore-local DB_DUMP_FILE=.work/cihealth-prod.sql
 ```
 
 Notes:
@@ -165,8 +165,8 @@ Useful local smoke commands:
 ```bash
 make run-controllers CONTROLLER_ENVS=dev,int,stg,prod
 make app APP_WEEK=2026-03-23
-make db-dump-remote REMOTE_PGUSER=<remote-user> REMOTE_PGPASSWORD=<remote-password> REMOTE_PGDATABASE=<remote-database> DB_DUMP_FILE=.work/cfa-prod.sql
-make db-restore-local DB_DUMP_FILE=.work/cfa-prod.sql
+make db-dump-remote REMOTE_PGUSER=<remote-user> REMOTE_PGPASSWORD=<remote-password> REMOTE_PGDATABASE=<remote-database> DB_DUMP_FILE=.work/cihealth-prod.sql
+make db-restore-local DB_DUMP_FILE=.work/cihealth-prod.sql
 make site-upload AZ_STORAGE_ACCOUNT=<storage-account-name> SITE_ROOT=site
 ```
 
@@ -174,9 +174,9 @@ make site-upload AZ_STORAGE_ACCOUNT=<storage-account-name> SITE_ROOT=site
 
 The main runtime commands above are the normal operator surface. There are also targeted maintenance/debug helpers:
 
-- `cfa run-once`
-- `cfa sync-once`
-- `cfa migrate import-legacy-data`
+- `cihealth run-once`
+- `cihealth sync-once`
+- `cihealth migrate import-legacy-data`
 
 ## Next Milestone
 

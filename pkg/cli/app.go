@@ -11,9 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"ci-failure-atlas/pkg/frontend"
-	frontreadmodel "ci-failure-atlas/pkg/frontend/readmodel"
-	postgresoptions "ci-failure-atlas/pkg/store/postgres/options"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend"
+	frontreadmodel "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel"
+	postgresoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/postgres/options"
 )
 
 func NewAppCommand() (*cobra.Command, error) {

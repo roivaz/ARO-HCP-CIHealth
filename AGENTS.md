@@ -1,4 +1,4 @@
-# CI Failure Atlas Agent Notes
+# ARO-HCP-CIHealth Agent Notes
 
 ## Start Here
 
@@ -26,7 +26,7 @@
 - Semantic weeks are Monday-starting UTC weeks keyed by `YYYY-MM-DD`.
 - Week-shaped routes and history semantics are compatibility shims over date windows; there is no stored semantic-week snapshot runtime anymore.
 - Semantic identity is driven by extracted failure-pattern text; `signature_id` is provenance/debug context, not the primary merge key.
-- The review queue is diagnostic-only runtime state; the app exposes it via `/api/review/signals/week`.
+- The review queue is diagnostic-only runtime state; the app exposes it via `/api/review/signals/window`.
 - History/window views are computed from current facts through the inline engine and use the current failure-pattern schema.
 - User-facing docs say "failure patterns" and "run log", but some internal files and symbols still use older phase-oriented `global` names.
 

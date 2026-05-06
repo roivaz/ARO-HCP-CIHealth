@@ -8,9 +8,9 @@ import (
 
 	"github.com/go-logr/logr"
 
-	sourceoptions "ci-failure-atlas/pkg/source/options"
-	"ci-failure-atlas/pkg/source/prowjobs"
-	"ci-failure-atlas/pkg/store/contracts"
+	sourceoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/options"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/source/prowjobs"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 

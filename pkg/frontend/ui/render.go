@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
-	sourceoptions "ci-failure-atlas/pkg/source/options"
+	readmodelmodel "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/model"
+	sourceoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/options"
 )
 
 type RunReference = readmodelmodel.RunReference

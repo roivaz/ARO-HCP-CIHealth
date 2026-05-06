@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
-	readmodelpatterns "ci-failure-atlas/pkg/frontend/readmodel/patterns"
-	frontui "ci-failure-atlas/pkg/frontend/ui"
-	sourceoptions "ci-failure-atlas/pkg/source/options"
+	readmodelmodel "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/model"
+	readmodelpatterns "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/patterns"
+	frontui "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/ui"
+	sourceoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/options"
 )
 
 const (

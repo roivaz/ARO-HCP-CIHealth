@@ -3,7 +3,7 @@ package controllers
 import (
 	"strings"
 
-	"ci-failure-atlas/pkg/store/contracts"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
 func mergeRunRecordFromSippy(existing contracts.RunRecord, existingFound bool, candidate contracts.RunRecord) contracts.RunRecord {

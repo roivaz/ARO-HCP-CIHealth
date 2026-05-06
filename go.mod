@@ -1,4 +1,4 @@
-module ci-failure-atlas
+module github.com/roivaz/ARO-HCP-CIHealth
 
 go 1.25.0
 

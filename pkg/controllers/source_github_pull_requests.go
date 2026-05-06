@@ -8,9 +8,9 @@ import (
 
 	"github.com/go-logr/logr"
 
-	githubsource "ci-failure-atlas/pkg/source/githubpullrequests"
-	sourceoptions "ci-failure-atlas/pkg/source/options"
-	"ci-failure-atlas/pkg/store/contracts"
+	githubsource "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/githubpullrequests"
+	sourceoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/options"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"

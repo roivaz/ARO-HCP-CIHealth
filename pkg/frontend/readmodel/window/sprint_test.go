@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	readmodelwindow "ci-failure-atlas/pkg/frontend/readmodel/window"
+	readmodelwindow "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/window"
 )
 
 func TestSprintWindowForDateAnchorAlignment(t *testing.T) {

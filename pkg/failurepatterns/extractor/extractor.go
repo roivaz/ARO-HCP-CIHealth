@@ -21,6 +21,7 @@ var (
 	reCleanLookupHostOnServer     = regexp.MustCompile(`(?i)\blookup\s+[a-z0-9.-]+\s+on\s+\d{1,3}(?:\.\d{1,3}){3}:\d+\b`)
 	reCleanResourceGroupQuoted    = regexp.MustCompile(`(?i)resourcegroup="[^"]+"`)
 	reCleanResourceGroupBare      = regexp.MustCompile(`(?i)\bresource group [a-z0-9-]+\b`)
+	reCleanResourceGroupSingle    = regexp.MustCompile(`(?i)\bresource group '[^']+'`)
 	reCleanClusterQuoted          = regexp.MustCompile(`(?i)cluster="[^"]+"`)
 	reCleanClusterPhraseQuoted    = regexp.MustCompile(`(?i)\bcluster "[^"]+"`)
 	reCleanClusterCreationQuoted  = regexp.MustCompile(`(?i)\bcluster creation ["'][^"']+["']`)
@@ -89,6 +90,10 @@ var (
 	// Single-quoted opaque alphanumeric IDs (≥20 chars) such as OCM cluster
 	// internal IDs that appear in Azure RP error messages.
 	reCleanQuotedOpaqueID = regexp.MustCompile(`'[a-z0-9]{20,}'`)
+	// Single-quoted Azure provider/type/name path, e.g.
+	// 'Microsoft.ContainerService/managedClusters/prow-j123456-mgmt-1'. Keep the
+	// provider/type anchor but scrub the generated resource name.
+	reCleanQuotedAzureResourcePath = regexp.MustCompile(`'Microsoft\.[A-Za-z]+(?:\.[A-Za-z]+)?(?:/[A-Za-z0-9._-]+){2,}'`)
 	// logfmt err= field value extracted from a step-error log line.
 	// The pattern matches level=error … msg="Step errored." … err="<value>" to
 	// capture the actionable error message without logfmt boilerplate fields.
@@ -241,6 +246,12 @@ func ExtractWithOptions(text string, opts ExtractOptions) FailurePattern {
 	}
 	if releaseStatusDescription != "" && (picked == "" || isReleaseStatusWrapperPick(picked)) {
 		picked = releaseStatusDescription
+	}
+	if candidateGraphFailure := bestCandidateGraphFailure(raw); candidateGraphFailure != "" {
+		picked = candidateGraphFailure
+	}
+	if imageMirrorFailure := bestImageMirrorInnerFailure(raw); imageMirrorFailure != "" {
+		picked = imageMirrorFailure
 	}
 
 	if picked == "" {
@@ -450,6 +461,7 @@ func cleanCanonical(value string) string {
 	text = reCleanLookupHostOnServer.ReplaceAllString(text, "lookup <host> on <dns-server>")
 	text = reCleanResourceGroupQuoted.ReplaceAllString(text, `resourcegroup="<resource-group>"`)
 	text = reCleanResourceGroupBare.ReplaceAllString(text, "resource group <resource-group>")
+	text = reCleanResourceGroupSingle.ReplaceAllString(text, "resource group '<resource-group>'")
 	text = reCleanClusterQuoted.ReplaceAllString(text, `cluster="<cluster>"`)
 	text = reCleanClusterPhraseQuoted.ReplaceAllString(text, `cluster "<cluster>"`)
 	text = reCleanClusterCreationQuoted.ReplaceAllString(text, `cluster creation "<cluster>"`)
@@ -469,6 +481,7 @@ func cleanCanonical(value string) string {
 	text = reCleanJSONTimeField.ReplaceAllString(text, "")
 	text = reCleanHCPApiHost.ReplaceAllString(text, "<hcp-api-host>")
 	text = reCleanOCPVersion.ReplaceAllString(text, "openshift-v<version>")
+	text = normalizeQuotedAzureResourcePath(text)
 	text = reCleanQuotedOpaqueID.ReplaceAllString(text, "'<id>'")
 	text = reCleanK8sLogPrefix.ReplaceAllString(text, "")
 	text = reCleanMakeDirectory.ReplaceAllString(text, "")
@@ -552,6 +565,18 @@ func normalizeCleanupWorkflowDeletion(value string) string {
 	normalized = reCleanupWorkflowResourceName.ReplaceAllString(normalized, `${1}<cleanup-resource>${3}`)
 	normalized = reCleanupWorkflowMethodURL.ReplaceAllString(normalized, ": <url>")
 	return collapseWS(normalized)
+}
+
+func normalizeQuotedAzureResourcePath(value string) string {
+	return reCleanQuotedAzureResourcePath.ReplaceAllStringFunc(value, func(match string) string {
+		inner := strings.Trim(match, `'`)
+		parts := strings.Split(inner, "/")
+		if len(parts) < 3 {
+			return match
+		}
+		parts[len(parts)-1] = "<resource>"
+		return "'" + strings.Join(parts, "/") + "'"
+	})
 }
 
 func truncateCanonical(value string, max int) string {
@@ -1275,6 +1300,36 @@ func bestHTTPResponseStatusLine(text string) string {
 		}
 	}
 	return ""
+}
+
+func bestCandidateGraphFailure(text string) string {
+	lines := splitNonEmptyLines(text)
+	best := ""
+	for _, line := range lines {
+		token := collapseWS(line)
+		lowered := strings.ToLower(token)
+		if !strings.Contains(lowered, "query candidate graph for") {
+			continue
+		}
+		switch {
+		case strings.Contains(lowered, "returned 503 service unavailable"):
+			return token
+		case strings.Contains(lowered, "no such host"):
+			return token
+		case strings.Contains(lowered, "client.timeout exceeded while awaiting headers"):
+			return token
+		case strings.Contains(lowered, "context deadline exceeded"):
+			best = token
+		}
+	}
+	return best
+}
+
+func bestImageMirrorInnerFailure(text string) string {
+	if !strings.Contains(strings.ToLower(text), "error running image mirror step, failed to execute shell command:") {
+		return ""
+	}
+	return bestInnerStepErrorLine(text)
 }
 
 func bestInnerStepErrorLine(text string) string {

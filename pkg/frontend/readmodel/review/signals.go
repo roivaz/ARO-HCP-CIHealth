@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"ci-failure-atlas/pkg/failurepatterns"
-	failurepatterncontracts "ci-failure-atlas/pkg/failurepatterns/contracts"
-	failurepatternwindow "ci-failure-atlas/pkg/failurepatterns/window"
-	readmodelmodel "ci-failure-atlas/pkg/frontend/readmodel/model"
-	readmodelwindow "ci-failure-atlas/pkg/frontend/readmodel/window"
-	sourceoptions "ci-failure-atlas/pkg/source/options"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns"
+	failurepatterncontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns/contracts"
+	failurepatternwindow "github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns/window"
+	readmodelmodel "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/model"
+	readmodelwindow "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/window"
+	sourceoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/options"
 )
 
 type ReviewSignalReference struct {

@@ -8,11 +8,11 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
 
-	"ci-failure-atlas/pkg/controllers"
-	sourceoptions "ci-failure-atlas/pkg/source/options"
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
-	postgresstore "ci-failure-atlas/pkg/store/postgres"
-	postgresoptions "ci-failure-atlas/pkg/store/postgres/options"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/controllers"
+	sourceoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/options"
+	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
+	postgresstore "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/postgres"
+	postgresoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/postgres/options"
 )
 
 type controllerCommandOptions struct {

@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	readmodelrunlog "ci-failure-atlas/pkg/frontend/readmodel/runlog"
-	"ci-failure-atlas/pkg/frontend/readmodel/testsupport"
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
+	readmodelrunlog "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/runlog"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/testsupport"
+	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
 func TestBuildDayBuildsMatchedAndUnmatchedRuns(t *testing.T) {

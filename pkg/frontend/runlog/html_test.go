@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	readmodelrunlog "ci-failure-atlas/pkg/frontend/readmodel/runlog"
-	storecontracts "ci-failure-atlas/pkg/store/contracts"
+	readmodelrunlog "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/runlog"
+	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
 func TestDayRunHistoryFailureDetailsHTMLSkipsNonArtifactBackedFailures(t *testing.T) {

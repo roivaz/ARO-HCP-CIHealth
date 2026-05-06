@@ -195,7 +195,9 @@ func (o *ValidatedOptions) Complete(ctx context.Context) (*Options, error) {
 	var connectionURL string
 	if o.Embedded {
 		cfg := embeddedpostgres.DefaultConfig().
-			Version(embeddedpostgres.V18).
+			// embedded-postgres v1.34.0 advertises V18 as 18.3.0, but the
+			// downloadable binary set does not currently include that release.
+			Version(embeddedpostgres.V17).
 			DataPath(o.EmbeddedDataDir)
 		if o.EmbeddedBinaryDir != "" {
 			cfg = cfg.BinariesPath(o.EmbeddedBinaryDir)

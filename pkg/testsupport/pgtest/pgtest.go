@@ -3,6 +3,7 @@ package pgtest
 import (
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
@@ -23,11 +24,17 @@ func StartEmbedded(baseDir string) (*EmbeddedServer, error) {
 	if err != nil {
 		return nil, err
 	}
+	cachePath := filepath.Join(baseDir, "cache")
+	if userCacheDir, err := os.UserCacheDir(); err == nil && userCacheDir != "" {
+		cachePath = filepath.Join(userCacheDir, "cihealth", "embedded-postgres")
+	}
 	cfg := embeddedpostgres.DefaultConfig().
-		Version(embeddedpostgres.V18).
+		// embedded-postgres v1.34.0 advertises V18 as 18.3.0, but the
+		// downloadable binary set does not currently include that release.
+		Version(embeddedpostgres.V17).
 		Port(uint32(port)).
 		RuntimePath(filepath.Join(baseDir, "runtime")).
-		CachePath(filepath.Join(baseDir, "cache")).
+		CachePath(cachePath).
 		DataPath(filepath.Join(baseDir, "data"))
 
 	db := embeddedpostgres.NewDatabase(cfg)

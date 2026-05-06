@@ -1,306 +1,196 @@
 # ARO-HCP-CIHealth Design
 
 Status: current architecture snapshot  
-Last updated: 2026-04-19
+Last updated: 2026-05-06
 
 ## Purpose
 
-ARO-HCP-CIHealth ingests CI run/failure data, derives failure patterns inline from stored facts over arbitrary UTC windows, and serves operator-facing report, failure-patterns, run-log, and review workflows.
+ARO-HCP-CIHealth ingests ARO CI data into PostgreSQL, derives failure patterns from stored facts over UTC time windows, and serves operator-facing report, failure-patterns, run-log, and review workflows.
 
-The important architectural point is that the Go app + PostgreSQL runtime is the current architecture, not a future target state.
+The system has two runtime entrypoints:
 
-## System Overview
+- `cihealth run` continuously fetches source data and writes normalized facts into PostgreSQL
+- `cihealth app` serves HTML and JSON surfaces from PostgreSQL-backed state and computes failure patterns on demand for the requested window
 
-The runtime has three main planes:
+## Repository Map
 
-1. **Controllers**
-   - Ingest and derive facts into PostgreSQL.
-   - Main entrypoint: `cihealth run`
-   - Supporting debug helpers: `cihealth run-once`, `cihealth sync-once`
+The main repository areas are:
 
-2. **Inline failure-pattern engine**
-   - Loads fact rows from PostgreSQL for the requested UTC time range.
-   - Extracts row-level failure patterns and aggregates them deterministically in memory.
-   - Computes history and review signals from fact-backed lookback windows instead of stored semantic-week snapshots.
-   - Legacy Phase3 link tables may still exist, but the runtime no longer reapplies them in read models.
+- `cmd/main.go`: Cobra CLI bootstrap
+- `pkg/cli`: command wiring and PostgreSQL option binding
+- `pkg/run`: continuous controller runtime
+- `pkg/controllers`: fact-producing controllers and reconciliation helpers
+- `pkg/source`: Prow, Sippy, and GitHub source clients plus environment defaults
+- `pkg/failurepatterns`: failure-pattern extraction, aggregation, history helpers, and prepared-window logic
+- `pkg/frontend`: HTTP handlers, read models, HTML rendering, and product-surface packages
+- `pkg/store/contracts`, `pkg/store/postgres`: storage abstraction, PostgreSQL implementation, migrations, and init/bootstrap helpers
+- `Dockerfile`: application image build
+- `.github/workflows/`: test and image build/push automation
+- `Makefile`: local developer workflows, image helpers, and redirect-page publishing commands
+- `.cursor/skills/`: project-local review skills
 
-3. **Product surfaces**
-   - `cihealth app` serves report/failure-patterns/run-log views from PostgreSQL plus internal diagnostics APIs.
-   - Azure Storage can still host a tiny redirect page that points users at the hosted app URL.
+## Runtime Overview
 
-## Codebase Map
+### Controller runtime
 
-The architecture maps to the repository roughly like this:
+`cihealth run` is the ingestion runtime. It talks to:
 
-- CLI bootstrap and command surface:
-  - `cmd/main.go`
-  - `pkg/cli`
-- Controllers and source ingestion:
-  - `pkg/run`
-  - `pkg/controllers`
-  - `pkg/source`
-- Failure-pattern extraction and range loading:
-  - `pkg/failurepatterns`
-  - `pkg/failurepatterns/extractor`
-  - `pkg/failurepatterns/window`
-- Product-facing HTTP, read-model, and HTML surfaces:
-  - `pkg/frontend`
-  - `pkg/frontend/readmodel`
-  - `pkg/frontend/ui`
-  - `pkg/frontend/report`
-  - `pkg/frontend/failurepatterns`
-  - `pkg/frontend/runlog`
-- Runtime storage contract and PostgreSQL implementation:
-  - `pkg/store/contracts`
-  - `pkg/store/postgres`
-- Deployment and publishing artifacts:
-  - `deploy/`
-  - `Dockerfile`
-  - `infra/azure/`
+- Prow for run metadata and artifacts
+- Sippy for environment metrics and job summaries
+- GitHub for PR metadata used by signal classification
 
-## Week Compatibility Contract
+The controller layer normalizes those inputs into PostgreSQL facts and checkpoints so the app can serve windows without reaching back to source systems during page render.
 
-The public week contract is now a compatibility layer, not a persisted storage model:
+Supporting commands:
 
-- a week is still keyed by a Monday-starting `YYYY-MM-DD`
-- week-shaped routes and CLI flags expand to concrete UTC `[start_date, end_date]` windows
-- history and navigation still reason in calendar-week units where that improves presentation
-- no stored semantic-week snapshot is required to serve report, failure-patterns, run-log, or review APIs
+- `cihealth run-once` runs one controller reconciliation for one key
+- `cihealth sync-once` runs one full controller sync for a controller
+- `cihealth migrate import-legacy-data` imports historical data into the current fact store
 
-## Inline Failure-Pattern Model
+### App runtime
 
-The active workflow is:
+`cihealth app` is the operator-facing HTTP runtime. It:
 
-1. **Fact loading**
-   - Read `RunRecord`, `RawFailureRecord`, and metric rows from PostgreSQL for the requested UTC range.
-   - Expand week-shaped requests into date windows before data loading.
+- resolves the requested UTC presentation window
+- loads fact rows for the requested window and lookback horizon
+- prepares failure-pattern data from those facts
+- builds report, failure-pattern, run-log, and review read models
+- renders HTML pages and internal JSON APIs
 
-2. **Row-level extraction and deterministic aggregation**
-   - Extract `failure_pattern` text and a search-query phrase per raw failure row.
-   - Aggregate rows into environment-scoped failure patterns in memory.
-   - Derive references, contributing tests, impact, seen-in, and sampling data from the loaded facts.
+The app uses a prepared-window cache so multiple surfaces can reuse the same expensive fact-loading and failure-pattern preparation work.
 
-3. **History and review diagnostics**
-   - Compute prior-week presence and lookback signals from fact-backed history windows.
-   - Emit review items as diagnostic output for extraction/merge quality, not as persisted semantic truth.
-   - Improvements happen by changing extraction or merge logic and rerunning against the same facts.
+## Data Flow
 
-For the detailed historical background and terminology drift, see `docs/semantic-materialization.md`.
+The end-to-end flow is:
 
-## Failure-Pattern Identity V2
-
-The current inline engine implements the `v2` failure-pattern identity rules.
-
-Key rules:
-
-- failure-pattern identity is driven by extracted `failure_pattern` text, not by the raw `signature_id`
-- `signature_id` is still retained as provenance/debug context and as one possible search pivot
-- durable raw-to-failure-pattern joins use row/run anchors, especially `(environment, run_url, row_id)`
-
-This matters because failure-pattern quality problems now tend to fall into three classes:
-
-- extraction is too generic, so distinct failures overmerge
-- extraction is too noisy or instance-specific, so identical failures undermerge
-- extraction misses the most useful nested detail, so the resulting `failure_pattern` is low quality even if clustering is technically correct
-
-## Terminology And Search Notes
-
-User-facing docs and UI now use "failure patterns" and "run log" for the operator surfaces layered on top of fact-backed windows.
-
-Some internal files, symbols, or helper names may still retain phase-oriented terminology such as `global`, `signature`, or `semantic` from the removed weekly materialization pipeline. That does not usually indicate a different product surface. When searching the repo, check both the user-facing and legacy terms unless you are specifically working on failure-pattern merge semantics.
-
-## UI Terminology
-
-The following user-facing terms are used consistently across all report and failure-pattern views. When adding or editing UI labels, tooltips, or copy, use these terms, not the internal names from the storage model or semantic pipeline.
-
-### Core Concepts
-
-| User-facing term | Replaces | Definition |
-|---|---|---|
-| **Failure pattern** | signature, failure signature, semantic cluster | A recurring, normalized form of a CI failure extracted from raw logs. |
-| **Occurrences** | support count, matched failure support, total signature support | The number of individual CI failures matching a given pattern within the selected window. |
-| **Runs affected** | jobs affected | The number of distinct job runs exhibiting a given failure pattern. |
-| **Run impact** | impact | Percentage of all job runs in the environment affected by this pattern (`runs affected / total runs`). |
-| **Signal** | flake score, flake signal, bad PR | Categorical classification of each failure pattern: **Regression** (likely caused by a specific PR), **Flake** (recurring intermittent failure), **Noise** (low-quality extraction), or **Indeterminate** (insufficient data). Displayed as a color-coded label with reasons in the hover tooltip. |
-| **After last push of merged PR** | after last push, PostGoodCount | Runs that occurred after the last push of a PR that eventually merged. Used as an input to regression detection; no dedicated main-table column. |
-| **Failed at** | lane | Where in the job run the failure occurred: `provision`, `e2e`, or `other`. |
-| **Also in** | seen in | Other environments where the same failure pattern was also detected during the selected window. |
-
-### "Failed at" Values
-
-| Value | Meaning |
-|---|---|
-| `provision` | Failure during environment setup. DEV only — each DEV presubmit deploys its own ephemeral Azure environment before running tests. |
-| `e2e` | Failure during the test suite execution step. Applies to all environments. |
-| `other` | Failure due to CI infrastructure issues, image build problems, etc. CFA does not extract failure patterns for these. Replaces `unknown`. |
-
-### View Names (Navigation)
-
-| Label | Route | Notes |
-|---|---|---|
-| Last 7 Days | `/report` (rolling) | Rolling 7-day report window |
-| Weekly Report | `/report` (week-anchored) | Per-week semantic report |
-| Failure Patterns | `/failure-patterns` | Windowed failure-pattern view |
-| Run Log | `/run-log` | Day-scoped run history |
-
-### What Not to Expose in User-Facing Views
-
-- Numeric scores for signals — use the categorical label (Regression / Flake / Noise / Indeterminate); classification reasons appear in the column hover tooltip only.
-- Quality flag badges (`context type stub leaked`, `source deserialization/no-output error`, `struct/object fragment`, etc.) — internal diagnostics only.
-- `Failure-pattern threshold` summary card — remove entirely.
-- Internal names such as `signature`, `support`, `lane`, `matched failure support` — use the table above.
+1. Source clients fetch CI data from Prow, Sippy, and GitHub.
+2. Controllers normalize that data into fact tables, metrics tables, and checkpoint/state rows in PostgreSQL.
+3. The app resolves a request into a UTC window.
+4. The failure-pattern engine loads `RunRecord`, `RawFailureRecord`, and related facts for that window and its history horizon.
+5. The extractor derives canonical failure-pattern text and supporting search/query fields from raw failures.
+6. Aggregation groups matching failures into environment-scoped failure patterns and computes references, contributing tests, occurrences, runs affected, impact, and cross-environment presence.
+7. Read-model builders compute history signals, review signals, and surface-specific summaries before rendering HTML or JSON.
 
 ## Storage Model
 
 PostgreSQL is the active runtime store behind `pkg/store/contracts` and `pkg/store/postgres`.
 
-The current persisted model is:
+The persisted model includes:
 
-- facts/state tables such as `cfa_runs`, `cfa_raw_failures`, `cfa_metrics_daily`, and related checkpoints/metadata
-- legacy semantic tables that may still exist in PostgreSQL but are no longer used by the active runtime:
-  - `cfa_sem_global_clusters`
-  - `cfa_sem_review_queue`
-- older schemas created legacy Phase3 tables that current migrations now drop:
-  - `cfa_phase3_issues`
-  - `cfa_phase3_links`
-  - `cfa_phase3_events`
+- run facts such as `cfa_runs`
+- raw failure facts such as `cfa_raw_failures`
+- daily metrics such as `cfa_metrics_daily`
+- source checkpoints, sync state, and related metadata
 
-Important persistence rule:
+The app does not depend on precomputed report snapshots. Failure patterns, history signals, and review signals are derived from the current fact store for the requested window.
 
-- the active runtime persists facts, checkpoints, and test metadata only
-- read models derive failure patterns and review signals inline from the fact tables
-- legacy semantic/Phase3 rows are ignored by the runtime
+## Failure-Pattern Model
 
-NDJSON is no longer part of the runtime architecture. It remains only as a legacy import format for `cihealth migrate import-legacy-data`.
+Failure-pattern extraction is fact-backed and window-scoped.
 
-## Presentation Windows
+For each raw failure row, the extractor derives:
 
-User-facing report surfaces resolve a presentation window independently from the underlying fact storage:
+- a canonical `failure_pattern` string
+- a search-oriented query phrase
+- provenance/debug context such as `signature_id`
+- the failure lane (`provision`, `e2e`, or `other`)
 
-- `/report` accepts either `week=YYYY-MM-DD` or `start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`
-- `/` redirects to a rolling 7-day `/report` window
-- `/failure-patterns` and `/run-log` use the same shared window resolver for navigation and range normalization
+Aggregation groups failures primarily by environment and extracted failure-pattern text. `signature_id` is retained as provenance and debugging context, but it is not the primary identity key for pattern merging.
 
-The important invariant is that this does **not** change the underlying fact store:
+The resulting read models carry operator-facing fields such as:
 
-- the app expands week-shaped requests into explicit UTC date windows
-- the app loads fact rows directly for the requested window and lookback horizon
-- cross-week operator views are composed in memory at query/render time
+- occurrences
+- runs affected
+- run impact
+- contributing tests
+- sample references
+- also-in environments
 
-Identity across windows follows explicit rules:
+History and review logic is built from those same fact-backed patterns. User-facing signal labels are `Regression`, `Flake`, `Noise`, and `Indeterminate`.
 
-- use the environment plus extracted failure-pattern text/search query from the inline aggregated rows
-- never treat `signature_id` alone as semantic identity
+## Time And Window Model
 
-The field contract also stays explicit:
+All request windows are UTC.
 
-- window-local fields are recomputed across the requested range, for example runs affected, impact, seen-in, references, and samples
-- signal inputs (scoring references, trend, after-last-push, prior-weeks-present) are derived from a signal horizon — the union of the presentation window and at least 3 prior weeks — ensuring stable classification regardless of the user's selected date range
+The main window shapes are:
 
-## Local Runtime Model
+- explicit date windows via `start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`
+- Monday-starting week windows via `week=YYYY-MM-DD`
+- day windows for run-log views via `date=YYYY-MM-DD`
 
-Local operation defaults to embedded PostgreSQL with initialization and migrations enabled. That is a development convenience, not the architecture itself.
+A week is a seven-day UTC window anchored by a Monday `YYYY-MM-DD` date. The report surface supports both week-based navigation and explicit date-window queries.
 
-In practice:
-
-- `cihealth run` and `cihealth app` operate against PostgreSQL
-- embedded Postgres is the default local transport
-- switching to remote PostgreSQL is a configuration detail via `--storage.postgres.*`, not a different runtime model
+The app also uses a history horizon when computing signals and prior presence, so classifications are based on the current window plus prior fact-backed context rather than only the visible rows.
 
 ## Product Surfaces
 
-### Unified app
+The primary surfaces served by `cihealth app` are:
 
-`cihealth app` is the primary operator surface:
+- `/`: rolling 7-day report landing page
+- `/report`: report surface for either a week-shaped or explicit date window
+- `/failure-patterns`: detailed failure-pattern window view
+- `/run-log`: day-scoped run history view
+- `/api/run-log/day`: JSON form of the day-scoped run-log surface
+- `/api/review/signals/window`: internal review-signal diagnostics for a date window
 
-- report view (`/report`) with classic week-shaped and arbitrary-window modes
-- failure-patterns view
-- day-scoped run history view (`/run-log`, `/api/run-log/day`)
-- internal review-signals endpoint (`/api/review/signals/window`)
-- cross-week history lookups based on fact-backed lookback windows
+The run-log surface is intentionally run-centric. It loads one UTC day of runs and raw failures, then enriches those rows with the contributing failure-pattern matches for that same day.
 
-### Day run history view and current fact gap
+## User-Facing Terminology
 
-The run-history surface is intentionally day-scoped and run-centric:
+The UI and docs use these core terms:
 
-- it loads the requested UTC day of `RunRecord` + `RawFailureRecord` facts
-- resolves the requested day through the shared presentation-window rules used by the other report surfaces
-- enriches each raw failure row by matching it against the contributing inline failure patterns for that day
+- **Failure pattern**: normalized recurring CI failure extracted from raw logs
+- **Occurrences**: number of matching failure rows in the selected window
+- **Runs affected**: number of distinct CI runs exhibiting the pattern
+- **Run impact**: percentage of runs in the environment affected by the pattern
+- **Signal**: categorical classification shown to operators (`Regression`, `Flake`, `Noise`, `Indeterminate`)
+- **Failed at**: where the failure occurred (`provision`, `e2e`, or `other`)
+- **Also in**: other environments where the same pattern was observed in the selected window
 
-This gives a Prow-like operator view, but it is not yet a full Prow-history data model.
+## Local Development
 
-Current gap to keep explicit:
+Local development defaults to embedded PostgreSQL with initialization and migrations enabled. That is a convenience for running the current architecture locally; the runtime itself is still the same PostgreSQL-backed app + controller system.
 
-- `RunRecord` currently stores `run_url`, `job_name`, PR metadata, `failed`, and `occurred_at`
-- it does not yet include richer run-history fields such as duration/build metadata or more detailed terminal run state
-- some raw failures can still reference runs whose `RunRecord` needs backfill/lookup, so the first version of the run page is informative but not a complete fact model
+Common local workflows are:
 
-### Storage-account redirect
+- `make run-controllers`
+- `make app`
+- `make db-dump-remote`
+- `make db-restore-local`
 
-The old static export flow has been removed.
+Switching to a remote PostgreSQL instance is a runtime configuration choice through `--storage.postgres.*` flags.
 
-The remaining Azure Storage publishing step is intentionally narrow:
+## Build And Publishing
 
-- generate a tiny `index.html`/`404.html` redirect page
-- upload that redirect page to the storage account's static website container
-- hand users off to the hosted app URL
+This repository contains the application runtime, image build, and developer automation artifacts.
 
-It is not part of failure-pattern generation or report rendering; it only preserves an existing access path while hosted operation is being hardened.
+- `Dockerfile` builds the `quay.io/roivaz/cihealth` image
+- `.github/workflows/unit-tests.yaml` runs the unit-test suite
+- `.github/workflows/build-and-push-image.yaml` builds and, on non-PR events, pushes the container image
+- `Makefile` wraps local build/test workflows and the optional storage-account redirect-page publishing flow
 
-## Current Command Surface
+Hosted deployment manifests are maintained outside this repository.
 
-Primary commands:
+## Storage-Account Redirect
 
-- `cihealth run`
-- `cihealth app`
+The repo still supports publishing a minimal `index.html` / `404.html` redirect page to an Azure Storage static website container. That redirect exists only to hand users off to the hosted app URL. It does not render reports or failure patterns itself.
 
-Secondary maintenance/debug commands:
+## Validation
 
-- `cihealth run-once`
-- `cihealth sync-once`
-- `cihealth migrate import-legacy-data`
+Default repo validation:
 
-## Key Design Decisions
+- `make check`
 
-1. **App + DB is the primary runtime**
-   - Report, failure-patterns, run-log, and diagnostics all read from PostgreSQL-backed state.
+Focused validation loops:
 
-2. **Week semantics are compatibility-only**
-   - The UI and APIs may still present Monday-starting week labels, but the runtime loads concrete date windows from fact tables.
+- `go test ./pkg/failurepatterns/...`
+- `go test ./pkg/frontend/...`
+- `go test ./pkg/store/postgres/...`
 
-3. **Failure-pattern identity is text-first**
-   - Extracted failure-pattern text drives merge semantics; `signature_id` remains provenance only.
+## Current Limits
 
-4. **Derived outputs are computed inline**
-   - Failure patterns, history signals, and review rows are recomputed from facts for the requested range instead of being persisted as weekly snapshots.
+The most important current limitations are:
 
-5. **Review queue drives improvement loops**
-   - Failure-pattern quality is improved by inspecting review signals and refining extraction/merge behavior against the same fact inputs.
-
-6. **Storage-account publishing is redirect-only compatibility**
-   - It preserves an existing entrypoint without duplicating the report surface outside the live app.
-
-## Developer Orientation
-
-For a new coding session, the default validation loop is:
-
-- `make check` for broad repo validation
-- `go test ./pkg/failurepatterns/...` for extraction, merge, or history-window work
-- `go test ./pkg/frontend/...` for app/report work
-- `go test ./pkg/store/postgres/...` for store or migration work
-
-For manual smoke testing, use the main runtime commands described in `README.md`. Agent-oriented repo guidance lives in `AGENTS.md`.
-
-## Next Milestone
-
-The major remaining phase is hosted operation.
-
-That work includes:
-
-- deploying the Go app in a hosted environment
-- running against managed PostgreSQL
-- scheduling controllers and other fact-producing maintenance flows
-- adding auth, deployment automation, backups, and runbooks
-- operating the storage-account redirect and hosted app path together until the redirect is no longer needed
-
-The architecture refactor is largely complete; the next work is operationalization and continuous failure-pattern quality improvement.
+- the run-log surface is useful for day-scoped investigation, but it does not yet carry the full richer build-history metadata available in Prow
+- some raw failures can still reference runs that need additional run-record backfill or lookup
+- hosted app operation, auth, backups, and runbooks are still being hardened operationally

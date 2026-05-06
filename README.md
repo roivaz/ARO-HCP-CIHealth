@@ -18,11 +18,11 @@ Local development defaults to embedded PostgreSQL with initialization and migrat
 - `pkg/run`, `pkg/controllers`, and `pkg/source` implement continuous ingestion and source clients.
 - `pkg/failurepatterns` owns extraction, range loading, history helpers, and inline failure-pattern aggregation.
 - `pkg/frontend` serves the unified report/failure-patterns/run-log app and API surface.
-- `pkg/frontend/readmodel` holds shared window/history helpers plus week-compatibility shims; `pkg/frontend/ui` holds shared chrome/table rendering; `pkg/frontend/report`, `pkg/frontend/failurepatterns`, and `pkg/frontend/runlog` own the active product-surface packages.
+- `pkg/frontend/readmodel` holds shared window/history helpers and surface builders; `pkg/frontend/ui` holds shared chrome/table rendering; `pkg/frontend/report`, `pkg/frontend/failurepatterns`, and `pkg/frontend/runlog` own the active product-surface packages.
 - `pkg/store/contracts` defines the store interfaces; `pkg/store/postgres` implements the active runtime store, migrations, and init/bootstrap helpers.
-- `deploy/` contains the standalone Helm chart for Postgres, the app, controllers, and cronjobs.
 - `Dockerfile` builds the container image for the Go application.
-- `infra/azure/` contains Azure infrastructure related to the storage-account redirect and current deployment experiments.
+- `.github/workflows/` contains the unit-test and image build/push automation.
+- `Makefile` wraps local developer workflows, image helpers, and redirect-page publishing commands.
 - `.cursor/skills/` contains project-local skills for failure-pattern/review workflows.
 
 Search note: user-facing docs now say "failure patterns" and "run log", but some internal files and symbols may still use older `global`, `signature`, or `semantic`-era names. When navigating the repo, check both terms unless you are specifically working on failure-pattern merge semantics.
@@ -132,19 +132,19 @@ To preview the generated redirect locally before uploading:
 python -m http.server 8080 --directory site
 ```
 
-## Deployment Artifacts
+## Build And Publishing
 
-- `deploy/` is the current standalone Kubernetes packaging surface for the app runtime.
-- `Dockerfile` is the image build entrypoint used by the deployment flow.
-- `infra/azure/report-static-website-storage.bicep` provisions Azure Storage for the redirect-page website container.
-- Hosted app operation, auth, backups, and broader operational automation are still evolving; these artifacts help with current deployment experiments but do not yet define a finished production platform.
+- `Dockerfile` is the image build entrypoint for `quay.io/roivaz/cihealth`.
+- `.github/workflows/unit-tests.yaml` runs the unit-test suite.
+- `.github/workflows/build-and-push-image.yaml` builds and pushes the application image.
+- Hosted deployment manifests live outside this repository.
 
-## Semantic Week Contract
+## Window And Week Model
 
-- Semantic partitions are PostgreSQL week partitions, not free-form subdirectories.
-- A stored week must be a Monday-starting `YYYY-MM-DD`.
-- The review app and windowed report/failure-patterns/run-log surfaces compose over those stored weeks.
-- Partial per-environment materialization is intentionally not supported.
+- All report windows are UTC.
+- `/report` accepts either `week=YYYY-MM-DD` or `start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`.
+- A week is a Monday-starting seven-day UTC window keyed by `YYYY-MM-DD`.
+- `/failure-patterns`, `/run-log`, and `/api/review/signals/window` build their read models from fact-backed windows.
 
 ## Validation And Developer Loop
 
@@ -190,6 +190,5 @@ The remaining big phase is hosted operation rather than more architectural refac
 ## Reference
 
 - Architecture notes: `docs/design.md`
-- Semantic workflow details: `docs/semantic-materialization.md`
 - Agent review prompt: `docs/semantic-materialization-review-agent-prompt.md`
 - Agent-oriented working notes: `AGENTS.md`

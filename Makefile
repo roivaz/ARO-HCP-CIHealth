@@ -9,7 +9,7 @@ COVER_PROFILE ?= .work/coverage.out
 DOCKER ?= docker
 DOCKERFILE ?= Dockerfile
 IMAGE_REPOSITORY ?= quay.io/roivaz/cihealth
-IMAGE_TAG ?= latest
+IMAGE_TAG ?= $(shell git rev-parse --short=7 HEAD 2>/dev/null || echo dev)
 IMAGE ?= $(IMAGE_REPOSITORY):$(IMAGE_TAG)
 IMAGE_SOURCES := $(shell find cmd pkg -type f) go.mod go.sum
 
@@ -68,8 +68,8 @@ help:
 	@echo "  make test-race"
 	@echo "  make test-cover"
 	@echo "  make build"
-	@echo "  make image IMAGE_TAG=latest"
-	@echo "  make build-and-push IMAGE_TAG=latest"
+	@echo "  make image [IMAGE_TAG=<tag>]"
+	@echo "  make build-and-push [IMAGE_TAG=<tag>]"
 	@echo "  make show-image"
 	@echo "  make run RUN_ARGS='app --app.listen 127.0.0.1:8082'"
 	@echo "  make tidy"

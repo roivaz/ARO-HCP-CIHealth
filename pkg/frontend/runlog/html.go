@@ -103,7 +103,7 @@ func RenderHTML(
 			continue
 		}
 		b.WriteString("    <table class=\"runs-table\">\n")
-		b.WriteString("      <thead><tr><th>Time (UTC)</th><th>Job</th><th>Failed at</th><th>Result</th><th>PR</th><th>Failed tests</th><th>Details</th></tr></thead>\n")
+		b.WriteString("      <thead><tr><th class=\"tz-header\">Time (UTC)</th><th>Job</th><th>Failed at</th><th>Result</th><th>PR</th><th>Failed tests</th><th>Details</th></tr></thead>\n")
 		b.WriteString("      <tbody>\n")
 		for _, row := range environment.Runs {
 			b.WriteString(runLogDayRunRowHTML(row))
@@ -115,6 +115,7 @@ func RenderHTML(
 
 	b.WriteString("</main>\n")
 	b.WriteString(frontui.ThemeToggleScriptTag())
+	b.WriteString(frontui.TimezoneToggleScriptTag())
 	b.WriteString("</body>\n")
 	b.WriteString("</html>\n")
 	return b.String()
@@ -144,7 +145,7 @@ func runLogDayCardHTML(label string, value string) string {
 func runLogDayRunRowHTML(row readmodelrunlog.JobHistoryRunRow) string {
 	var b strings.Builder
 	b.WriteString("        <tr>\n")
-	b.WriteString(fmt.Sprintf("          <td class=\"time-col\">%s</td>\n", html.EscapeString(runLogDayRunTime(row.Run.OccurredAt))))
+	b.WriteString(fmt.Sprintf("          <td class=\"time-col\">%s</td>\n", runLogDayRunTimeHTML(row.Run.OccurredAt)))
 	b.WriteString("          <td>")
 	b.WriteString(runLogDayJobHTML(row.Run))
 	if flagsHTML := runLogDayRunFlagsHTML(row.Run); flagsHTML != "" {
@@ -175,6 +176,14 @@ func runLogDayRunTime(occurredAt string) string {
 		return strings.TrimSpace(occurredAt)
 	}
 	return parsed.UTC().Format("15:04:05 UTC")
+}
+
+func runLogDayRunTimeHTML(occurredAt string) string {
+	parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(occurredAt))
+	if err != nil {
+		return html.EscapeString(strings.TrimSpace(occurredAt))
+	}
+	return frontui.TimestampHTML(parsed, "15:04:05 UTC")
 }
 
 func runLogDayJobLabel(run storecontracts.RunRecord) string {

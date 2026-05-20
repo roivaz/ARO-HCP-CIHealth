@@ -708,7 +708,7 @@ func TestHandleRunsPageRendersHTML(t *testing.T) {
 	if strings.Contains(body, "Generated (UTC)") {
 		t.Fatalf("did not expect UTC generated label in body, got %q", body)
 	}
-	if !strings.Contains(body, "<th>Time (UTC)</th>") {
+	if !strings.Contains(body, "<th class=\"tz-header\">Time (UTC)</th>") {
 		t.Fatalf("expected UTC time header in body, got %q", body)
 	}
 	if !strings.Contains(body, "<th>Failed at</th>") {

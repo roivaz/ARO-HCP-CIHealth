@@ -485,6 +485,7 @@ func ReportChromeCSS() string {
 		"    .report-context-apply { border-color: #111827; background: #111827; color: #ffffff; cursor: pointer; }",
 		"    .report-context-apply:hover { background: #1f2937; }",
 		"    .report-context-action { white-space: nowrap; }",
+		"    .tz-toggle { min-width: 56px; cursor: pointer; }",
 		"    @media (max-width: 920px) { .report-context-tier { grid-template-columns: 1fr; } .report-context-middle, .report-context-right { justify-self: start; } .time-selector-panel { position: static; box-shadow: none; } }",
 		"    :root[data-theme=\"dark\"] .report-shell { background: #111827; border-color: #334155; }",
 		"    :root[data-theme=\"dark\"] .report-brand { color: #f8fafc; }",
@@ -612,6 +613,7 @@ func renderChromeTimeControls(options ReportChromeOptions) string {
 	b.WriteString("            </div>\n")
 	b.WriteString("          </details>\n")
 	b.WriteString(renderReportChromeNavButton(timeSelector.NextHref, "&gt;"))
+	b.WriteString("          <button id=\"tz-toggle\" class=\"report-context-action tz-toggle\" type=\"button\">UTC</button>\n")
 	if href := strings.TrimSpace(options.ResetHref); href != "" {
 		b.WriteString(fmt.Sprintf(
 			"          <a class=\"report-context-action\" href=\"%s\">Reset</a>\n",
@@ -740,6 +742,110 @@ func ThemeToggleScriptTag() string {
     } else if (media.addListener) {
       media.addListener(onChange);
     }
+  }
+})();
+</script>
+`) + "\n"
+}
+
+func TimezoneToggleScriptTag() string {
+	return strings.TrimSpace(`
+<script>
+(function () {
+  var key = "ci-failure-report-tz-mode";
+  var button = document.getElementById("tz-toggle");
+
+  function getMode() {
+    try {
+      var stored = localStorage.getItem(key);
+      if (stored === "local") { return "local"; }
+    } catch (err) {}
+    return "utc";
+  }
+
+  function formatUTC(date) {
+    var y = date.getUTCFullYear();
+    var mo = String(date.getUTCMonth() + 1).padStart(2, "0");
+    var d = String(date.getUTCDate()).padStart(2, "0");
+    var h = String(date.getUTCHours()).padStart(2, "0");
+    var mi = String(date.getUTCMinutes()).padStart(2, "0");
+    var s = String(date.getUTCSeconds()).padStart(2, "0");
+    if (h === "00" && mi === "00" && s === "00") {
+      return y + "-" + mo + "-" + d + " UTC";
+    }
+    if (s !== "00") {
+      return h + ":" + mi + ":" + s + " UTC";
+    }
+    return y + "-" + mo + "-" + d + " " + h + ":" + mi + " UTC";
+  }
+
+  function formatLocal(date) {
+    var y = date.getFullYear();
+    var mo = String(date.getMonth() + 1).padStart(2, "0");
+    var d = String(date.getDate()).padStart(2, "0");
+    var h = String(date.getHours()).padStart(2, "0");
+    var mi = String(date.getMinutes()).padStart(2, "0");
+    var s = String(date.getSeconds()).padStart(2, "0");
+    var tz;
+    try {
+      tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "Local";
+    } catch (err) {
+      tz = "Local";
+    }
+    if (h === "00" && mi === "00" && s === "00") {
+      return y + "-" + mo + "-" + d + " " + tz;
+    }
+    if (s !== "00") {
+      return h + ":" + mi + ":" + s + " " + tz;
+    }
+    return y + "-" + mo + "-" + d + " " + h + ":" + mi + " " + tz;
+  }
+
+  function applyTimestamps(mode) {
+    var elements = document.querySelectorAll("time.tz-timestamp");
+    for (var i = 0; i < elements.length; i++) {
+      var el = elements[i];
+      var iso = el.getAttribute("datetime");
+      if (!iso) { continue; }
+      var date = new Date(iso);
+      if (isNaN(date.getTime())) { continue; }
+      el.textContent = mode === "local" ? formatLocal(date) : formatUTC(date);
+    }
+  }
+
+  function applyHeaders(mode) {
+    var headers = document.querySelectorAll(".tz-header");
+    for (var i = 0; i < headers.length; i++) {
+      var text = headers[i].textContent || "";
+      if (mode === "local") {
+        headers[i].textContent = text.replace("(UTC)", "(Local)");
+      } else {
+        headers[i].textContent = text.replace("(Local)", "(UTC)");
+      }
+    }
+  }
+
+  function apply(mode, persist) {
+    applyTimestamps(mode);
+    applyHeaders(mode);
+    if (button) {
+      button.textContent = mode === "local" ? "Local" : "UTC";
+      button.setAttribute("title", "Showing times in " + (mode === "local" ? "local timezone" : "UTC") + ". Click to toggle.");
+    }
+    if (persist) {
+      try { localStorage.setItem(key, mode); } catch (err) {}
+    }
+  }
+
+  var initialMode = getMode();
+  apply(initialMode, false);
+
+  if (button) {
+    button.addEventListener("click", function () {
+      var current = getMode();
+      var next = current === "utc" ? "local" : "utc";
+      apply(next, true);
+    });
   }
 })();
 </script>
@@ -1381,6 +1487,36 @@ func FormatReferenceTimestampLabel(value string) string {
 		return "unknown-time"
 	}
 	return label
+}
+
+func FormatReferenceTimestampHTML(value string) string {
+	parsed, ok := ParseReferenceTimestamp(value)
+	if !ok {
+		label := strings.TrimSpace(value)
+		if label == "" {
+			return "unknown-time"
+		}
+		return html.EscapeString(label)
+	}
+	utc := parsed.UTC()
+	isoValue := utc.Format(time.RFC3339)
+	displayLabel := utc.Format("2006-01-02 15:04 UTC")
+	return fmt.Sprintf(
+		"<time class=\"tz-timestamp\" datetime=\"%s\">%s</time>",
+		html.EscapeString(isoValue),
+		html.EscapeString(displayLabel),
+	)
+}
+
+func TimestampHTML(t time.Time, format string) string {
+	utc := t.UTC()
+	isoValue := utc.Format(time.RFC3339)
+	displayLabel := utc.Format(format)
+	return fmt.Sprintf(
+		"<time class=\"tz-timestamp\" datetime=\"%s\">%s</time>",
+		html.EscapeString(isoValue),
+		html.EscapeString(displayLabel),
+	)
 }
 
 func ResolveGitHubPRURLFromProwRun(runURL string, prNumber int, fallbackOwner string, fallbackRepo string) (string, bool) {
@@ -2104,10 +2240,10 @@ func renderAffectedRunsDetails(rows []RunReference, opts TableOptions) string {
 		b.WriteString("</details>")
 		return b.String()
 	}
-	b.WriteString("<div class=\"runs-scroll\"><table class=\"runs-table\"><thead><tr><th>Date (UTC)</th><th>Associated PR</th><th>Prow job</th></tr></thead><tbody>")
+	b.WriteString("<div class=\"runs-scroll\"><table class=\"runs-table\"><thead><tr><th class=\"tz-header\">Date (UTC)</th><th>Associated PR</th><th>Prow job</th></tr></thead><tbody>")
 	for _, row := range runs {
 		b.WriteString("<tr>")
-		b.WriteString(fmt.Sprintf("<td>%s</td>", html.EscapeString(FormatReferenceTimestampLabel(row.OccurredAt))))
+		b.WriteString(fmt.Sprintf("<td>%s</td>", FormatReferenceTimestampHTML(row.OccurredAt)))
 		b.WriteString(fmt.Sprintf("<td>%s</td>", renderAssociatedPRCell(row, opts)))
 		b.WriteString(fmt.Sprintf("<td>%s</td>", renderProwJobCell(row)))
 		b.WriteString("</tr>")

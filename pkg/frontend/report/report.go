@@ -485,7 +485,7 @@ func buildHTML(
 			b.WriteString(fmt.Sprintf("      <p class=\"panel-empty\">No tests below %.2f%% in this window with at least %d runs.</p>\n", weeklyTestSuccessTarget, weeklyTestSuccessMinRuns))
 		} else {
 			b.WriteString("      <table class=\"detail-table\">\n")
-			b.WriteString("        <thead><tr><th>Pass rate</th><th>Runs</th><th>Date (UTC)</th><th>Suite</th><th>Test</th></tr></thead>\n")
+			b.WriteString("        <thead><tr><th>Pass rate</th><th>Runs</th><th class=\"tz-header\">Date (UTC)</th><th>Suite</th><th>Test</th></tr></thead>\n")
 			b.WriteString("        <tbody>\n")
 			for _, item := range tests {
 				suite := cleanInline(item.TestSuite, 80)
@@ -495,7 +495,7 @@ func buildHTML(
 				b.WriteString("          <tr>")
 				b.WriteString(fmt.Sprintf("<td>%.2f%%</td>", item.PassRate))
 				b.WriteString(fmt.Sprintf("<td>%d</td>", item.Runs))
-				b.WriteString(fmt.Sprintf("<td>%s</td>", html.EscapeString(item.Date+" UTC")))
+				b.WriteString(fmt.Sprintf("<td><time class=\"tz-timestamp\" datetime=\"%sT00:00:00Z\">%s UTC</time></td>", html.EscapeString(item.Date), html.EscapeString(item.Date)))
 				b.WriteString(fmt.Sprintf("<td>%s</td>", html.EscapeString(suite)))
 				b.WriteString(fmt.Sprintf("<td>%s</td>", html.EscapeString(cleanInline(item.TestName, 160))))
 				b.WriteString("</tr>\n")
@@ -542,6 +542,7 @@ func buildHTML(
 	b.WriteString("</main>\n")
 	b.WriteString(frontui.TooltipScriptTag())
 	b.WriteString(frontui.ThemeToggleScriptTag())
+	b.WriteString(frontui.TimezoneToggleScriptTag())
 	b.WriteString("<script>\n")
 	b.WriteString("(function(){\n")
 	b.WriteString("  function activateDrillTab(button) {\n")

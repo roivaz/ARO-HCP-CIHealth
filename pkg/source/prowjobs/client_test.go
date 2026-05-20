@@ -60,6 +60,12 @@ func TestHTTPClientListJobsDecodesWrappedJSResponse(t *testing.T) {
 	if jobs[0].Spec.Refs == nil || len(jobs[0].Spec.Refs.Pulls) != 1 || jobs[0].Spec.Refs.Pulls[0].Number != 4313 {
 		t.Fatalf("unexpected pull refs: %+v", jobs[0].Spec.Refs)
 	}
+	if jobs[0].Status.StartTime != mustParseRFC3339(t, "2026-04-20T10:00:00Z") {
+		t.Fatalf("unexpected start time: got=%s", jobs[0].Status.StartTime.Format(time.RFC3339))
+	}
+	if jobs[0].Status.CompletionTime != mustParseRFC3339(t, "2026-04-20T10:45:00Z") {
+		t.Fatalf("unexpected completion time: got=%s", jobs[0].Status.CompletionTime.Format(time.RFC3339))
+	}
 }
 
 func TestStateHelpers(t *testing.T) {

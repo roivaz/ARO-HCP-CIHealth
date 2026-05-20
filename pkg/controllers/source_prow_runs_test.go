@@ -377,6 +377,65 @@ func TestComputeNextProwRunsCheckpointUsesStartTime(t *testing.T) {
 	}
 }
 
+func TestComputeNextProwRunsCheckpointReturnsZeroWhenUninitializedAndEmpty(t *testing.T) {
+	t.Parallel()
+
+	got := computeNextProwRunsCheckpoint(time.Time{}, nil)
+	if !got.IsZero() {
+		t.Fatalf("expected zero checkpoint when previous is unset and no jobs matched, got=%s", got.Format(time.RFC3339))
+	}
+}
+
+func TestComputeNextProwRunsCheckpointPreservesPreviousWhenEmpty(t *testing.T) {
+	t.Parallel()
+
+	previous := mustParseRFC3339(t, "2026-04-22T18:00:00Z")
+	got := computeNextProwRunsCheckpoint(previous, nil)
+	if !got.Equal(previous) {
+		t.Fatalf("expected previous checkpoint to be preserved when no jobs matched: got=%s want=%s", got.Format(time.RFC3339), previous.Format(time.RFC3339))
+	}
+}
+
+func TestSyncOnceDoesNotCreateCheckpointWhenNoJobsMatch(t *testing.T) {
+	t.Parallel()
+
+	opts := testSourceOptions(t, []string{"dev"})
+	client := &fakeProwSnapshotClient{
+		jobs: []prowjobs.Job{
+			{
+				Spec: prowjobs.JobSpec{
+					Job: "pull-ci-Azure-ARO-HCP-main-e2e-parallel",
+				},
+				Status: prowjobs.JobStatus{
+					State: "pending",
+					URL:   "gs://test-platform-results/pr-logs/pull/Azure_ARO-HCP/4313/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455488",
+				},
+			},
+		},
+	}
+	store := &fakeProwRunsStore{
+		runs:        map[string]contracts.RunRecord{},
+		checkpoints: map[string]contracts.CheckpointRecord{},
+	}
+	controller, err := newSourceProwRunsController(logr.Discard(), Dependencies{
+		Store:  store,
+		Source: opts,
+	}, client)
+	if err != nil {
+		t.Fatalf("newSourceProwRunsController returned error: %v", err)
+	}
+
+	if err := controller.SyncOnce(context.Background()); err != nil {
+		t.Fatalf("SyncOnce returned error: %v", err)
+	}
+	if _, found := store.checkpoints[prowRunsCheckpointNameForEnvironment("dev")]; found {
+		t.Fatalf("expected no checkpoint to be written when no completed jobs matched")
+	}
+	if store.upsertRunsCalls != 0 {
+		t.Fatalf("expected no run upserts when no completed jobs matched, got=%d", store.upsertRunsCalls)
+	}
+}
+
 func mustParseRFC3339(t *testing.T, value string) time.Time {
 	t.Helper()
 

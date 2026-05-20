@@ -239,13 +239,15 @@ func (c *sourceProwRunsController) syncEnvironmentFromSnapshot(ctx context.Conte
 	}
 
 	nextCheckpoint := computeNextProwRunsCheckpoint(checkpointTime, jobs)
-	checkpoint := contracts.CheckpointRecord{
-		Name:      prowRunsCheckpointNameForEnvironment(environment),
-		Value:     nextCheckpoint.Format(time.RFC3339Nano),
-		UpdatedAt: now.Format(time.RFC3339Nano),
-	}
-	if err := c.store.UpsertCheckpoints(ctx, []contracts.CheckpointRecord{checkpoint}); err != nil {
-		return fmt.Errorf("update prow runs checkpoint for environment %q: %w", environment, err)
+	if !nextCheckpoint.IsZero() {
+		checkpoint := contracts.CheckpointRecord{
+			Name:      prowRunsCheckpointNameForEnvironment(environment),
+			Value:     nextCheckpoint.Format(time.RFC3339Nano),
+			UpdatedAt: now.Format(time.RFC3339Nano),
+		}
+		if err := c.store.UpsertCheckpoints(ctx, []contracts.CheckpointRecord{checkpoint}); err != nil {
+			return fmt.Errorf("update prow runs checkpoint for environment %q: %w", environment, err)
+		}
 	}
 
 	c.logger.Info(
@@ -361,9 +363,6 @@ func computeNextProwRunsCheckpoint(previous time.Time, jobs []prowjobs.Job) time
 		if startedAt.After(next) {
 			next = startedAt
 		}
-	}
-	if next.IsZero() {
-		next = time.Now().UTC()
 	}
 	return next
 }

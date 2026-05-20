@@ -237,13 +237,15 @@ func (c *sourceSippyRunsController) syncEnvironment(ctx context.Context, environ
 	}
 
 	nextCheckpoint := computeNextCheckpoint(checkpointTime, runs)
-	checkpoint := contracts.CheckpointRecord{
-		Name:      checkpointNameForEnvironment(environment),
-		Value:     nextCheckpoint.Format(time.RFC3339Nano),
-		UpdatedAt: now.Format(time.RFC3339Nano),
-	}
-	if err := c.store.UpsertCheckpoints(ctx, []contracts.CheckpointRecord{checkpoint}); err != nil {
-		return fmt.Errorf("update checkpoint for environment %q: %w", environment, err)
+	if !nextCheckpoint.IsZero() {
+		checkpoint := contracts.CheckpointRecord{
+			Name:      checkpointNameForEnvironment(environment),
+			Value:     nextCheckpoint.Format(time.RFC3339Nano),
+			UpdatedAt: now.Format(time.RFC3339Nano),
+		}
+		if err := c.store.UpsertCheckpoints(ctx, []contracts.CheckpointRecord{checkpoint}); err != nil {
+			return fmt.Errorf("update checkpoint for environment %q: %w", environment, err)
+		}
 	}
 
 	c.logger.Info(
@@ -358,9 +360,6 @@ func computeNextCheckpoint(previous time.Time, runs []sippysource.JobRun) time.T
 		if startedAt.After(next) {
 			next = startedAt
 		}
-	}
-	if next.IsZero() {
-		next = time.Now().UTC()
 	}
 	return next
 }

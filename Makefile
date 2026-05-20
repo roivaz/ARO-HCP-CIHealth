@@ -16,6 +16,8 @@ IMAGE_SOURCES := $(shell find cmd pkg -type f) go.mod go.sum
 APP_LISTEN ?= 127.0.0.1:8082
 APP_WEEK ?=
 APP_ARGS ?=
+DEV_CONTROLLER_LOG ?= .work/dev-controllers.log
+DEV_WAIT_SECONDS ?= 60
 
 PG_CLIENT_IMAGE ?= postgres:18.3
 DB_DUMP_FILE ?= .work/db/latest.sql
@@ -57,7 +59,7 @@ AZ_STATIC_WEBSITE_ENABLED ?= true
 AZ_STATIC_INDEX_DOCUMENT ?= index.html
 AZ_STATIC_ERROR_DOCUMENT ?= 404.html
 
-.PHONY: help fmt fmt-check vet test test-race test-cover build image build-and-push show-image run tidy check clean clean-site distclean app site-redirect site-upload deploy-static-website-storage run-controllers run-once sync-once migrate-legacy-data db-dump-remote db-restore-local
+.PHONY: help fmt fmt-check vet test test-race test-cover build image build-and-push show-image run tidy check clean clean-site distclean app dev site-redirect site-upload deploy-static-website-storage run-controllers run-once sync-once migrate-legacy-data db-dump-remote db-restore-local
 
 help:
 	@echo "Go targets:"
@@ -79,6 +81,7 @@ help:
 	@echo "  make distclean"
 	@echo "App targets:"
 	@echo "  make app"
+	@echo "  make dev"
 	@echo "  make db-dump-remote REMOTE_PGUSER=... REMOTE_PGPASSWORD=... REMOTE_PGDATABASE=... [REMOTE_PGHOST=127.0.0.1 REMOTE_PGPORT=5432]"
 	@echo "  make db-restore-local DB_DUMP_FILE=.work/db/latest.sql"
 	@echo "  make site-redirect"
@@ -104,6 +107,8 @@ help:
 	@echo "  IMAGE=$(IMAGE)"
 	@echo "  APP_LISTEN=$(APP_LISTEN)"
 	@echo "  APP_WEEK=$(APP_WEEK)"
+	@echo "  DEV_CONTROLLER_LOG=$(DEV_CONTROLLER_LOG)"
+	@echo "  DEV_WAIT_SECONDS=$(DEV_WAIT_SECONDS)"
 	@echo "  PG_CLIENT_IMAGE=$(PG_CLIENT_IMAGE)"
 	@echo "  DB_DUMP_FILE=$(DB_DUMP_FILE)"
 	@echo "  REMOTE_PGHOST=$(REMOTE_PGHOST)"
@@ -132,6 +137,7 @@ help:
 	@echo ""
 	@echo "Example:"
 	@echo "  make app APP_WEEK=2026-03-09"
+	@echo "  make dev"
 	@echo "  make db-dump-remote REMOTE_PGUSER=myuser REMOTE_PGPASSWORD=secret REMOTE_PGDATABASE=mydb DB_DUMP_FILE=.work/cihealth-prod.sql"
 	@echo "  make db-restore-local DB_DUMP_FILE=.work/cihealth-prod.sql"
 	@echo "  make site-redirect SITE_ROOT=site SITE_REDIRECT_URL=https://cihealth.tools.hcpsvc.osadev.cloud/"
@@ -193,6 +199,55 @@ app:
 	$(CFA) app \
 		--app.listen "$(APP_LISTEN)" \
 		--history.weeks "$(HISTORY_WEEKS)" $(if $(strip $(APP_WEEK)),--week "$(APP_WEEK)",) $(APP_ARGS)
+
+dev:
+	@mkdir -p "$$(dirname "$(DEV_CONTROLLER_LOG)")"
+	@set -euo pipefail; \
+		controller_log="$(DEV_CONTROLLER_LOG)"; \
+		rm -f "$$controller_log"; \
+		controller_pid=""; \
+		cleanup() { \
+			status=$$?; \
+			trap - EXIT INT TERM; \
+			if [[ -n "$$controller_pid" ]]; then \
+				kill -- -$$controller_pid 2>/dev/null || true; \
+				wait "$$controller_pid" 2>/dev/null || true; \
+			fi; \
+			exit $$status; \
+		}; \
+		trap cleanup EXIT INT TERM; \
+		echo "Starting controllers with embedded Postgres (log: $$controller_log)..."; \
+		setsid $(CFA) run \
+			--source.envs "$(CONTROLLER_ENVS)" \
+			--history.weeks "$(CONTROLLER_HISTORY_WEEKS)" \
+			--controllers.source.prow.runs.threads 1 $(CONTROLLER_ARGS) > "$$controller_log" 2>&1 & \
+		controller_pid=$$!; \
+		echo "Waiting up to $(DEV_WAIT_SECONDS)s for controllers to initialize embedded Postgres..."; \
+		for _ in $$(seq 1 "$(DEV_WAIT_SECONDS)"); do \
+			if python -c 'from pathlib import Path; import sys; text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="ignore"); raise SystemExit(0 if "Starting controllers." in text else 1)' "$$controller_log"; then \
+				break; \
+			fi; \
+			if ! kill -0 "$$controller_pid" 2>/dev/null; then \
+				wait "$$controller_pid"; \
+			fi; \
+			sleep 1; \
+		done; \
+		if ! python -c 'from pathlib import Path; import sys; text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="ignore"); raise SystemExit(0 if "Starting controllers." in text else 1)' "$$controller_log"; then \
+			echo "Timed out waiting for controllers to initialize embedded Postgres. Inspect $$controller_log for details."; \
+			exit 1; \
+		fi; \
+		echo "Starting app against controllers-owned embedded Postgres..."; \
+		$(CFA) app \
+			--app.listen "$(APP_LISTEN)" \
+			--history.weeks "$(HISTORY_WEEKS)" \
+			$(if $(strip $(APP_WEEK)),--week "$(APP_WEEK)",) \
+			--storage.postgres.embedded=false \
+			--storage.postgres.initialize=false \
+			--storage.postgres.host "127.0.0.1" \
+			--storage.postgres.port "5432" \
+			--storage.postgres.user "postgres" \
+			--storage.postgres.password "postgres" \
+			--storage.postgres.database "postgres" $(APP_ARGS)
 
 db-dump-remote:
 	@if [[ -z "$(REMOTE_PGUSER)" ]]; then \

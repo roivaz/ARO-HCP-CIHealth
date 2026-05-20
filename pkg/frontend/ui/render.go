@@ -454,9 +454,8 @@ func ReportChromeCSS() string {
 		"    .report-route-link.active { background: #111827; border-color: #111827; color: #ffffff; }",
 		"    .report-theme-slot { margin-left: auto; }",
 		"    .report-theme-slot .theme-toggle { box-shadow: none; }",
-		"    .report-context-tier { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px; width: 100%; box-sizing: border-box; }",
+		"    .report-context-tier { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; width: 100%; box-sizing: border-box; }",
 		"    .report-context-left { justify-self: start; min-width: 0; }",
-		"    .report-context-middle { justify-self: center; }",
 		"    .report-context-right { justify-self: end; display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; min-height: 36px; }",
 		"    .report-context-right.is-empty { min-width: 0; }",
 		"    .report-context-label { font-size: 12px; font-weight: 700; color: #4b5563; }",
@@ -482,14 +481,15 @@ func ReportChromeCSS() string {
 		"    .time-selector-fields-grid label, .report-env-control { display: grid; gap: 4px; font-size: 12px; font-weight: 700; color: #4b5563; }",
 		"    .time-selector-fields-grid input[type=\"date\"], .report-env-control select { border: 1px solid #d1d5db; border-radius: 10px; padding: 8px 10px; font-size: 13px; background: #ffffff; color: #111827; }",
 		"    .report-env-control select { min-width: 110px; }",
+		"    .report-env-select { border: 1px solid #d1d5db; border-radius: 999px; padding: 7px 12px; font-size: 13px; font-weight: 600; color: #1f2937; background: #ffffff; min-width: 110px; cursor: pointer; }",
 		"    .report-context-apply { border-color: #111827; background: #111827; color: #ffffff; cursor: pointer; }",
 		"    .report-context-apply:hover { background: #1f2937; }",
 		"    .report-context-action { white-space: nowrap; }",
-		"    .tz-toggle { min-width: 56px; cursor: pointer; }",
-		"    @media (max-width: 920px) { .report-context-tier { grid-template-columns: 1fr; } .report-context-middle, .report-context-right { justify-self: start; } .time-selector-panel { position: static; box-shadow: none; } }",
+		"    .tz-toggle { min-width: 56px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }",
+		"    @media (max-width: 920px) { .report-context-tier { grid-template-columns: 1fr; } .report-context-right { justify-self: start; } .time-selector-panel { position: static; box-shadow: none; } }",
 		"    :root[data-theme=\"dark\"] .report-shell { background: #111827; border-color: #334155; }",
 		"    :root[data-theme=\"dark\"] .report-brand { color: #f8fafc; }",
-		"    :root[data-theme=\"dark\"] .report-route-link, :root[data-theme=\"dark\"] .report-context-nav-btn, :root[data-theme=\"dark\"] .report-context-action, :root[data-theme=\"dark\"] .report-context-apply, :root[data-theme=\"dark\"] .time-selector-summary, :root[data-theme=\"dark\"] .report-env-static { background: #1f2937; border-color: #334155; color: #e2e8f0; }",
+		"    :root[data-theme=\"dark\"] .report-route-link, :root[data-theme=\"dark\"] .report-context-nav-btn, :root[data-theme=\"dark\"] .report-context-action, :root[data-theme=\"dark\"] .report-context-apply, :root[data-theme=\"dark\"] .time-selector-summary, :root[data-theme=\"dark\"] .report-env-static, :root[data-theme=\"dark\"] .report-env-select { background: #1f2937; border-color: #334155; color: #e2e8f0; }",
 		"    :root[data-theme=\"dark\"] .report-route-link:hover, :root[data-theme=\"dark\"] .report-context-nav-btn:hover, :root[data-theme=\"dark\"] .report-context-action:hover, :root[data-theme=\"dark\"] .time-selector-summary:hover { background: #0f172a; }",
 		"    :root[data-theme=\"dark\"] .report-route-link.active { background: #2563eb; border-color: #2563eb; color: #e2e8f0; }",
 		"    :root[data-theme=\"dark\"] .report-context-nav-btn.disabled { background: #0f172a; border-color: #334155; color: #64748b; }",
@@ -501,7 +501,7 @@ func ReportChromeCSS() string {
 		"    :root[data-theme=\"dark\"] .time-selector-option:hover { background: #1e293b; }",
 		"    :root[data-theme=\"dark\"] .time-selector-option.active { background: #2563eb; border-color: #2563eb; color: #e2e8f0; }",
 		"    :root[data-theme=\"dark\"] .time-selector-fields { border-top-color: #334155; }",
-		"    :root[data-theme=\"dark\"] .time-selector-fields-grid input[type=\"date\"], :root[data-theme=\"dark\"] .report-env-control select { background: #0f172a; border-color: #334155; color: #e2e8f0; }",
+		"    :root[data-theme=\"dark\"] .time-selector-fields-grid input[type=\"date\"], :root[data-theme=\"dark\"] .report-env-control select, :root[data-theme=\"dark\"] .report-env-select { background: #0f172a; border-color: #334155; color: #e2e8f0; }",
 		"    :root[data-theme=\"dark\"] .report-context-apply { background: #2563eb; border-color: #2563eb; color: #e2e8f0; }",
 		"    :root[data-theme=\"dark\"] .report-context-apply:hover { background: #1d4ed8; }",
 	}, "\n") + "\n"
@@ -536,8 +536,7 @@ func ReportChromeHTML(options ReportChromeOptions) string {
 		b.WriteString("    <div class=\"report-chrome-tier report-context-tier\">\n")
 	}
 	b.WriteString(renderChromeTimeControls(normalized))
-	b.WriteString(renderChromeEnvironmentControl(normalized))
-	b.WriteString(renderChromeActionSlot(normalized))
+	b.WriteString(renderChromeRightSlot(normalized))
 	if strings.TrimSpace(normalized.FilterFormAction) != "" {
 		b.WriteString("    </form>\n")
 	} else {
@@ -556,7 +555,6 @@ func renderChromeTimeControls(options ReportChromeOptions) string {
 	var b strings.Builder
 	b.WriteString("      <div class=\"report-context-left\">\n")
 	b.WriteString("        <div class=\"report-time-controls\">\n")
-	b.WriteString("          <span class=\"report-context-label\">Time:</span>\n")
 	b.WriteString(renderReportChromeNavButton(timeSelector.PreviousHref, "&lt;"))
 	b.WriteString("          <details class=\"time-selector\">\n")
 	b.WriteString("            <summary class=\"time-selector-summary\"><span class=\"time-selector-summary-text\">")
@@ -628,40 +626,6 @@ func renderChromeTimeControls(options ReportChromeOptions) string {
 	return b.String()
 }
 
-func renderChromeEnvironmentControl(options ReportChromeOptions) string {
-	environment := options.Environment
-	selectedValue := normalizeChromeEnvironmentValue(environment.Value)
-	var b strings.Builder
-	b.WriteString("      <div class=\"report-context-middle\">\n")
-	if environment.Disabled {
-		b.WriteString("        <span class=\"report-env-static\"><span class=\"report-context-label\">Env:</span>&nbsp;ALL</span>\n")
-		b.WriteString("      </div>\n")
-		return b.String()
-	}
-	autoSubmitAttr := ""
-	if environment.AutoSubmit {
-		autoSubmitAttr = ` onchange="if (this.form) { this.form.submit(); }"`
-	}
-	b.WriteString("        <label class=\"report-env-control\"><span class=\"report-context-label\">Env:</span><select name=\"env\"")
-	b.WriteString(autoSubmitAttr)
-	b.WriteString(">\n")
-	b.WriteString(fmt.Sprintf("          <option value=\"\"%s>ALL</option>\n", selectedAttr(selectedValue == "")))
-	for _, environmentName := range sourceoptions.SupportedEnvironments() {
-		trimmedName := strings.TrimSpace(environmentName)
-		if trimmedName == "" {
-			continue
-		}
-		b.WriteString(fmt.Sprintf(
-			"          <option value=\"%s\"%s>%s</option>\n",
-			html.EscapeString(trimmedName),
-			selectedAttr(trimmedName == selectedValue),
-			html.EscapeString(strings.ToUpper(trimmedName)),
-		))
-	}
-	b.WriteString("        </select></label>\n")
-	b.WriteString("      </div>\n")
-	return b.String()
-}
 
 func ThemeInitScriptTag() string {
 	return strings.TrimSpace(`
@@ -755,50 +719,46 @@ func TimezoneToggleScriptTag() string {
   var key = "ci-failure-report-tz-mode";
   var button = document.getElementById("tz-toggle");
 
+  function localTZ() {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || "Local";
+    } catch (err) {
+      return "Local";
+    }
+  }
+
   function getMode() {
     try {
       var stored = localStorage.getItem(key);
-      if (stored === "local") { return "local"; }
+      if (stored === "utc") { return "utc"; }
     } catch (err) {}
-    return "utc";
+    return "local";
   }
 
-  function formatUTC(date) {
+  function pad2(n) { return String(n).padStart(2, "0"); }
+
+  function formatUTC(date, fmt) {
     var y = date.getUTCFullYear();
-    var mo = String(date.getUTCMonth() + 1).padStart(2, "0");
-    var d = String(date.getUTCDate()).padStart(2, "0");
-    var h = String(date.getUTCHours()).padStart(2, "0");
-    var mi = String(date.getUTCMinutes()).padStart(2, "0");
-    var s = String(date.getUTCSeconds()).padStart(2, "0");
-    if (h === "00" && mi === "00" && s === "00") {
-      return y + "-" + mo + "-" + d + " UTC";
-    }
-    if (s !== "00") {
-      return h + ":" + mi + ":" + s + " UTC";
-    }
-    return y + "-" + mo + "-" + d + " " + h + ":" + mi + " UTC";
+    var mo = pad2(date.getUTCMonth() + 1);
+    var d = pad2(date.getUTCDate());
+    var h = pad2(date.getUTCHours());
+    var mi = pad2(date.getUTCMinutes());
+    var s = pad2(date.getUTCSeconds());
+    if (fmt === "time") { return h + ":" + mi + ":" + s; }
+    if (fmt === "date") { return y + "-" + mo + "-" + d; }
+    return y + "-" + mo + "-" + d + " " + h + ":" + mi;
   }
 
-  function formatLocal(date) {
+  function formatLocal(date, fmt) {
     var y = date.getFullYear();
-    var mo = String(date.getMonth() + 1).padStart(2, "0");
-    var d = String(date.getDate()).padStart(2, "0");
-    var h = String(date.getHours()).padStart(2, "0");
-    var mi = String(date.getMinutes()).padStart(2, "0");
-    var s = String(date.getSeconds()).padStart(2, "0");
-    var tz;
-    try {
-      tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "Local";
-    } catch (err) {
-      tz = "Local";
-    }
-    if (h === "00" && mi === "00" && s === "00") {
-      return y + "-" + mo + "-" + d + " " + tz;
-    }
-    if (s !== "00") {
-      return h + ":" + mi + ":" + s + " " + tz;
-    }
-    return y + "-" + mo + "-" + d + " " + h + ":" + mi + " " + tz;
+    var mo = pad2(date.getMonth() + 1);
+    var d = pad2(date.getDate());
+    var h = pad2(date.getHours());
+    var mi = pad2(date.getMinutes());
+    var s = pad2(date.getSeconds());
+    if (fmt === "time") { return h + ":" + mi + ":" + s; }
+    if (fmt === "date") { return y + "-" + mo + "-" + d; }
+    return y + "-" + mo + "-" + d + " " + h + ":" + mi;
   }
 
   function applyTimestamps(mode) {
@@ -809,7 +769,8 @@ func TimezoneToggleScriptTag() string {
       if (!iso) { continue; }
       var date = new Date(iso);
       if (isNaN(date.getTime())) { continue; }
-      el.textContent = mode === "local" ? formatLocal(date) : formatUTC(date);
+      var fmt = el.getAttribute("data-tz-fmt") || "datetime";
+      el.textContent = mode === "local" ? formatLocal(date, fmt) : formatUTC(date, fmt);
     }
   }
 
@@ -825,12 +786,17 @@ func TimezoneToggleScriptTag() string {
     }
   }
 
+  function buttonLabel(mode) {
+    if (mode === "local") { return "Local (" + localTZ() + ")"; }
+    return "UTC";
+  }
+
   function apply(mode, persist) {
     applyTimestamps(mode);
     applyHeaders(mode);
     if (button) {
-      button.textContent = mode === "local" ? "Local" : "UTC";
-      button.setAttribute("title", "Showing times in " + (mode === "local" ? "local timezone" : "UTC") + ". Click to toggle.");
+      button.textContent = buttonLabel(mode);
+      button.setAttribute("title", "Showing times in " + (mode === "local" ? localTZ() : "UTC") + ". Click to toggle.");
     }
     if (persist) {
       try { localStorage.setItem(key, mode); } catch (err) {}
@@ -1047,14 +1013,10 @@ func renderTimeSelectorMenuLink(link ChromeLink) string {
 	return b.String()
 }
 
-func renderChromeActionSlot(options ReportChromeOptions) string {
-	hasActions := strings.TrimSpace(options.JSONAPIHref) != ""
-	className := "report-context-right"
-	if !hasActions {
-		className += " is-empty"
-	}
+func renderChromeRightSlot(options ReportChromeOptions) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("      <div class=\"%s\">\n", className))
+	b.WriteString("      <div class=\"report-context-right\">\n")
+	b.WriteString(renderChromeEnvironmentInline(options))
 	if href := strings.TrimSpace(options.JSONAPIHref); href != "" {
 		b.WriteString(fmt.Sprintf(
 			"        <a class=\"report-context-action\" href=\"%s\">View JSON API</a>\n",
@@ -1062,10 +1024,38 @@ func renderChromeActionSlot(options ReportChromeOptions) string {
 		))
 	}
 	b.WriteString("      </div>\n")
-	return fmt.Sprintf(
-		"%s",
-		b.String(),
-	)
+	return b.String()
+}
+
+func renderChromeEnvironmentInline(options ReportChromeOptions) string {
+	environment := options.Environment
+	selectedValue := normalizeChromeEnvironmentValue(environment.Value)
+	if environment.Disabled {
+		return "        <span class=\"report-env-static\">Env: ALL</span>\n"
+	}
+	autoSubmitAttr := ""
+	if environment.AutoSubmit {
+		autoSubmitAttr = ` onchange="if (this.form) { this.form.submit(); }"`
+	}
+	var b strings.Builder
+	b.WriteString("        <select class=\"report-env-select\" name=\"env\"")
+	b.WriteString(autoSubmitAttr)
+	b.WriteString(">\n")
+	b.WriteString(fmt.Sprintf("          <option value=\"\"%s>Env: ALL</option>\n", selectedAttr(selectedValue == "")))
+	for _, environmentName := range sourceoptions.SupportedEnvironments() {
+		trimmedName := strings.TrimSpace(environmentName)
+		if trimmedName == "" {
+			continue
+		}
+		b.WriteString(fmt.Sprintf(
+			"          <option value=\"%s\"%s>Env: %s</option>\n",
+			html.EscapeString(trimmedName),
+			selectedAttr(trimmedName == selectedValue),
+			html.EscapeString(strings.ToUpper(trimmedName)),
+		))
+	}
+	b.WriteString("        </select>\n")
+	return b.String()
 }
 
 func RenderTable(rows []FailurePatternRow, options TableOptions) string {
@@ -1500,20 +1490,27 @@ func FormatReferenceTimestampHTML(value string) string {
 	}
 	utc := parsed.UTC()
 	isoValue := utc.Format(time.RFC3339)
-	displayLabel := utc.Format("2006-01-02 15:04 UTC")
+	displayLabel := utc.Format("2006-01-02 15:04")
 	return fmt.Sprintf(
-		"<time class=\"tz-timestamp\" datetime=\"%s\">%s</time>",
+		"<time class=\"tz-timestamp\" data-tz-fmt=\"datetime\" datetime=\"%s\">%s</time>",
 		html.EscapeString(isoValue),
 		html.EscapeString(displayLabel),
 	)
 }
 
-func TimestampHTML(t time.Time, format string) string {
+const (
+	TzFmtTime     = "time"
+	TzFmtDate     = "date"
+	TzFmtDatetime = "datetime"
+)
+
+func TimestampHTML(t time.Time, displayFormat string, tzFmt string) string {
 	utc := t.UTC()
 	isoValue := utc.Format(time.RFC3339)
-	displayLabel := utc.Format(format)
+	displayLabel := utc.Format(displayFormat)
 	return fmt.Sprintf(
-		"<time class=\"tz-timestamp\" datetime=\"%s\">%s</time>",
+		"<time class=\"tz-timestamp\" data-tz-fmt=\"%s\" datetime=\"%s\">%s</time>",
+		html.EscapeString(tzFmt),
 		html.EscapeString(isoValue),
 		html.EscapeString(displayLabel),
 	)

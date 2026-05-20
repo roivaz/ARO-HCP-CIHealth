@@ -337,7 +337,7 @@ func TestHandleFailurePatternsPageWindowRendersHTML(t *testing.T) {
 	if !strings.Contains(body, `type="datetime-local" name="end_at" value="2026-03-17T00:00"`) {
 		t.Fatalf("expected end_at control in body, got %q", body)
 	}
-	if !strings.Contains(body, `name="env"`) || !strings.Contains(body, `option value="dev" selected="selected">DEV</option>`) {
+	if !strings.Contains(body, `name="env"`) || !strings.Contains(body, `option value="dev" selected="selected">Env: DEV</option>`) {
 		t.Fatalf("expected env control in body, got %q", body)
 	}
 	if strings.Contains(body, `type="hidden" name="week"`) {

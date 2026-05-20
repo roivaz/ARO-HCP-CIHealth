@@ -495,7 +495,7 @@ func buildHTML(
 				b.WriteString("          <tr>")
 				b.WriteString(fmt.Sprintf("<td>%.2f%%</td>", item.PassRate))
 				b.WriteString(fmt.Sprintf("<td>%d</td>", item.Runs))
-				b.WriteString(fmt.Sprintf("<td><time class=\"tz-timestamp\" datetime=\"%sT00:00:00Z\">%s UTC</time></td>", html.EscapeString(item.Date), html.EscapeString(item.Date)))
+				b.WriteString(fmt.Sprintf("<td><time class=\"tz-timestamp\" data-tz-fmt=\"date\" datetime=\"%sT00:00:00Z\">%s</time></td>", html.EscapeString(item.Date), html.EscapeString(item.Date)))
 				b.WriteString(fmt.Sprintf("<td>%s</td>", html.EscapeString(suite)))
 				b.WriteString(fmt.Sprintf("<td>%s</td>", html.EscapeString(cleanInline(item.TestName, 160))))
 				b.WriteString("</tr>\n")

@@ -67,7 +67,7 @@ func RenderHTML(
 	b.WriteString("    .detail-item { border: 1px solid #e5e7eb; border-radius: 8px; background: #f9fafb; padding: 8px 10px; }\n")
 	b.WriteString("    .detail-title { font-weight: 700; }\n")
 	b.WriteString("    .job-link { font-weight: 700; }\n")
-	b.WriteString("    details { margin-top: 8px; }\n")
+	b.WriteString("    .page-content details { margin-top: 8px; }\n")
 	b.WriteString("    details summary { cursor: pointer; color: #1d4ed8; font-weight: 600; }\n")
 	b.WriteString("    .raw-failure-toggle > summary { display: inline-flex; align-items: center; justify-content: center; border: 1px solid #d1d5db; border-radius: 999px; padding: 4px 10px; font-size: 11px; font-weight: 600; color: #1f2937; background: #ffffff; }\n")
 	b.WriteString("    .raw-failure-toggle[open] > summary { background: #f3f4f6; }\n")
@@ -183,7 +183,7 @@ func runLogDayRunTimeHTML(occurredAt string) string {
 	if err != nil {
 		return html.EscapeString(strings.TrimSpace(occurredAt))
 	}
-	return frontui.TimestampHTML(parsed, "15:04:05 UTC")
+	return frontui.TimestampHTML(parsed, "15:04:05", frontui.TzFmtTime)
 }
 
 func runLogDayJobLabel(run storecontracts.RunRecord) string {

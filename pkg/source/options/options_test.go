@@ -146,8 +146,8 @@ func TestProwJobNamesForEnvironment(t *testing.T) {
 	}{
 		{environment: "dev", want: []string{"pull-ci-Azure-ARO-HCP-main-e2e-parallel"}},
 		{environment: "int", want: []string{"periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel", "branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel"}},
-		{environment: "stg", want: []string{"periodic-ci-Azure-ARO-HCP-main-periodic-stage-e2e-parallel", "branch-ci-Azure-ARO-HCP-main-e2e-stage-e2e-parallel"}},
-		{environment: "prod", want: []string{"periodic-ci-Azure-ARO-HCP-main-periodic-prod-e2e-parallel", "branch-ci-Azure-ARO-HCP-main-e2e-prod-e2e-parallel"}},
+		{environment: "stg", want: []string{"periodic-ci-Azure-ARO-HCP-main-periodic-stage-e2e-parallel", "periodic-ci-Azure-ARO-HCP-main-periodic-stage-e2e-parallel-ocp-nightly", "branch-ci-Azure-ARO-HCP-main-e2e-stage-e2e-parallel"}},
+		{environment: "prod", want: []string{"periodic-ci-Azure-ARO-HCP-main-periodic-prod-e2e-parallel", "periodic-ci-Azure-ARO-HCP-main-periodic-prod-e2e-parallel-ocp-nightly", "branch-ci-Azure-ARO-HCP-main-e2e-prod-e2e-parallel"}},
 	}
 
 	for _, tt := range tests {

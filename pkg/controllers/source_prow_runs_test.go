@@ -163,6 +163,32 @@ func TestMapProwJobToRunRecordKeepsTerminalJobWithoutCompletionTime(t *testing.T
 	}
 }
 
+func TestMapProwJobToRunRecordDetailedReportsUnsupportedRunURL(t *testing.T) {
+	t.Parallel()
+
+	job := prowjobs.Job{
+		Spec: prowjobs.JobSpec{
+			Job: "pull-ci-Azure-ARO-HCP-main-e2e-parallel",
+		},
+		Status: prowjobs.JobStatus{
+			State:     "failure",
+			URL:       "https://prow.ci.openshift.org/prowjob?prowjob=053131c7-7bd8-472a-845d-13db32a9db6a",
+			StartTime: mustParseRFC3339(t, "2026-04-20T10:00:00Z"),
+		},
+	}
+
+	_, ok, reason, detail := mapProwJobToRunRecordDetailed("https://prow.ci.openshift.org", "dev", job)
+	if ok {
+		t.Fatalf("expected unsupported run URL to fail mapping")
+	}
+	if reason != "unsupported_run_url" {
+		t.Fatalf("unexpected mapping failure reason: got=%q want=%q", reason, "unsupported_run_url")
+	}
+	if detail == "" {
+		t.Fatalf("expected mapping failure detail for unsupported run URL")
+	}
+}
+
 func TestSyncOnceUsesSharedSnapshotForAllEnvironments(t *testing.T) {
 	t.Parallel()
 
@@ -433,6 +459,66 @@ func TestSyncOnceDoesNotCreateCheckpointWhenNoJobsMatch(t *testing.T) {
 	}
 	if store.upsertRunsCalls != 0 {
 		t.Fatalf("expected no run upserts when no completed jobs matched, got=%d", store.upsertRunsCalls)
+	}
+}
+
+func TestSyncOnceCheckpointAdvancesOnlyFromMappedJobs(t *testing.T) {
+	t.Parallel()
+
+	opts := testSourceOptions(t, []string{"dev"})
+	validStartedAt := time.Now().UTC().Add(-20 * time.Minute).Truncate(time.Second)
+	unmappableStartedAt := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
+
+	client := &fakeProwSnapshotClient{
+		jobs: []prowjobs.Job{
+			{
+				Spec: prowjobs.JobSpec{
+					Job: "pull-ci-Azure-ARO-HCP-main-e2e-parallel",
+				},
+				Status: prowjobs.JobStatus{
+					State:     "failure",
+					URL:       "gs://test-platform-results/pr-logs/pull/Azure_ARO-HCP/4313/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455488",
+					StartTime: validStartedAt,
+				},
+			},
+			{
+				Spec: prowjobs.JobSpec{
+					Job: "pull-ci-Azure-ARO-HCP-main-e2e-parallel",
+				},
+				Status: prowjobs.JobStatus{
+					State:     "failure",
+					URL:       "https://prow.ci.openshift.org/prowjob?prowjob=bad-url-for-run-discovery",
+					StartTime: unmappableStartedAt,
+				},
+			},
+		},
+	}
+	store := &fakeProwRunsStore{
+		runs:        map[string]contracts.RunRecord{},
+		checkpoints: map[string]contracts.CheckpointRecord{},
+	}
+	controller, err := newSourceProwRunsController(logr.Discard(), Dependencies{
+		Store:  store,
+		Source: opts,
+	}, client)
+	if err != nil {
+		t.Fatalf("newSourceProwRunsController returned error: %v", err)
+	}
+
+	if err := controller.SyncOnce(context.Background()); err != nil {
+		t.Fatalf("SyncOnce returned error: %v", err)
+	}
+
+	checkpoint, found := store.checkpoints[prowRunsCheckpointNameForEnvironment("dev")]
+	if !found {
+		t.Fatalf("expected dev checkpoint to be stored")
+	}
+	if checkpoint.Value != validStartedAt.Format(time.RFC3339Nano) {
+		t.Fatalf("expected checkpoint to advance only from mapped jobs: got=%q want=%q", checkpoint.Value, validStartedAt.Format(time.RFC3339Nano))
+	}
+
+	if len(store.runs) != 1 {
+		t.Fatalf("expected only the mapped run to be stored, got=%d", len(store.runs))
 	}
 }
 

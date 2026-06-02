@@ -21,8 +21,9 @@ import (
 
 const (
 	sourceProwRunsReconcileInterval = 10 * time.Minute
-	sourceProwRunsReplayWindow      = 1 * time.Hour
+	sourceProwRunsReplayWindow      = 10 * time.Hour
 	sourceProwRunsSyncKey           = "all"
+	prowRunsDropSampleLimit         = 5
 )
 
 type sourceProwRunsController struct {
@@ -37,6 +38,17 @@ type sourceProwRunsController struct {
 
 type prowRunsFetchStats struct {
 	FetchedJobs int
+}
+
+type prowRunDropSample struct {
+	Reason         string `json:"reason"`
+	Detail         string `json:"detail,omitempty"`
+	JobName        string `json:"job_name,omitempty"`
+	State          string `json:"state,omitempty"`
+	StartTime      string `json:"start_time,omitempty"`
+	CompletionTime string `json:"completion_time,omitempty"`
+	BuildID        string `json:"build_id,omitempty"`
+	RawRunURL      string `json:"raw_run_url,omitempty"`
 }
 
 var _ Controller = (*sourceProwRunsController)(nil)
@@ -217,12 +229,23 @@ func (c *sourceProwRunsController) syncEnvironmentFromSnapshot(ctx context.Conte
 	jobs := filterCompletedJobsByNamesAndSince(snapshotJobs, jobNames, since)
 
 	now := time.Now().UTC()
+	dropReasons := map[string]int{}
+	dropSamples := make([]prowRunDropSample, 0, minInt(prowRunsDropSampleLimit, len(jobs)))
+	mappedJobs := make([]prowjobs.Job, 0, len(jobs))
 	runRecords := make([]contracts.RunRecord, 0, len(jobs))
 	for _, job := range jobs {
-		record, ok := mapProwJobToRunRecord(c.deps.Source.ProwBaseURL, environment, job)
+		record, ok, reason, detail := mapProwJobToRunRecordDetailed(c.deps.Source.ProwBaseURL, environment, job)
 		if !ok {
+			if reason == "" {
+				reason = "unknown"
+			}
+			dropReasons[reason]++
+			if len(dropSamples) < prowRunsDropSampleLimit {
+				dropSamples = append(dropSamples, buildProwRunDropSample(job, reason, detail))
+			}
 			continue
 		}
+		mappedJobs = append(mappedJobs, job)
 		existing, found, err := c.store.GetRun(ctx, environment, record.RunURL)
 		if err != nil {
 			return fmt.Errorf("get existing run record for environment=%q run_url=%q: %w", environment, record.RunURL, err)
@@ -238,7 +261,7 @@ func (c *sourceProwRunsController) syncEnvironmentFromSnapshot(ctx context.Conte
 		}
 	}
 
-	nextCheckpoint := computeNextProwRunsCheckpoint(checkpointTime, jobs)
+	nextCheckpoint := computeNextProwRunsCheckpoint(checkpointTime, mappedJobs)
 	if !nextCheckpoint.IsZero() {
 		checkpoint := contracts.CheckpointRecord{
 			Name:      prowRunsCheckpointNameForEnvironment(environment),
@@ -249,6 +272,16 @@ func (c *sourceProwRunsController) syncEnvironmentFromSnapshot(ctx context.Conte
 			return fmt.Errorf("update prow runs checkpoint for environment %q: %w", environment, err)
 		}
 	}
+	if len(dropSamples) > 0 {
+		c.logger.Info(
+			"Dropped matched completed Prow jobs during run discovery.",
+			"environment", environment,
+			"since_start", since.Format(time.RFC3339),
+			"dropped_completed", len(jobs)-len(mappedJobs),
+			"drop_reasons", dropReasons,
+			"drop_examples", dropSamples,
+		)
+	}
 
 	c.logger.Info(
 		"Synced completed Prow runs for environment.",
@@ -256,6 +289,7 @@ func (c *sourceProwRunsController) syncEnvironmentFromSnapshot(ctx context.Conte
 		"job_names", jobNameList,
 		"fetched_total", fetchStats.FetchedJobs,
 		"matched_completed", len(jobs),
+		"mapped_completed", len(mappedJobs),
 		"upserted_runs", len(runRecords),
 		"since_start", since.Format(time.RFC3339),
 	)
@@ -298,17 +332,25 @@ func fetchProwJobsSnapshot(ctx context.Context, client prowjobs.Client) ([]prowj
 }
 
 func mapProwJobToRunRecord(prowBaseURL string, environment string, job prowjobs.Job) (contracts.RunRecord, bool) {
+	record, ok, _, _ := mapProwJobToRunRecordDetailed(prowBaseURL, environment, job)
+	return record, ok
+}
+
+func mapProwJobToRunRecordDetailed(prowBaseURL string, environment string, job prowjobs.Job) (contracts.RunRecord, bool, string, string) {
 	jobName := strings.TrimSpace(job.Spec.Job)
 	if jobName == "" {
-		return contracts.RunRecord{}, false
+		return contracts.RunRecord{}, false, "missing_job_name", "spec.job is empty"
 	}
-	if !prowjobs.IsTerminalState(job.Status.State) || job.Status.StartTime.IsZero() {
-		return contracts.RunRecord{}, false
+	if !prowjobs.IsTerminalState(job.Status.State) {
+		return contracts.RunRecord{}, false, "non_terminal_state", fmt.Sprintf("state=%q", strings.TrimSpace(job.Status.State))
+	}
+	if job.Status.StartTime.IsZero() {
+		return contracts.RunRecord{}, false, "missing_start_time", "status.startTime is zero"
 	}
 
 	runURL, err := prowartifacts.CanonicalRunURL(prowBaseURL, job.Status.URL)
 	if err != nil {
-		return contracts.RunRecord{}, false
+		return contracts.RunRecord{}, false, "unsupported_run_url", err.Error()
 	}
 
 	record := contracts.RunRecord{
@@ -329,7 +371,7 @@ func mapProwJobToRunRecord(prowBaseURL string, environment string, job prowjobs.
 		record.PostGoodCommit = true
 	}
 
-	return record, true
+	return record, true, "", ""
 }
 
 func filterCompletedJobsByNamesAndSince(jobs []prowjobs.Job, jobNames sets.Set[string], since time.Time) []prowjobs.Job {
@@ -365,6 +407,31 @@ func computeNextProwRunsCheckpoint(previous time.Time, jobs []prowjobs.Job) time
 		}
 	}
 	return next
+}
+
+func buildProwRunDropSample(job prowjobs.Job, reason string, detail string) prowRunDropSample {
+	sample := prowRunDropSample{
+		Reason:    strings.TrimSpace(reason),
+		Detail:    strings.TrimSpace(detail),
+		JobName:   strings.TrimSpace(job.Spec.Job),
+		State:     strings.TrimSpace(job.Status.State),
+		BuildID:   strings.TrimSpace(job.Status.BuildID),
+		RawRunURL: strings.TrimSpace(job.Status.URL),
+	}
+	if !job.Status.StartTime.IsZero() {
+		sample.StartTime = job.Status.StartTime.UTC().Format(time.RFC3339Nano)
+	}
+	if !job.Status.CompletionTime.IsZero() {
+		sample.CompletionTime = job.Status.CompletionTime.UTC().Format(time.RFC3339Nano)
+	}
+	return sample
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func prowRunsCheckpointNameForEnvironment(environment string) string {

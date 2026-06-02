@@ -75,10 +75,12 @@ var defaultRuntimeDefaults = RuntimeDefaults{
 			SippyRelease: "aro-stage",
 			SippyJobNames: []string{
 				"periodic-ci-Azure-ARO-HCP-main-periodic-stage-e2e-parallel",
+				"periodic-ci-Azure-ARO-HCP-main-periodic-stage-e2e-parallel-ocp-nightly",
 				"branch-ci-Azure-ARO-HCP-main-e2e-stage-e2e-parallel",
 			},
 			DeterministicJUnitPaths: []string{
 				"artifacts/stage-e2e-parallel/aro-hcp-test-persistent/artifacts/junit.xml",
+				"artifacts/stage-e2e-parallel-ocp-nightly/aro-hcp-test-persistent/artifacts/junit.xml",
 				"prowjob_junit.xml",
 			},
 		},
@@ -86,10 +88,12 @@ var defaultRuntimeDefaults = RuntimeDefaults{
 			SippyRelease: "aro-production",
 			SippyJobNames: []string{
 				"periodic-ci-Azure-ARO-HCP-main-periodic-prod-e2e-parallel",
+				"periodic-ci-Azure-ARO-HCP-main-periodic-prod-e2e-parallel-ocp-nightly",
 				"branch-ci-Azure-ARO-HCP-main-e2e-prod-e2e-parallel",
 			},
 			DeterministicJUnitPaths: []string{
 				"artifacts/prod-e2e-parallel/aro-hcp-test-persistent/artifacts/junit.xml",
+				"artifacts/prod-e2e-parallel-ocp-nightly/aro-hcp-test-persistent/artifacts/junit.xml",
 				"prowjob_junit.xml",
 			},
 		},

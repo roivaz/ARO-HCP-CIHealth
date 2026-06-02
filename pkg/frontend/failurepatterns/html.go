@@ -91,6 +91,7 @@ func RenderHTML(
 	b.WriteString("</main>\n")
 	b.WriteString(frontui.TooltipScriptTag())
 	b.WriteString(frontui.ThemeToggleScriptTag())
+	b.WriteString(frontui.TimezoneToggleScriptTag())
 	b.WriteString("</body>\n")
 	b.WriteString("</html>\n")
 	return b.String()

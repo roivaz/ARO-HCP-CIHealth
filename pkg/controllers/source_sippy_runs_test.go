@@ -134,6 +134,122 @@ func TestSyncSingleRunByKeySearchesAllConfiguredSippyJobs(t *testing.T) {
 	}
 }
 
+func TestComputeNextCheckpointReturnsZeroWhenUninitializedAndEmpty(t *testing.T) {
+	t.Parallel()
+
+	got := computeNextCheckpoint(time.Time{}, nil)
+	if !got.IsZero() {
+		t.Fatalf("expected zero checkpoint when previous is unset and no runs matched, got=%s", got.Format(time.RFC3339))
+	}
+}
+
+func TestComputeNextCheckpointPreservesPreviousWhenEmpty(t *testing.T) {
+	t.Parallel()
+
+	previous := mustParseRFC3339(t, "2026-04-22T18:00:00Z")
+	got := computeNextCheckpoint(previous, nil)
+	if !got.Equal(previous) {
+		t.Fatalf("expected previous checkpoint to be preserved when no runs matched: got=%s want=%s", got.Format(time.RFC3339), previous.Format(time.RFC3339))
+	}
+}
+
+func TestComputeNextCheckpointIgnoresRunsWithoutStartedAt(t *testing.T) {
+	t.Parallel()
+
+	previous := mustParseRFC3339(t, "2026-04-22T18:00:00Z")
+	runs := []sippysource.JobRun{
+		{
+			RunURL:  "https://prow.ci.openshift.org/view/gs/test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499",
+			JobName: "periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel",
+			Failed:  true,
+		},
+	}
+	got := computeNextCheckpoint(previous, runs)
+	if !got.Equal(previous) {
+		t.Fatalf("expected runs without started_at to not advance checkpoint: got=%s want=%s", got.Format(time.RFC3339), previous.Format(time.RFC3339))
+	}
+}
+
+func TestSyncEnvironmentDoesNotCreateCheckpointWhenNoRunsMatch(t *testing.T) {
+	t.Parallel()
+
+	opts := testSourceOptions(t, []string{"int"})
+	client := &fakeSippyRunsClient{
+		runsByJobName: map[string][]sippysource.JobRun{},
+	}
+	store := &fakeProwRunsStore{
+		runs:        map[string]contracts.RunRecord{},
+		checkpoints: map[string]contracts.CheckpointRecord{},
+	}
+
+	controller, err := newSourceSippyRunsController(logr.Discard(), Dependencies{
+		Store:  store,
+		Source: opts,
+	}, client)
+	if err != nil {
+		t.Fatalf("newSourceSippyRunsController returned error: %v", err)
+	}
+
+	if err := controller.syncEnvironment(context.Background(), "int"); err != nil {
+		t.Fatalf("syncEnvironment returned error: %v", err)
+	}
+	if _, found := store.checkpoints[checkpointNameForEnvironment("int")]; found {
+		t.Fatalf("expected no checkpoint to be written when no runs matched")
+	}
+}
+
+func TestSyncEnvironmentDoesNotCreateCheckpointWhenRunsLackStartedAt(t *testing.T) {
+	t.Parallel()
+
+	opts := testSourceOptions(t, []string{"int"})
+	periodicJobName := "periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel"
+	branchJobName := "branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel"
+	client := &fakeSippyRunsClient{
+		runsByJobName: map[string][]sippysource.JobRun{
+			periodicJobName: {
+				{
+					RunURL:  "gs://test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499",
+					JobName: periodicJobName,
+					Failed:  true,
+				},
+			},
+			branchJobName: {
+				{
+					RunURL:  "gs://test-platform-results/logs/branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel/2029578186907455500",
+					JobName: branchJobName,
+					Failed:  false,
+				},
+			},
+		},
+	}
+	store := &fakeProwRunsStore{
+		runs:        map[string]contracts.RunRecord{},
+		checkpoints: map[string]contracts.CheckpointRecord{},
+	}
+
+	controller, err := newSourceSippyRunsController(logr.Discard(), Dependencies{
+		Store:  store,
+		Source: opts,
+	}, client)
+	if err != nil {
+		t.Fatalf("newSourceSippyRunsController returned error: %v", err)
+	}
+
+	if err := controller.syncEnvironment(context.Background(), "int"); err != nil {
+		t.Fatalf("syncEnvironment returned error: %v", err)
+	}
+	if _, found := store.checkpoints[checkpointNameForEnvironment("int")]; found {
+		t.Fatalf("expected no checkpoint to be written when matched runs lack started_at")
+	}
+
+	periodicRunURL := "https://prow.ci.openshift.org/view/gs/test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499"
+	if row, found := store.GetStoredRun("int", periodicRunURL); !found {
+		t.Fatalf("expected run without started_at to still be stored")
+	} else if row.OccurredAt != "" {
+		t.Fatalf("expected occurred_at to remain empty when started_at is missing, got=%q", row.OccurredAt)
+	}
+}
+
 type fakeSippyRunsClient struct {
 	runsByJobName map[string][]sippysource.JobRun
 	jobRunCalls   []sippysource.ListJobRunsOptions

@@ -626,7 +626,6 @@ func renderChromeTimeControls(options ReportChromeOptions) string {
 	return b.String()
 }
 
-
 func ThemeInitScriptTag() string {
 	return strings.TrimSpace(`
 <script>

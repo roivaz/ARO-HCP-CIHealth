@@ -229,7 +229,7 @@ func (m *preparedWindowCacheManager) lookup(
 	if m == nil || !m.enabled {
 		return nil, "disabled", false
 	}
-	if !equalPreparedWindowCacheEnvironmentSets(opts.Environments, m.primaryEnvironments) {
+	if !preparedWindowCacheEnvironmentsCovered(opts.Environments, m.primaryEnvironments) {
 		return nil, "env_mismatch", false
 	}
 
@@ -337,6 +337,26 @@ func equalPreparedWindowCacheEnvironmentSets(left []string, right []string) bool
 	}
 	for idx := range left {
 		if strings.TrimSpace(left[idx]) != strings.TrimSpace(right[idx]) {
+			return false
+		}
+	}
+	return true
+}
+
+// preparedWindowCacheEnvironmentsCovered reports whether every requested
+// environment is present in the cached (primary) environment set. The primary
+// snapshot is always prepared for the full supported environment set, so any
+// non-empty subset request can be served from it and filtered downstream.
+func preparedWindowCacheEnvironmentsCovered(requested []string, primary []string) bool {
+	if len(requested) == 0 {
+		return false
+	}
+	primarySet := make(map[string]struct{}, len(primary))
+	for _, environment := range primary {
+		primarySet[strings.TrimSpace(environment)] = struct{}{}
+	}
+	for _, environment := range requested {
+		if _, ok := primarySet[strings.TrimSpace(environment)]; !ok {
 			return false
 		}
 	}

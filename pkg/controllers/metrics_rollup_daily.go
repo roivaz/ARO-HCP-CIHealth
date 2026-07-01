@@ -199,7 +199,7 @@ func (c *metricsRollupDailyController) processKey(ctx context.Context, key strin
 	startTime = startTime.UTC()
 	endTime := startTime.AddDate(0, 0, 1)
 
-	out := make([]contracts.MetricDailyRecord, 0, len(c.envs)*9)
+	out := make([]contracts.MetricDailyRecord, 0, len(c.envs)*11)
 	for _, env := range c.envs {
 		runs, err := c.store.ListRunsByDateRange(ctx, env, startTime, endTime)
 		if err != nil {
@@ -441,10 +441,15 @@ func classifyMetricLaneFamily(environment string, row contracts.RawFailureRecord
 		return laneFamilyCIInfra
 	}
 
-	switch sourcelanes.ClassifyLane(environment, row.TestSuite, row.TestName) {
+	switch sourcelanes.DeriveLane(environment, row.ArtifactPath, row.TestSuite, row.TestName) {
 	case sourcelanes.LaneProvision:
 		return laneFamilyProvision
 	case sourcelanes.LaneE2E:
+		return laneFamilyE2E
+	case sourcelanes.LaneAlert:
+		// Alert failures are folded into the e2e bucket for the overview
+		// metric partition; they remain a distinct source in run-log and
+		// failure-patterns views.
 		return laneFamilyE2E
 	default:
 		return laneFamilyCIInfra

@@ -12,6 +12,7 @@ import (
 	readmodelmodel "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/model"
 	readmodelpatterns "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/patterns"
 	readmodelwindow "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/window"
+	sourcelanes "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/lanes"
 	sourceoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/options"
 	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
@@ -292,7 +293,7 @@ func buildJobHistoryFailureRows(
 			RowID:              strings.TrimSpace(row.RowID),
 			RunURL:             strings.TrimSpace(row.RunURL),
 			OccurredAt:         strings.TrimSpace(row.OccurredAt),
-			Lane:               strings.TrimSpace(cluster.Lane),
+			Lane:               string(sourcelanes.DeriveLane(environment, row.ArtifactPath, row.TestSuite, row.TestName)),
 			SignatureID:        signatureID,
 			TestName:           strings.TrimSpace(row.TestName),
 			TestSuite:          strings.TrimSpace(row.TestSuite),

@@ -53,6 +53,10 @@ type ArtifactFailureRecord struct {
 	// sha256(normalized failure text).
 	SignatureID string `json:"signature_id"`
 	FailureText string `json:"failure_text"`
+	// ArtifactPath records the originating JUnit artifact (URL/path) this failure
+	// was extracted from. It is the persisted fact used to later derive the lane
+	// (e.g. alert failures come from the junit_alerts.xml artifact).
+	ArtifactPath string `json:"artifact_path"`
 }
 
 type RawFailureRecord struct {
@@ -70,6 +74,10 @@ type RawFailureRecord struct {
 	OccurredAt     string `json:"occurred_at"`
 	RawText        string `json:"raw_text"`
 	NormalizedText string `json:"normalized_text"`
+	// ArtifactPath records the originating JUnit artifact (URL/path) this failure
+	// was extracted from, carried over from the artifact-failure fact. Empty for
+	// synthetic/non-artifact-backed rows. Used to derive the lane downstream.
+	ArtifactPath string `json:"artifact_path"`
 }
 
 type MetricDailyRecord struct {

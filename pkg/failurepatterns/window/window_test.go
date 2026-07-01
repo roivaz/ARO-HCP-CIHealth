@@ -88,7 +88,8 @@ func TestComputeMatchesStoredFailurePatternForSingleWeek(t *testing.T) {
 
 	evidence := failureextractor.Extract(rawFailures[0].RawText)
 	cluster := result.FailurePatterns[0]
-	if got, want := cluster.Phase2ClusterID, fingerprint("dev|phase2|"+failureextractor.FailurePatternKey(evidence)); got != want {
+	wantSource := bucketSourceForLane(string(sourcelanes.ClassifyLane("dev", "suite-a", "should oauth")))
+	if got, want := cluster.Phase2ClusterID, fingerprint("dev|phase2|"+wantSource+"|"+failureextractor.FailurePatternKey(evidence)); got != want {
 		t.Fatalf("unexpected cluster id: got=%q want=%q", got, want)
 	}
 	if got, want := cluster.CanonicalEvidencePhrase, evidence.CanonicalEvidencePhrase; got != want {

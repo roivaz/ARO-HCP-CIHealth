@@ -11,7 +11,14 @@ const (
 	LaneUnknown   Lane = "unknown"
 	LaneProvision Lane = "provision"
 	LaneE2E       Lane = "e2e"
+	LaneAlert     Lane = "alert"
 )
+
+// alertJUnitArtifactSuffix identifies the JUnit artifact that carries alert
+// "does not fire" assertions. Alert failures cannot be classified by test
+// suite/name (the alert suite name collides with the e2e suite), so they are
+// keyed off the originating artifact path instead.
+const alertJUnitArtifactSuffix = "junit_alerts.xml"
 
 type TestFilter struct {
 	TestSuite     string
@@ -108,6 +115,28 @@ func FiltersForEnvironment(environment string) ([]TestFilter, bool) {
 	return out, true
 }
 
+// DeriveLane resolves the lane for a failure. Alert failures are identified by
+// their originating JUnit artifact (the alert artifact), since their test
+// suite/name cannot be distinguished from the e2e suite. All other failures fall
+// back to the suite/name classification rules.
+func DeriveLane(environment string, artifactPath string, testSuite string, testName string) Lane {
+	if isAlertArtifactPath(artifactPath) {
+		return LaneAlert
+	}
+	return ClassifyLane(environment, testSuite, testName)
+}
+
+func isAlertArtifactPath(artifactPath string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(artifactPath))
+	if trimmed == "" {
+		return false
+	}
+	if idx := strings.IndexAny(trimmed, "?#"); idx >= 0 {
+		trimmed = trimmed[:idx]
+	}
+	return trimmed == alertJUnitArtifactSuffix || strings.HasSuffix(trimmed, "/"+alertJUnitArtifactSuffix)
+}
+
 func ClassifyLane(environment string, testSuite string, testName string) Lane {
 	rules, ok := compiledRulesByEnvironment[normalizeEnvironment(environment)]
 	if !ok || len(rules) == 0 {
@@ -177,6 +206,8 @@ func normalizeLane(value Lane) Lane {
 		return LaneProvision
 	case string(LaneE2E):
 		return LaneE2E
+	case string(LaneAlert):
+		return LaneAlert
 	default:
 		return LaneUnknown
 	}

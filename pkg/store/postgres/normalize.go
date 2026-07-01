@@ -137,6 +137,7 @@ func normalizeArtifactFailureRecord(row storecontracts.ArtifactFailureRecord) st
 		TestSuite:     strings.TrimSpace(row.TestSuite),
 		SignatureID:   strings.TrimSpace(row.SignatureID),
 		FailureText:   strings.TrimSpace(row.FailureText),
+		ArtifactPath:  strings.TrimSpace(row.ArtifactPath),
 	}
 }
 
@@ -152,6 +153,7 @@ func normalizeRawFailureRecord(row storecontracts.RawFailureRecord) storecontrac
 		OccurredAt:        strings.TrimSpace(row.OccurredAt),
 		RawText:           strings.TrimSpace(row.RawText),
 		NormalizedText:    strings.TrimSpace(row.NormalizedText),
+		ArtifactPath:      strings.TrimSpace(row.ArtifactPath),
 	}
 }
 

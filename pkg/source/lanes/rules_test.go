@@ -183,3 +183,40 @@ func TestFiltersForEnvironment(t *testing.T) {
 		t.Fatalf("expected no filters for unknown environment")
 	}
 }
+
+func TestBucketSource(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		lane string
+		want string
+	}{
+		{lane: "provision", want: "provision"},
+		{lane: "e2e", want: "e2e"},
+		{lane: "alert", want: "alert"},
+		{lane: "unknown", want: SourceOther},
+		{lane: "", want: SourceOther},
+		{lane: "  ALERT ", want: "alert"},
+		{lane: "bogus", want: SourceOther},
+	}
+	for _, testCase := range testCases {
+		if got := BucketSource(testCase.lane); got != testCase.want {
+			t.Errorf("BucketSource(%q) = %q, want %q", testCase.lane, got, testCase.want)
+		}
+	}
+}
+
+func TestFilterableSources(t *testing.T) {
+	t.Parallel()
+
+	want := []string{"provision", "e2e", "alert", "other"}
+	got := FilterableSources()
+	if len(got) != len(want) {
+		t.Fatalf("FilterableSources() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("FilterableSources()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}

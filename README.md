@@ -61,7 +61,7 @@ Key app routes:
 - `/` renders the rolling 7-day report window
 - `/report?week=YYYY-MM-DD` renders the classic week-shaped report view
 - `/report?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` renders an arbitrary UTC report window
-- `/failure-patterns?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` renders the failure-patterns window view
+- `/failure-patterns?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` renders the failure-patterns window view (optional `env=<name>` and `failed_at=<provision|e2e|alert|other>` filters, both also honored by `/api/failure-patterns/window`)
 - `/api/review/signals/window?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` returns internal review-signal diagnostics for a UTC date window
 
 The day-scoped run history surface is:

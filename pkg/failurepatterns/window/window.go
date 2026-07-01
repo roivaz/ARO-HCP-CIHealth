@@ -742,16 +742,7 @@ func buildExtractedFailureRows(
 // keep failure patterns single-source (provision / e2e / alert). Unrecognized or
 // missing lanes collapse to "other" so they still aggregate predictably.
 func bucketSourceForLane(lane string) string {
-	switch sourcelanes.Lane(strings.TrimSpace(lane)) {
-	case sourcelanes.LaneProvision:
-		return string(sourcelanes.LaneProvision)
-	case sourcelanes.LaneE2E:
-		return string(sourcelanes.LaneE2E)
-	case sourcelanes.LaneAlert:
-		return string(sourcelanes.LaneAlert)
-	default:
-		return "other"
-	}
+	return sourcelanes.BucketSource(lane)
 }
 
 func aggregateExtractedRows(

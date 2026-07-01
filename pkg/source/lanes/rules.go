@@ -14,6 +14,39 @@ const (
 	LaneAlert     Lane = "alert"
 )
 
+// SourceOther is the bucket assigned to failures whose lane is not one of the
+// primary single-source lanes (provision/e2e/alert). Unknown/unclassified
+// failures collapse into this bucket for grouping and filtering.
+const SourceOther = "other"
+
+// BucketSource maps a failure lane to the single source dimension used to group
+// and filter failure patterns. Provision/e2e/alert map to themselves; every
+// other lane (including unknown) collapses to "other" so it aggregates
+// predictably.
+func BucketSource(lane string) string {
+	switch normalizeLane(Lane(strings.ToLower(strings.TrimSpace(lane)))) {
+	case LaneProvision:
+		return string(LaneProvision)
+	case LaneE2E:
+		return string(LaneE2E)
+	case LaneAlert:
+		return string(LaneAlert)
+	default:
+		return SourceOther
+	}
+}
+
+// FilterableSources lists the source values that failure-pattern rows can be
+// filtered by, in display order.
+func FilterableSources() []string {
+	return []string{
+		string(LaneProvision),
+		string(LaneE2E),
+		string(LaneAlert),
+		SourceOther,
+	}
+}
+
 // alertJUnitArtifactSuffix identifies the JUnit artifact that carries alert
 // "does not fire" assertions. Alert failures cannot be classified by test
 // suite/name (the alert suite name collides with the e2e suite), so they are

@@ -97,6 +97,63 @@ func TestBuildWindowDataBuildsWindowRowsFromFacts(t *testing.T) {
 	}
 }
 
+func TestBuildWindowDataFiltersRowsByFailedAt(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	fixture := testsupport.NewIntegrationFixture(t, "")
+	currentStore := fixture.OpenWeekStore(t, "2026-03-16")
+
+	if err := currentStore.UpsertRuns(ctx, append(testsupport.SampleRunsFixture(), testsupport.PreviousSampleRunsFixture()...)); err != nil {
+		t.Fatalf("seed runs: %v", err)
+	}
+	if err := currentStore.UpsertRawFailures(ctx, append(testsupport.SampleRawFailuresFixture(), testsupport.PreviousSampleRawFailuresFixture()...)); err != nil {
+		t.Fatalf("seed raw failures: %v", err)
+	}
+	if err := currentStore.UpsertMetricsDaily(ctx, []storecontracts.MetricDailyRecord{
+		{Environment: "dev", Date: "2026-03-16", Metric: "run_count", Value: 4},
+	}); err != nil {
+		t.Fatalf("seed metrics daily: %v", err)
+	}
+
+	// The sample suites do not match any lane rule, so both rows land in the
+	// "other" source bucket.
+	matching, err := readmodelpatterns.BuildWindowData(ctx, fixture.Service, readmodelpatterns.FailurePatternsQuery{
+		StartDate:    "2026-03-16",
+		EndDate:      "2026-03-16",
+		Environments: []string{"dev"},
+		FailedAt:     []string{"other"},
+	})
+	if err != nil {
+		t.Fatalf("build failure patterns (other filter): %v", err)
+	}
+	if got, want := len(matching.Meta.FailedAt), 1; got != want || matching.Meta.FailedAt[0] != "other" {
+		t.Fatalf("unexpected meta failed_at: got=%v", matching.Meta.FailedAt)
+	}
+	if got, want := len(matching.Environments), 1; got != want {
+		t.Fatalf("unexpected environment count: got=%d want=%d", got, want)
+	}
+	if got, want := len(matching.Environments[0].Rows), 2; got != want {
+		t.Fatalf("other filter should keep both rows: got=%d want=%d", got, want)
+	}
+
+	nonMatching, err := readmodelpatterns.BuildWindowData(ctx, fixture.Service, readmodelpatterns.FailurePatternsQuery{
+		StartDate:    "2026-03-16",
+		EndDate:      "2026-03-16",
+		Environments: []string{"dev"},
+		FailedAt:     []string{"e2e"},
+	})
+	if err != nil {
+		t.Fatalf("build failure patterns (e2e filter): %v", err)
+	}
+	if got, want := len(nonMatching.Environments), 1; got != want {
+		t.Fatalf("unexpected environment count: got=%d want=%d", got, want)
+	}
+	if got := len(nonMatching.Environments[0].Rows); got != 0 {
+		t.Fatalf("e2e filter should drop all other-bucket rows, got %d", got)
+	}
+}
+
 func TestBuildWindowDataIgnoresDeprecatedPhase3Links(t *testing.T) {
 	t.Parallel()
 

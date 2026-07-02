@@ -9,6 +9,7 @@ import (
 	"time"
 
 	readmodelmodel "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/model"
+	sourcelanes "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/lanes"
 	sourceoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/options"
 )
 
@@ -270,6 +271,12 @@ type EnvironmentControlOptions struct {
 	AutoSubmit bool
 }
 
+type FailedAtControlOptions struct {
+	Value      string
+	Disabled   bool
+	AutoSubmit bool
+}
+
 type ReportChromeOptions struct {
 	CurrentView                ReportView
 	OverviewHref               string
@@ -279,6 +286,7 @@ type ReportChromeOptions struct {
 	FilterFormAction           string
 	TimeSelector               TimeSelectorOptions
 	Environment                EnvironmentControlOptions
+	FailedAt                   FailedAtControlOptions
 	JSONAPIHref                string
 	ResetHref                  string
 	ShowApply                  bool
@@ -626,7 +634,6 @@ func renderChromeTimeControls(options ReportChromeOptions) string {
 	return b.String()
 }
 
-
 func ThemeInitScriptTag() string {
 	return strings.TrimSpace(`
 <script>
@@ -881,6 +888,7 @@ func normalizedReportChromeOptions(options ReportChromeOptions) ReportChromeOpti
 	options.JSONAPIHref = strings.TrimSpace(options.JSONAPIHref)
 	options.ResetHref = strings.TrimSpace(options.ResetHref)
 	options.Environment.Value = normalizeChromeEnvironmentValue(options.Environment.Value)
+	options.FailedAt.Value = normalizeChromeFailedAtValue(options.FailedAt.Value)
 	options.TimeSelector = normalizedTimeSelectorOptions(options.TimeSelector)
 	switch options.CurrentView {
 	case ReportViewRolling, ReportViewReport, ReportViewSprint, ReportViewFailurePatterns, ReportViewRunLog:
@@ -959,6 +967,19 @@ func normalizeChromeEnvironmentValue(value string) string {
 	return ""
 }
 
+func normalizeChromeFailedAtValue(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return ""
+	}
+	for _, source := range sourcelanes.FilterableSources() {
+		if normalized == strings.TrimSpace(source) {
+			return normalized
+		}
+	}
+	return ""
+}
+
 func selectedAttr(selected bool) string {
 	if selected {
 		return ` selected="selected"`
@@ -1016,6 +1037,7 @@ func renderTimeSelectorMenuLink(link ChromeLink) string {
 func renderChromeRightSlot(options ReportChromeOptions) string {
 	var b strings.Builder
 	b.WriteString("      <div class=\"report-context-right\">\n")
+	b.WriteString(renderChromeFailedAtInline(options))
 	b.WriteString(renderChromeEnvironmentInline(options))
 	if href := strings.TrimSpace(options.JSONAPIHref); href != "" {
 		b.WriteString(fmt.Sprintf(
@@ -1052,6 +1074,37 @@ func renderChromeEnvironmentInline(options ReportChromeOptions) string {
 			html.EscapeString(trimmedName),
 			selectedAttr(trimmedName == selectedValue),
 			html.EscapeString(strings.ToUpper(trimmedName)),
+		))
+	}
+	b.WriteString("        </select>\n")
+	return b.String()
+}
+
+func renderChromeFailedAtInline(options ReportChromeOptions) string {
+	failedAt := options.FailedAt
+	selectedValue := normalizeChromeFailedAtValue(failedAt.Value)
+	if failedAt.Disabled {
+		return "        <span class=\"report-env-static\">Failed at: ALL</span>\n"
+	}
+	autoSubmitAttr := ""
+	if failedAt.AutoSubmit {
+		autoSubmitAttr = ` onchange="if (this.form) { this.form.submit(); }"`
+	}
+	var b strings.Builder
+	b.WriteString("        <select class=\"report-env-select\" name=\"failed_at\"")
+	b.WriteString(autoSubmitAttr)
+	b.WriteString(">\n")
+	b.WriteString(fmt.Sprintf("          <option value=\"\"%s>Failed at: ALL</option>\n", selectedAttr(selectedValue == "")))
+	for _, source := range sourcelanes.FilterableSources() {
+		trimmedSource := strings.TrimSpace(source)
+		if trimmedSource == "" {
+			continue
+		}
+		b.WriteString(fmt.Sprintf(
+			"          <option value=\"%s\"%s>Failed at: %s</option>\n",
+			html.EscapeString(trimmedSource),
+			selectedAttr(trimmedSource == selectedValue),
+			html.EscapeString(strings.ToUpper(trimmedSource)),
 		))
 	}
 	b.WriteString("        </select>\n")

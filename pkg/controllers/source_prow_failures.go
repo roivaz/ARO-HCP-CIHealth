@@ -394,6 +394,7 @@ func buildArtifactFailureRecords(environment, runURL string, failures []prowarti
 			TestSuite:     testSuite,
 			SignatureID:   signatureID,
 			FailureText:   failureText,
+			ArtifactPath:  artifactURL,
 		})
 	}
 

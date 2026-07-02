@@ -358,6 +358,7 @@ func normalizeRawFailureForComparison(row contracts.RawFailureRecord) contracts.
 		OccurredAt:        strings.TrimSpace(row.OccurredAt),
 		RawText:           strings.TrimSpace(row.RawText),
 		NormalizedText:    strings.TrimSpace(row.NormalizedText),
+		ArtifactPath:      strings.TrimSpace(row.ArtifactPath),
 	}
 }
 
@@ -379,6 +380,7 @@ func buildRawFailureRecords(environment, runURL, occurredAt string, artifactRows
 			TestSuite:     strings.TrimSpace(row.TestSuite),
 			SignatureID:   strings.TrimSpace(row.SignatureID),
 			FailureText:   strings.TrimSpace(row.FailureText),
+			ArtifactPath:  strings.TrimSpace(row.ArtifactPath),
 		}
 		if normalized.Environment != normalizedEnvironment || normalized.RunURL != normalizedRunURL {
 			continue
@@ -434,6 +436,7 @@ func buildRawFailureRecords(environment, runURL, occurredAt string, artifactRows
 			OccurredAt:        normalizedOccurredAt,
 			RawText:           row.FailureText,
 			NormalizedText:    normalizedText,
+			ArtifactPath:      row.ArtifactPath,
 		})
 	}
 

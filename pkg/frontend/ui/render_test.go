@@ -503,6 +503,9 @@ func TestReportChromeHTMLRendersTwoTierNavigationAndContextControls(t *testing.T
 		Environment: EnvironmentControlOptions{
 			Value: "dev",
 		},
+		FailedAt: FailedAtControlOptions{
+			Value: "alert",
+		},
 		JSONAPIHref: "/api/failure-patterns/window?end_date=2026-03-15&env=dev&start_date=2026-03-09",
 		ResetHref:   "/failure-patterns",
 		ShowApply:   true,
@@ -523,6 +526,8 @@ func TestReportChromeHTMLRendersTwoTierNavigationAndContextControls(t *testing.T
 		"type=\"datetime-local\" name=\"end_at\" value=\"2026-03-16T00:00\"",
 		"name=\"env\"",
 		"option value=\"dev\" selected=\"selected\">Env: DEV</option>",
+		"name=\"failed_at\"",
+		"option value=\"alert\" selected=\"selected\">Failed at: ALERT</option>",
 		">Failure Patterns</a>",
 		">View JSON API</a>",
 		">Reset</a>",
@@ -541,6 +546,57 @@ func TestReportChromeHTMLRendersTwoTierNavigationAndContextControls(t *testing.T
 	}
 	if resetIndex > jsonIndex || applyIndex > jsonIndex {
 		t.Fatalf("expected reset/apply controls before the JSON API action: %q", rendered)
+	}
+}
+
+func TestReportChromeHTMLRendersFailedAtSelectorWithAllSources(t *testing.T) {
+	t.Parallel()
+
+	rendered := ReportChromeHTML(ReportChromeOptions{
+		CurrentView:      ReportViewFailurePatterns,
+		FilterFormAction: "/failure-patterns",
+		TimeSelector: TimeSelectorOptions{
+			Mode:  TimeSelectorModeWeekly,
+			Label: "Weekly",
+		},
+	})
+	for _, snippet := range []string{
+		"name=\"failed_at\"",
+		"<option value=\"\" selected=\"selected\">Failed at: ALL</option>",
+		"<option value=\"provision\">Failed at: PROVISION</option>",
+		"<option value=\"e2e\">Failed at: E2E</option>",
+		"<option value=\"alert\">Failed at: ALERT</option>",
+		"<option value=\"other\">Failed at: OTHER</option>",
+	} {
+		if !strings.Contains(rendered, snippet) {
+			t.Fatalf("expected rendered chrome to contain %q, got %q", snippet, rendered)
+		}
+	}
+	if !strings.Contains(rendered, "name=\"env\"") {
+		t.Fatalf("expected rendered chrome to still contain the env selector")
+	}
+}
+
+func TestReportChromeHTMLSelectorsAutoSubmitWhenEnabled(t *testing.T) {
+	t.Parallel()
+
+	rendered := ReportChromeHTML(ReportChromeOptions{
+		CurrentView:      ReportViewFailurePatterns,
+		FilterFormAction: "/failure-patterns",
+		TimeSelector: TimeSelectorOptions{
+			Mode:  TimeSelectorModeWeekly,
+			Label: "Weekly",
+		},
+		Environment: EnvironmentControlOptions{Value: "dev", AutoSubmit: true},
+		FailedAt:    FailedAtControlOptions{Value: "alert", AutoSubmit: true},
+	})
+	for _, snippet := range []string{
+		"name=\"env\" onchange=\"if (this.form) { this.form.submit(); }\"",
+		"name=\"failed_at\" onchange=\"if (this.form) { this.form.submit(); }\"",
+	} {
+		if !strings.Contains(rendered, snippet) {
+			t.Fatalf("expected rendered chrome to contain %q, got %q", snippet, rendered)
+		}
 	}
 }
 

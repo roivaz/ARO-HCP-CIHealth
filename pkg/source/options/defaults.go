@@ -56,6 +56,7 @@ var defaultRuntimeDefaults = RuntimeDefaults{
 			DeterministicJUnitPaths: []string{
 				"artifacts/e2e-parallel/aro-hcp-test-local/artifacts/junit.xml",
 				"artifacts/e2e-parallel/aro-hcp-provision-environment/artifacts/junit_entrypoint.xml",
+				"artifacts/e2e-parallel/aro-hcp-gather-observability/artifacts/junit_alerts.xml",
 				"prowjob_junit.xml",
 			},
 			SupportsPRLookup: true,

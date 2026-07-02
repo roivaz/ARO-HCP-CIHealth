@@ -11,7 +11,47 @@ const (
 	LaneUnknown   Lane = "unknown"
 	LaneProvision Lane = "provision"
 	LaneE2E       Lane = "e2e"
+	LaneAlert     Lane = "alert"
 )
+
+// SourceOther is the bucket assigned to failures whose lane is not one of the
+// primary single-source lanes (provision/e2e/alert). Unknown/unclassified
+// failures collapse into this bucket for grouping and filtering.
+const SourceOther = "other"
+
+// BucketSource maps a failure lane to the single source dimension used to group
+// and filter failure patterns. Provision/e2e/alert map to themselves; every
+// other lane (including unknown) collapses to "other" so it aggregates
+// predictably.
+func BucketSource(lane string) string {
+	switch normalizeLane(Lane(strings.ToLower(strings.TrimSpace(lane)))) {
+	case LaneProvision:
+		return string(LaneProvision)
+	case LaneE2E:
+		return string(LaneE2E)
+	case LaneAlert:
+		return string(LaneAlert)
+	default:
+		return SourceOther
+	}
+}
+
+// FilterableSources lists the source values that failure-pattern rows can be
+// filtered by, in display order.
+func FilterableSources() []string {
+	return []string{
+		string(LaneProvision),
+		string(LaneE2E),
+		string(LaneAlert),
+		SourceOther,
+	}
+}
+
+// alertJUnitArtifactSuffix identifies the JUnit artifact that carries alert
+// "does not fire" assertions. Alert failures cannot be classified by test
+// suite/name (the alert suite name collides with the e2e suite), so they are
+// keyed off the originating artifact path instead.
+const alertJUnitArtifactSuffix = "junit_alerts.xml"
 
 type TestFilter struct {
 	TestSuite     string
@@ -108,6 +148,28 @@ func FiltersForEnvironment(environment string) ([]TestFilter, bool) {
 	return out, true
 }
 
+// DeriveLane resolves the lane for a failure. Alert failures are identified by
+// their originating JUnit artifact (the alert artifact), since their test
+// suite/name cannot be distinguished from the e2e suite. All other failures fall
+// back to the suite/name classification rules.
+func DeriveLane(environment string, artifactPath string, testSuite string, testName string) Lane {
+	if isAlertArtifactPath(artifactPath) {
+		return LaneAlert
+	}
+	return ClassifyLane(environment, testSuite, testName)
+}
+
+func isAlertArtifactPath(artifactPath string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(artifactPath))
+	if trimmed == "" {
+		return false
+	}
+	if idx := strings.IndexAny(trimmed, "?#"); idx >= 0 {
+		trimmed = trimmed[:idx]
+	}
+	return trimmed == alertJUnitArtifactSuffix || strings.HasSuffix(trimmed, "/"+alertJUnitArtifactSuffix)
+}
+
 func ClassifyLane(environment string, testSuite string, testName string) Lane {
 	rules, ok := compiledRulesByEnvironment[normalizeEnvironment(environment)]
 	if !ok || len(rules) == 0 {
@@ -177,6 +239,8 @@ func normalizeLane(value Lane) Lane {
 		return LaneProvision
 	case string(LaneE2E):
 		return LaneE2E
+	case string(LaneAlert):
+		return LaneAlert
 	default:
 		return LaneUnknown
 	}

@@ -12,6 +12,8 @@ import (
 	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/postgres/migrations"
 	"github.com/roivaz/ARO-HCP-CIHealth/pkg/testsupport/pgtest"
 
+	failurepatternwindow "github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns/window"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -153,6 +155,67 @@ func TestRefreshPreparedWindowCacheStoresPrimarySnapshot(t *testing.T) {
 	}
 	if got, want := result.Diagnostics.RowsExtracted, 1; got != want {
 		t.Fatalf("unexpected refreshed snapshot extracted rows: got=%d want=%d", got, want)
+	}
+}
+
+func TestPreparedWindowCacheEnvironmentsCovered(t *testing.T) {
+	t.Parallel()
+
+	primary := []string{"dev", "int", "prod", "stg"}
+	testCases := []struct {
+		name      string
+		requested []string
+		want      bool
+	}{
+		{name: "single subset", requested: []string{"dev"}, want: true},
+		{name: "multi subset", requested: []string{"dev", "prod"}, want: true},
+		{name: "full set", requested: []string{"dev", "int", "prod", "stg"}, want: true},
+		{name: "empty is not covered", requested: nil, want: false},
+		{name: "unknown env not covered", requested: []string{"dev", "sandbox"}, want: false},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := preparedWindowCacheEnvironmentsCovered(testCase.requested, primary); got != testCase.want {
+				t.Fatalf("preparedWindowCacheEnvironmentsCovered(%v) = %v, want %v", testCase.requested, got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestPreparedWindowCacheLookupServesEnvironmentSubset(t *testing.T) {
+	t.Parallel()
+
+	manager, err := newPreparedWindowCacheManager(PreparedWindowCacheOptions{
+		Enabled:          true,
+		EnvelopeDuration: DefaultPreparedWindowCacheEnvelopeDuration,
+		RefreshInterval:  DefaultPreparedWindowCacheRefreshInterval,
+		TTL:              DefaultPreparedWindowCacheTTL,
+	})
+	if err != nil {
+		t.Fatalf("create prepared window cache manager: %v", err)
+	}
+	if len(manager.primaryEnvironments) == 0 {
+		t.Fatalf("expected primary environments to be populated")
+	}
+
+	now := time.Date(2026, time.May, 5, 9, 0, 0, 0, time.UTC)
+	primaryOpts := manager.primaryPrepareOptions(now)
+	manager.store(primaryOpts, failurepatternwindow.PreparedWindow{}, now)
+
+	subsetOpts := failurepatternwindow.PrepareOptions{
+		Environments: []string{manager.primaryEnvironments[0]},
+		StartTime:    primaryOpts.StartTime,
+		EndTime:      primaryOpts.EndTime,
+	}
+	snapshot, reason, ok := manager.lookup(subsetOpts, now)
+	if !ok || reason != "fresh" || snapshot == nil {
+		t.Fatalf("expected fresh cache hit for env subset, got reason=%q ok=%v", reason, ok)
+	}
+
+	foreignOpts := subsetOpts
+	foreignOpts.Environments = []string{"nonexistent-env"}
+	if _, reason, ok := manager.lookup(foreignOpts, now); ok || reason != "env_mismatch" {
+		t.Fatalf("expected env_mismatch for unsupported env, got reason=%q ok=%v", reason, ok)
 	}
 }
 

@@ -112,3 +112,48 @@ func TestAnchorWeekDateRange(t *testing.T) {
 		})
 	}
 }
+
+func TestFailurePatternsWindowHrefIncludesFailedAt(t *testing.T) {
+	t.Parallel()
+
+	got := failurePatternsWindowHref(
+		"/failure-patterns",
+		"",
+		"2026-03-09",
+		"2026-03-15",
+		"",
+		"",
+		[]string{"dev"},
+		[]string{"alert", "e2e"},
+		"",
+	)
+	want := "/failure-patterns?end_date=2026-03-15&env=dev&failed_at=e2e&failed_at=alert&start_date=2026-03-09"
+	if got != want {
+		t.Fatalf("failurePatternsWindowHref failed_at mismatch:\n got=%q\nwant=%q", got, want)
+	}
+}
+
+func TestNormalizedQueryFailedAtFiltersAndOrders(t *testing.T) {
+	t.Parallel()
+
+	got := normalizedQueryFailedAt([]string{" ALERT ", "bogus", "provision", "alert", "unknown"})
+	want := []string{"provision", "alert"}
+	if len(got) != len(want) {
+		t.Fatalf("normalizedQueryFailedAt = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("normalizedQueryFailedAt[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestFailurePatternsQueryFromRequestParsesFailedAt(t *testing.T) {
+	t.Parallel()
+
+	request := httptest.NewRequest(http.MethodGet, "/failure-patterns?failed_at=alert&failed_at=e2e", nil)
+	query := failurePatternsQueryFromRequest(request)
+	if len(query.FailedAt) != 2 || query.FailedAt[0] != "alert" || query.FailedAt[1] != "e2e" {
+		t.Fatalf("expected FailedAt=[alert e2e], got %v", query.FailedAt)
+	}
+}

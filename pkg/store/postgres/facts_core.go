@@ -358,9 +358,9 @@ func (s *Store) upsertArtifactFailuresImpl(ctx context.Context, rows []storecont
 		for _, row := range normalizedRows {
 			_, err := tx.Exec(ctx, `
 INSERT INTO cfa_artifact_failures (
-  environment, artifact_row_id, run_url, test_name, test_suite, signature_id, failure_text
+  environment, artifact_row_id, run_url, test_name, test_suite, signature_id, failure_text, artifact_path
 ) VALUES (
-  $1, $2, $3, $4, $5, $6, $7
+  $1, $2, $3, $4, $5, $6, $7, $8
 )
 ON CONFLICT (environment, artifact_row_id)
 DO UPDATE SET
@@ -368,8 +368,9 @@ DO UPDATE SET
   test_name = EXCLUDED.test_name,
   test_suite = EXCLUDED.test_suite,
   signature_id = EXCLUDED.signature_id,
-  failure_text = EXCLUDED.failure_text
-`, row.Environment, row.ArtifactRowID, row.RunURL, row.TestName, row.TestSuite, row.SignatureID, row.FailureText)
+  failure_text = EXCLUDED.failure_text,
+  artifact_path = EXCLUDED.artifact_path
+`, row.Environment, row.ArtifactRowID, row.RunURL, row.TestName, row.TestSuite, row.SignatureID, row.FailureText, row.ArtifactPath)
 			if err != nil {
 				return fmt.Errorf("upsert artifact failure (%s,%s): %w", row.Environment, row.ArtifactRowID, err)
 			}
@@ -422,7 +423,7 @@ func (s *Store) listArtifactFailuresByRunImpl(ctx context.Context, environment s
 	}
 
 	rows, err := s.pool.Query(ctx, `
-SELECT environment, artifact_row_id, run_url, test_name, test_suite, signature_id, failure_text
+SELECT environment, artifact_row_id, run_url, test_name, test_suite, signature_id, failure_text, artifact_path
 FROM cfa_artifact_failures
 WHERE environment = $1 AND run_url = $2
 `, lookup.Environment, lookup.RunURL)
@@ -442,6 +443,7 @@ WHERE environment = $1 AND run_url = $2
 			&row.TestSuite,
 			&row.SignatureID,
 			&row.FailureText,
+			&row.ArtifactPath,
 		); err != nil {
 			return nil, fmt.Errorf("scan artifact failure row: %w", err)
 		}
@@ -512,10 +514,10 @@ WHERE environment = $1 AND run_url = $2
 			_, err := tx.Exec(ctx, `
 INSERT INTO cfa_raw_failures (
   environment, row_id, run_url, non_artifact_backed, test_name, test_suite,
-  signature_id, occurred_at, raw_text, normalized_text
+  signature_id, occurred_at, raw_text, normalized_text, artifact_path
 ) VALUES (
   $1, $2, $3, $4, $5, $6,
-  $7, $8, $9, $10
+  $7, $8, $9, $10, $11
 )
 ON CONFLICT (environment, row_id)
 DO UPDATE SET
@@ -526,8 +528,9 @@ DO UPDATE SET
   signature_id = EXCLUDED.signature_id,
   occurred_at = EXCLUDED.occurred_at,
   raw_text = EXCLUDED.raw_text,
-  normalized_text = EXCLUDED.normalized_text
-`, row.Environment, row.RowID, row.RunURL, row.NonArtifactBacked, row.TestName, row.TestSuite, row.SignatureID, row.OccurredAt, row.RawText, row.NormalizedText)
+  normalized_text = EXCLUDED.normalized_text,
+  artifact_path = EXCLUDED.artifact_path
+`, row.Environment, row.RowID, row.RunURL, row.NonArtifactBacked, row.TestName, row.TestSuite, row.SignatureID, row.OccurredAt, row.RawText, row.NormalizedText, row.ArtifactPath)
 			if err != nil {
 				return fmt.Errorf("upsert raw failure (%s,%s): %w", row.Environment, row.RowID, err)
 			}
@@ -546,7 +549,7 @@ func (s *Store) listRawFailuresByRunImpl(ctx context.Context, environment string
 	}
 
 	rows, err := s.pool.Query(ctx, `
-SELECT environment, row_id, run_url, non_artifact_backed, test_name, test_suite, signature_id, occurred_at, raw_text, normalized_text
+SELECT environment, row_id, run_url, non_artifact_backed, test_name, test_suite, signature_id, occurred_at, raw_text, normalized_text, artifact_path
 FROM cfa_raw_failures
 WHERE environment = $1 AND run_url = $2
 `, lookup.Environment, lookup.RunURL)
@@ -569,6 +572,7 @@ WHERE environment = $1 AND run_url = $2
 			&row.OccurredAt,
 			&row.RawText,
 			&row.NormalizedText,
+			&row.ArtifactPath,
 		); err != nil {
 			return nil, fmt.Errorf("scan raw failure by run row: %w", err)
 		}
@@ -612,7 +616,7 @@ func (s *Store) listRawFailuresByDateRangeImpl(
 	}
 
 	rows, err := s.pool.Query(ctx, `
-SELECT environment, row_id, run_url, non_artifact_backed, test_name, test_suite, signature_id, occurred_at, raw_text, normalized_text
+SELECT environment, row_id, run_url, non_artifact_backed, test_name, test_suite, signature_id, occurred_at, raw_text, normalized_text, artifact_path
 FROM (
   SELECT
     environment,
@@ -625,6 +629,7 @@ FROM (
     occurred_at,
     raw_text,
     normalized_text,
+    artifact_path,
     cfa_parse_rfc3339_utc_timestamp(occurred_at) AS occurred_ts
   FROM cfa_raw_failures
   WHERE environment = $1
@@ -652,6 +657,7 @@ ORDER BY occurred_ts, occurred_at, run_url, row_id, signature_id
 			&row.OccurredAt,
 			&row.RawText,
 			&row.NormalizedText,
+			&row.ArtifactPath,
 		); err != nil {
 			return nil, fmt.Errorf("scan raw failure by date range row: %w", err)
 		}

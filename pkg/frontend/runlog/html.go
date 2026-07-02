@@ -367,21 +367,69 @@ func runLogDayFailureDetailsHTML(row readmodelrunlog.JobHistoryRunRow) string {
 		return ""
 	}
 
+	groups, order := runLogDayGroupFailuresByLane(row.FailureRows)
+
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("<details><summary>Failure details (%d)</summary>", len(row.FailureRows)))
 	b.WriteString("<div class=\"detail-list\">")
-	for _, failure := range row.FailureRows {
-		b.WriteString("<div class=\"detail-item\">")
-		b.WriteString(fmt.Sprintf("<div class=\"detail-title\">%s</div>", html.EscapeString(runLogDayFailureTitle(failure))))
-		b.WriteString(fmt.Sprintf("<div class=\"detail-meta\">%s</div>", html.EscapeString(runLogDayFailureMeta(failure))))
-		if flags := runLogDayFailureFlagsHTML(failure); flags != "" {
-			b.WriteString(flags)
+	for _, lane := range order {
+		failures := groups[lane]
+		b.WriteString("<div class=\"detail-group\">")
+		b.WriteString(fmt.Sprintf("<div class=\"detail-group-title\">%s (%d)</div>", html.EscapeString(runLogDayLaneLabel(lane)), len(failures)))
+		for _, failure := range failures {
+			b.WriteString("<div class=\"detail-item\">")
+			b.WriteString(fmt.Sprintf("<div class=\"detail-title\">%s</div>", html.EscapeString(runLogDayFailureTitle(failure))))
+			b.WriteString(fmt.Sprintf("<div class=\"detail-meta\">%s</div>", html.EscapeString(runLogDayFailureMeta(failure))))
+			if flags := runLogDayFailureFlagsHTML(failure); flags != "" {
+				b.WriteString(flags)
+			}
+			b.WriteString(runLogDayRawFailureToggleHTML(failure))
+			b.WriteString("</div>")
 		}
-		b.WriteString(runLogDayRawFailureToggleHTML(failure))
 		b.WriteString("</div>")
 	}
 	b.WriteString("</div></details>")
 	return b.String()
+}
+
+// runLogDayGroupFailuresByLane groups failure rows by their failure type (lane)
+// and returns a deterministic lane ordering: provision, e2e, alert, then any
+// other lanes alphabetically.
+func runLogDayGroupFailuresByLane(rows []readmodelrunlog.JobHistoryFailureRow) (map[string][]readmodelrunlog.JobHistoryFailureRow, []string) {
+	groups := map[string][]readmodelrunlog.JobHistoryFailureRow{}
+	for _, row := range rows {
+		lane := strings.TrimSpace(row.Lane)
+		if lane == "" {
+			lane = "unknown"
+		}
+		groups[lane] = append(groups[lane], row)
+	}
+
+	rank := map[string]int{"provision": 0, "e2e": 1, "alert": 2}
+	order := make([]string, 0, len(groups))
+	for lane := range groups {
+		order = append(order, lane)
+	}
+	sort.Slice(order, func(i, j int) bool {
+		ri, iok := rank[order[i]]
+		rj, jok := rank[order[j]]
+		if iok && jok {
+			return ri < rj
+		}
+		if iok != jok {
+			return iok
+		}
+		return order[i] < order[j]
+	})
+	return groups, order
+}
+
+func runLogDayLaneLabel(lane string) string {
+	trimmed := strings.TrimSpace(lane)
+	if trimmed == "" {
+		return "Unknown"
+	}
+	return "Failed at " + trimmed
 }
 
 func runLogDayAllFailuresNonArtifactBacked(rows []readmodelrunlog.JobHistoryFailureRow) bool {

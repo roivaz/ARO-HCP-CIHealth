@@ -12,6 +12,7 @@ import (
 	failurepatternwindow "github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns/window"
 	readmodelmodel "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/model"
 	readmodelwindow "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/window"
+	sourcelanes "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/lanes"
 	sourceoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/options"
 	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
@@ -24,6 +25,7 @@ type FailurePatternsQuery struct {
 	Week         string
 	Mode         string
 	Environments []string
+	FailedAt     []string
 	GeneratedAt  time.Time
 }
 
@@ -41,6 +43,7 @@ type FailurePatternsMeta struct {
 	Timezone     string   `json:"timezone"`
 	GeneratedAt  string   `json:"generated_at"`
 	Environments []string `json:"environments"`
+	FailedAt     []string `json:"failed_at,omitempty"`
 }
 
 type FailurePatternsEnvironment struct {
@@ -320,9 +323,12 @@ func buildFailurePatternsInline(
 		finalEnvironments = availableFailurePatternEnvironments(targetEnvironments, currentResult, currentClusters)
 	}
 
+	requestedSources := normalizeFailurePatternsSources(query.FailedAt)
+
 	environments := make([]FailurePatternsEnvironment, 0, len(finalEnvironments))
 	for _, environment := range finalEnvironments {
 		rows := applyWindowedSeenIn(rowsByEnvironment[environment], phraseEnvironments, environment)
+		rows = filterFailurePatternsRowsBySource(rows, requestedSources)
 		totalRuns := metricRunTotals[environment]
 		if totalRuns <= 0 {
 			totalRuns = currentResult.Diagnostics.RunsByEnvironment[environment]
@@ -357,6 +363,7 @@ func buildFailurePatternsInline(
 			Timezone:     "UTC",
 			GeneratedAt:  generatedAt.UTC().Format(time.RFC3339),
 			Environments: append([]string(nil), finalEnvironments...),
+			FailedAt:     append([]string(nil), requestedSources...),
 		},
 		Environments: environments,
 	}, nil
@@ -427,6 +434,58 @@ func resolveFailurePatternsTargetEnvironments(requestedEnvironments []string) []
 		return append([]string(nil), requestedEnvironments...)
 	}
 	return readmodelmodel.NormalizeStringSlice(sourceoptions.SupportedEnvironments())
+}
+
+// normalizeFailurePatternsSources validates and de-duplicates the requested
+// failed_at filter values, keeping only recognized single-source buckets
+// (provision/e2e/alert/other) in a stable order.
+func normalizeFailurePatternsSources(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	allowed := map[string]struct{}{}
+	for _, source := range sourcelanes.FilterableSources() {
+		allowed[source] = struct{}{}
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		normalized := strings.ToLower(strings.TrimSpace(value))
+		if normalized == "" {
+			continue
+		}
+		if _, ok := allowed[normalized]; !ok {
+			continue
+		}
+		if _, dup := seen[normalized]; dup {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// filterFailurePatternsRowsBySource keeps only rows whose failure lane maps to
+// one of the requested source buckets. An empty request keeps every row.
+func filterFailurePatternsRowsBySource(rows []FailurePatternsRow, sources []string) []FailurePatternsRow {
+	if len(sources) == 0 || len(rows) == 0 {
+		return rows
+	}
+	allow := map[string]struct{}{}
+	for _, source := range sources {
+		allow[source] = struct{}{}
+	}
+	out := make([]FailurePatternsRow, 0, len(rows))
+	for _, row := range rows {
+		if _, ok := allow[sourcelanes.BucketSource(row.Lane)]; ok {
+			out = append(out, row)
+		}
+	}
+	return out
 }
 
 func failurePatternsHorizonStart(scope readmodelwindow.Scope) time.Time {

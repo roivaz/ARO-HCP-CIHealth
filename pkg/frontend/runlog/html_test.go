@@ -40,6 +40,36 @@ func TestDayRunHistoryFailureDetailsHTMLRendersArtifactBackedFailures(t *testing
 	}
 }
 
+func TestDayRunHistoryFailureDetailsHTMLGroupsByLane(t *testing.T) {
+	t.Parallel()
+
+	rendered := runLogDayFailureDetailsHTML(readmodelrunlog.JobHistoryRunRow{
+		FailureRows: []readmodelrunlog.JobHistoryFailureRow{
+			{
+				FailureText: "alert KubeAPIDown fired",
+				Lane:        "alert",
+			},
+			{
+				FailureText: "e2e test failed",
+				Lane:        "e2e",
+			},
+		},
+	})
+
+	if !strings.Contains(rendered, "Failed at e2e (1)") {
+		t.Fatalf("expected e2e group header, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "Failed at alert (1)") {
+		t.Fatalf("expected alert group header, got %q", rendered)
+	}
+	if e2eIdx, alertIdx := strings.Index(rendered, "Failed at e2e"), strings.Index(rendered, "Failed at alert"); e2eIdx < 0 || alertIdx < 0 || e2eIdx > alertIdx {
+		t.Fatalf("expected e2e group to precede alert group, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "Failure details (2)") {
+		t.Fatalf("expected total failure count of 2, got %q", rendered)
+	}
+}
+
 func TestDayRunHistoryPRHTMLShowsRegressionIconForLikelyBadPR(t *testing.T) {
 	t.Parallel()
 

@@ -61,6 +61,107 @@ func TestClassifyLane(t *testing.T) {
 	}
 }
 
+func TestDeriveLane(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name         string
+		environment  string
+		artifactPath string
+		testSuite    string
+		testName     string
+		wantLane     Lane
+	}{
+		{
+			name:         "alert artifact path overrides suite classification",
+			environment:  "dev",
+			artifactPath: "artifacts/e2e-parallel/aro-hcp-gather-observability/artifacts/junit_alerts.xml",
+			testSuite:    "rp-api-compat-all/parallel",
+			testName:     "[aro-hcp-observability] [hcp] alert SomeAlert does not fire",
+			wantLane:     LaneAlert,
+		},
+		{
+			name:         "alert artifact path with full url",
+			environment:  "dev",
+			artifactPath: "https://example.com/gcs/bucket/run/artifacts/junit_alerts.xml",
+			testSuite:    "aro-hcp-tests",
+			testName:     "anything",
+			wantLane:     LaneAlert,
+		},
+		{
+			name:         "alert artifact path with query string",
+			environment:  "dev",
+			artifactPath: "https://example.com/junit_alerts.xml?download=1",
+			testSuite:    "aro-hcp-tests",
+			testName:     "anything",
+			wantLane:     LaneAlert,
+		},
+		{
+			name:         "non-alert artifact falls back to suite classification",
+			environment:  "dev",
+			artifactPath: "artifacts/e2e-parallel/junit_e2e.xml",
+			testSuite:    "rp-api-compat-all/parallel",
+			testName:     "any",
+			wantLane:     LaneE2E,
+		},
+		{
+			name:         "empty artifact path falls back to suite classification",
+			environment:  "dev",
+			artifactPath: "",
+			testSuite:    "step graph",
+			testName:     "Run pipeline step Microsoft.Azure.ARO.HCP.Region",
+			wantLane:     LaneProvision,
+		},
+		{
+			name:         "unclassified non-alert is unknown",
+			environment:  "dev",
+			artifactPath: "artifacts/e2e-parallel/junit_e2e.xml",
+			testSuite:    "step graph",
+			testName:     "Run pipeline step Other.Service",
+			wantLane:     LaneUnknown,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := DeriveLane(tc.environment, tc.artifactPath, tc.testSuite, tc.testName)
+			if got != tc.wantLane {
+				t.Fatalf("unexpected lane: got=%q want=%q", got, tc.wantLane)
+			}
+		})
+	}
+}
+
+func TestIsAlertArtifactPath(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{name: "bare filename", path: "junit_alerts.xml", want: true},
+		{name: "suffix match", path: "a/b/c/junit_alerts.xml", want: true},
+		{name: "case insensitive", path: "A/B/JUNIT_ALERTS.XML", want: true},
+		{name: "with fragment", path: "a/junit_alerts.xml#frag", want: true},
+		{name: "empty", path: "", want: false},
+		{name: "different file", path: "a/junit_e2e.xml", want: false},
+		{name: "substring not suffix", path: "junit_alerts.xml.bak", want: false},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isAlertArtifactPath(tc.path); got != tc.want {
+				t.Fatalf("isAlertArtifactPath(%q): got=%v want=%v", tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFiltersForEnvironment(t *testing.T) {
 	t.Parallel()
 
@@ -80,5 +181,42 @@ func TestFiltersForEnvironment(t *testing.T) {
 
 	if _, ok := FiltersForEnvironment("unknown"); ok {
 		t.Fatalf("expected no filters for unknown environment")
+	}
+}
+
+func TestBucketSource(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		lane string
+		want string
+	}{
+		{lane: "provision", want: "provision"},
+		{lane: "e2e", want: "e2e"},
+		{lane: "alert", want: "alert"},
+		{lane: "unknown", want: SourceOther},
+		{lane: "", want: SourceOther},
+		{lane: "  ALERT ", want: "alert"},
+		{lane: "bogus", want: SourceOther},
+	}
+	for _, testCase := range testCases {
+		if got := BucketSource(testCase.lane); got != testCase.want {
+			t.Errorf("BucketSource(%q) = %q, want %q", testCase.lane, got, testCase.want)
+		}
+	}
+}
+
+func TestFilterableSources(t *testing.T) {
+	t.Parallel()
+
+	want := []string{"provision", "e2e", "alert", "other"}
+	got := FilterableSources()
+	if len(got) != len(want) {
+		t.Fatalf("FilterableSources() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("FilterableSources()[%d] = %q, want %q", i, got[i], want[i])
+		}
 	}
 }

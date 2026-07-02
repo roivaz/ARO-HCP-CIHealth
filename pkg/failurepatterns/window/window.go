@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -16,6 +17,36 @@ import (
 	sourcelanes "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/lanes"
 	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
+
+// reAlertTestName captures the scope (e.g. hcp/svc) and alert name from an alert
+// JUnit testcase name such as
+// "[aro-hcp-observability] [hcp] alert KubeAPIDown does not fire".
+var reAlertTestName = regexp.MustCompile(`(?i)\[(?P<scope>[^\]]+)\]\s+alert\s+(?P<name>.+?)\s+does not fire`)
+
+type alertIdentity struct {
+	canonical string
+	key       string
+}
+
+// alertIdentityFromTestName derives a stable per-alert identity (scope + name)
+// used to group alert failures into single-alert failure patterns.
+func alertIdentityFromTestName(testName string) (alertIdentity, bool) {
+	match := reAlertTestName.FindStringSubmatch(strings.TrimSpace(testName))
+	if match == nil {
+		return alertIdentity{}, false
+	}
+	scope := strings.TrimSpace(match[reAlertTestName.SubexpIndex("scope")])
+	name := strings.TrimSpace(match[reAlertTestName.SubexpIndex("name")])
+	if name == "" {
+		return alertIdentity{}, false
+	}
+	canonical := "alert " + name + " fired"
+	if scope != "" {
+		canonical = "alert [" + scope + "] " + name + " fired"
+	}
+	key := strings.ToLower(strings.Join(strings.Fields("alert "+scope+" "+name), " "))
+	return alertIdentity{canonical: canonical, key: key}, true
+}
 
 type ComputeOptions struct {
 	Environments  []string
@@ -67,6 +98,7 @@ type ExtractedFailureRow struct {
 	PRNumber                int
 	PostGoodCommit          bool
 	Lane                    string
+	ArtifactPath            string
 	JobName                 string
 	TestName                string
 	TestSuite               string
@@ -93,6 +125,7 @@ type EnvironmentFacts struct {
 
 type aggregateBucket struct {
 	environment  string
+	source       string
 	identitySeed string
 	weak         bool
 	rows         []ExtractedFailureRow
@@ -637,6 +670,19 @@ func buildExtractedFailureRows(
 			evidence := failureextractor.ExtractWithOptions(rawFailure.RawText, failureextractor.ExtractOptions{
 				TestName: rawFailure.TestName,
 			})
+			lane := string(sourcelanes.DeriveLane(environment, rawFailure.ArtifactPath, rawFailure.TestSuite, rawFailure.TestName))
+			canonicalPhrase := strings.TrimSpace(evidence.CanonicalEvidencePhrase)
+			searchPhrase := strings.TrimSpace(evidence.SearchQueryPhrase)
+			failurePatternKey := strings.TrimSpace(failureextractor.FailurePatternKey(evidence))
+			// Alert failures are identified by the alert (scope + name) rather than the
+			// failure text, which is near-identical across alerts ("alert fired N time(s)").
+			if lane == string(sourcelanes.LaneAlert) {
+				if identity, ok := alertIdentityFromTestName(rawFailure.TestName); ok {
+					canonicalPhrase = identity.canonical
+					searchPhrase = identity.canonical
+					failurePatternKey = identity.key
+				}
+			}
 			rows = append(rows, ExtractedFailureRow{
 				Environment:             environment,
 				RowID:                   strings.TrimSpace(rawFailure.RowID),
@@ -645,17 +691,18 @@ func buildExtractedFailureRows(
 				SignatureID:             strings.TrimSpace(rawFailure.SignatureID),
 				PRNumber:                run.PRNumber,
 				PostGoodCommit:          run.PostGoodCommit,
-				Lane:                    string(sourcelanes.ClassifyLane(environment, rawFailure.TestSuite, rawFailure.TestName)),
+				Lane:                    lane,
+				ArtifactPath:            strings.TrimSpace(rawFailure.ArtifactPath),
 				JobName:                 strings.TrimSpace(run.JobName),
 				TestName:                strings.TrimSpace(rawFailure.TestName),
 				TestSuite:               strings.TrimSpace(rawFailure.TestSuite),
 				RawText:                 strings.TrimSpace(rawFailure.RawText),
 				NormalizedText:          strings.TrimSpace(rawFailure.NormalizedText),
-				CanonicalEvidencePhrase: strings.TrimSpace(evidence.CanonicalEvidencePhrase),
-				SearchQueryPhrase:       strings.TrimSpace(evidence.SearchQueryPhrase),
+				CanonicalEvidencePhrase: canonicalPhrase,
+				SearchQueryPhrase:       searchPhrase,
 				ProviderAnchor:          strings.TrimSpace(evidence.ProviderAnchor),
 				GenericPhrase:           evidence.GenericPhrase,
-				FailurePatternKey:       strings.TrimSpace(failureextractor.FailurePatternKey(evidence)),
+				FailurePatternKey:       failurePatternKey,
 			})
 		}
 	}
@@ -691,6 +738,13 @@ func buildExtractedFailureRows(
 	return rows
 }
 
+// bucketSourceForLane maps a failure lane to the single source dimension used to
+// keep failure patterns single-source (provision / e2e / alert). Unrecognized or
+// missing lanes collapse to "other" so they still aggregate predictably.
+func bucketSourceForLane(lane string) string {
+	return sourcelanes.BucketSource(lane)
+}
+
 func aggregateExtractedRows(
 	rows []ExtractedFailureRow,
 	includeReview bool,
@@ -716,11 +770,13 @@ func aggregateExtractedRows(
 			identitySeed = singletonIdentitySeed(row)
 		}
 
-		bucketKey := environment + "|" + identitySeed
+		bucketSource := bucketSourceForLane(row.Lane)
+		bucketKey := environment + "|" + bucketSource + "|" + identitySeed
 		bucket := buckets[bucketKey]
 		if bucket == nil {
 			bucket = &aggregateBucket{
 				environment:  environment,
+				source:       bucketSource,
 				identitySeed: identitySeed,
 				weak:         weak,
 				rows:         []ExtractedFailureRow{},
@@ -849,7 +905,7 @@ func compileFailurePattern(bucket *aggregateBucket) failurepatterncontracts.Fail
 
 	return failurepatterncontracts.FailurePatternRecord{
 		Environment:                  bucket.environment,
-		Phase2ClusterID:              fingerprint(bucket.environment + "|phase2|" + bucket.identitySeed),
+		Phase2ClusterID:              fingerprint(bucket.environment + "|phase2|" + bucket.source + "|" + bucket.identitySeed),
 		CanonicalEvidencePhrase:      strings.TrimSpace(canonical),
 		SearchQueryPhrase:            strings.TrimSpace(searchPhrase),
 		SearchQuerySourceRunURL:      strings.TrimSpace(searchSourceRunURL),
@@ -874,7 +930,7 @@ func buildWeakCanonicalReviewItem(
 	}
 	return failurepatterncontracts.ReviewItemRecord{
 		Environment:                          bucket.environment,
-		ReviewItemID:                         fingerprint(bucket.environment + "|phase2|weak_canonical_needs_review|" + bucket.identitySeed),
+		ReviewItemID:                         fingerprint(bucket.environment + "|phase2|weak_canonical_needs_review|" + bucket.source + "|" + bucket.identitySeed),
 		Phase:                                "phase2",
 		Reason:                               "weak_canonical_needs_review",
 		Severity:                             reviewSeverity(pattern.SupportCount),
@@ -904,7 +960,7 @@ func buildAmbiguousProviderReviewItem(
 	}
 	return failurepatterncontracts.ReviewItemRecord{
 		Environment:                          bucket.environment,
-		ReviewItemID:                         fingerprint(bucket.environment + "|phase2|ambiguous_provider_anchor|" + bucket.identitySeed),
+		ReviewItemID:                         fingerprint(bucket.environment + "|phase2|ambiguous_provider_anchor|" + bucket.source + "|" + bucket.identitySeed),
 		Phase:                                "phase2",
 		Reason:                               "ambiguous_provider_anchor",
 		Severity:                             reviewSeverity(pattern.SupportCount),
@@ -1163,6 +1219,7 @@ func normalizeRawFailureRecord(
 		OccurredAt:        strings.TrimSpace(row.OccurredAt),
 		RawText:           strings.TrimSpace(row.RawText),
 		NormalizedText:    strings.TrimSpace(row.NormalizedText),
+		ArtifactPath:      strings.TrimSpace(row.ArtifactPath),
 	}
 }
 

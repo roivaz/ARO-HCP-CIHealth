@@ -699,6 +699,12 @@ func TestHandleRunsPageRendersHTML(t *testing.T) {
 	if !strings.Contains(body, "Open Failure patterns for this day") {
 		t.Fatalf("expected failure-pattern CTA in body, got %q", body)
 	}
+	if !strings.Contains(body, `id="run-log-search"`) {
+		t.Fatalf("expected run-log search box in body, got %q", body)
+	}
+	if !strings.Contains(body, `getElementById("run-log-search")`) {
+		t.Fatalf("expected run-log search script in body, got %q", body)
+	}
 	if !strings.Contains(body, "View JSON API") {
 		t.Fatalf("expected JSON API link in body, got %q", body)
 	}

@@ -8,6 +8,48 @@ import (
 	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
+func TestDayRunHistorySearchBoxAndScriptRender(t *testing.T) {
+	t.Parallel()
+
+	box := runLogDaySearchBoxHTML()
+	if !strings.Contains(box, `id="run-log-search"`) {
+		t.Fatalf("expected search input in box, got %q", box)
+	}
+	if !strings.Contains(box, `type="search"`) {
+		t.Fatalf("expected search-type input, got %q", box)
+	}
+	if !strings.Contains(box, `id="run-log-search-status"`) {
+		t.Fatalf("expected search status element, got %q", box)
+	}
+	if !strings.Contains(box, `id="run-log-search-empty"`) {
+		t.Fatalf("expected empty-result message element, got %q", box)
+	}
+
+	script := runLogDaySearchScriptTag()
+	if !strings.Contains(script, `getElementById("run-log-search")`) {
+		t.Fatalf("expected search script to wire up the input, got %q", script)
+	}
+	if !strings.Contains(script, "tr.run-row") {
+		t.Fatalf("expected search script to select run rows, got %q", script)
+	}
+}
+
+func TestDayRunHistoryRunRowCarriesSearchClass(t *testing.T) {
+	t.Parallel()
+
+	rendered := runLogDayRunRowHTML(readmodelrunlog.JobHistoryRunRow{
+		Run: storecontracts.RunRecord{
+			Environment: "dev",
+			JobName:     "periodic-ci",
+			OccurredAt:  "2026-03-16T08:00:00Z",
+			Failed:      true,
+		},
+	})
+	if !strings.Contains(rendered, `<tr class="run-row">`) {
+		t.Fatalf("expected run row to carry the run-row class for filtering, got %q", rendered)
+	}
+}
+
 func TestDayRunHistoryFailureDetailsHTMLSkipsNonArtifactBackedFailures(t *testing.T) {
 	t.Parallel()
 

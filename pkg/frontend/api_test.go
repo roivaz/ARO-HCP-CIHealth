@@ -738,8 +738,11 @@ func TestHandleRunsPageRendersHTML(t *testing.T) {
 	if strings.Contains(body, `class="cards"`) {
 		t.Fatalf("did not expect run-log summary cards in body, got %q", body)
 	}
-	if !strings.Contains(body, "Multiple failures (2)") {
-		t.Fatalf("expected simplified multiple failure summary in body, got %q", body)
+	if strings.Contains(body, "Multiple failures (2)") {
+		t.Fatalf("did not expect the duplicated multiple-failure summary line when category expanders render, got %q", body)
+	}
+	if !strings.Contains(body, "unknown (2)") {
+		t.Fatalf("expected per-category expander for the multi-failure run, got %q", body)
 	}
 	if !strings.Contains(body, "Installer failed to reach bootstrap machine") {
 		t.Fatalf("expected unmatched failure text in body, got %q", body)

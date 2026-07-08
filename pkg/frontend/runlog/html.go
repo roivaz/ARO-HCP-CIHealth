@@ -64,6 +64,10 @@ func RenderHTML(
 	b.WriteString("    .signal-flake { color: #b45309; }\n")
 	b.WriteString("    .signal-new { color: #7c3aed; }\n")
 	b.WriteString("    .detail-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }\n")
+	b.WriteString("    .lane-group { margin-top: 0; }\n")
+	b.WriteString("    .detail-list > .lane-group { margin-top: 0; }\n")
+	b.WriteString("    .lane-group > summary { text-transform: uppercase; letter-spacing: 0.02em; font-size: 11px; }\n")
+	b.WriteString("    .lane-detail-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }\n")
 	b.WriteString("    .detail-item { border: 1px solid #e5e7eb; border-radius: 8px; background: #f9fafb; padding: 8px 10px; }\n")
 	b.WriteString("    .detail-title { font-weight: 700; }\n")
 	b.WriteString("    .job-link { font-weight: 700; }\n")
@@ -158,11 +162,17 @@ func runLogDayRunRowHTML(row readmodelrunlog.JobHistoryRunRow) string {
 	b.WriteString(fmt.Sprintf("          <td class=\"pr-col\">%s</td>\n", runLogDayPRHTML(row)))
 	b.WriteString(fmt.Sprintf("          <td class=\"failed-tests-col\">%s</td>\n", html.EscapeString(runLogDayFailedTestsLabel(row))))
 	b.WriteString("          <td>")
-	b.WriteString(html.EscapeString(runLogDayPrimaryPhrase(row)))
-	if submeta := runLogDayPrimaryPhraseSubmeta(row); submeta != "" {
-		b.WriteString(fmt.Sprintf("<div class=\"phrase-submeta\">%s</div>", html.EscapeString(submeta)))
+	detailsHTML := runLogDayFailureDetailsHTML(row)
+	if detailsHTML == "" {
+		// Only show the single-line summary when there are no per-category
+		// expanders; otherwise it just duplicates the category breakdown
+		// (e.g. "Multiple failures (10)").
+		b.WriteString(html.EscapeString(runLogDayPrimaryPhrase(row)))
+		if submeta := runLogDayPrimaryPhraseSubmeta(row); submeta != "" {
+			b.WriteString(fmt.Sprintf("<div class=\"phrase-submeta\">%s</div>", html.EscapeString(submeta)))
+		}
 	}
-	if detailsHTML := runLogDayFailureDetailsHTML(row); detailsHTML != "" {
+	if detailsHTML != "" {
 		b.WriteString(detailsHTML)
 	}
 	b.WriteString("</td>\n")
@@ -370,12 +380,19 @@ func runLogDayFailureDetailsHTML(row readmodelrunlog.JobHistoryRunRow) string {
 	groups, order := runLogDayGroupFailuresByLane(row.FailureRows)
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("<details><summary>Failure details (%d)</summary>", len(row.FailureRows)))
 	b.WriteString("<div class=\"detail-list\">")
 	for _, lane := range order {
 		failures := groups[lane]
-		b.WriteString("<div class=\"detail-group\">")
-		b.WriteString(fmt.Sprintf("<div class=\"detail-group-title\">%s (%d)</div>", html.EscapeString(runLogDayLaneLabel(lane)), len(failures)))
+		// Expand a category by default only when it holds a single failure so
+		// the pattern is visible at a glance; keep multi-failure categories
+		// collapsed so the operator can choose what to expand.
+		openAttr := ""
+		if len(failures) == 1 {
+			openAttr = " open"
+		}
+		b.WriteString(fmt.Sprintf("<details class=\"lane-group\"%s>", openAttr))
+		b.WriteString(fmt.Sprintf("<summary>%s (%d)</summary>", html.EscapeString(runLogDayLaneLabel(lane)), len(failures)))
+		b.WriteString("<div class=\"lane-detail-list\">")
 		for _, failure := range failures {
 			b.WriteString("<div class=\"detail-item\">")
 			b.WriteString(fmt.Sprintf("<div class=\"detail-title\">%s</div>", html.EscapeString(runLogDayFailureTitle(failure))))
@@ -387,8 +404,9 @@ func runLogDayFailureDetailsHTML(row readmodelrunlog.JobHistoryRunRow) string {
 			b.WriteString("</div>")
 		}
 		b.WriteString("</div>")
+		b.WriteString("</details>")
 	}
-	b.WriteString("</div></details>")
+	b.WriteString("</div>")
 	return b.String()
 }
 
@@ -427,9 +445,9 @@ func runLogDayGroupFailuresByLane(rows []readmodelrunlog.JobHistoryFailureRow) (
 func runLogDayLaneLabel(lane string) string {
 	trimmed := strings.TrimSpace(lane)
 	if trimmed == "" {
-		return "Unknown"
+		return "unknown"
 	}
-	return "Failed at " + trimmed
+	return trimmed
 }
 
 func runLogDayAllFailuresNonArtifactBacked(rows []readmodelrunlog.JobHistoryFailureRow) bool {

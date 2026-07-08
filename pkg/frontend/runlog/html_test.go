@@ -35,8 +35,11 @@ func TestDayRunHistoryFailureDetailsHTMLRendersArtifactBackedFailures(t *testing
 			},
 		},
 	})
-	if !strings.Contains(rendered, "Failure details (1)") {
-		t.Fatalf("expected expander for artifact-backed row, got %q", rendered)
+	if !strings.Contains(rendered, "unknown (1)") {
+		t.Fatalf("expected lane category header for artifact-backed row, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "<details class=\"lane-group\" open>") {
+		t.Fatalf("expected single-failure category to render expanded, got %q", rendered)
 	}
 }
 
@@ -56,17 +59,38 @@ func TestDayRunHistoryFailureDetailsHTMLGroupsByLane(t *testing.T) {
 		},
 	})
 
-	if !strings.Contains(rendered, "Failed at e2e (1)") {
-		t.Fatalf("expected e2e group header, got %q", rendered)
+	if !strings.Contains(rendered, "e2e (1)") {
+		t.Fatalf("expected e2e category header, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "Failed at alert (1)") {
-		t.Fatalf("expected alert group header, got %q", rendered)
+	if !strings.Contains(rendered, "alert (1)") {
+		t.Fatalf("expected alert category header, got %q", rendered)
 	}
-	if e2eIdx, alertIdx := strings.Index(rendered, "Failed at e2e"), strings.Index(rendered, "Failed at alert"); e2eIdx < 0 || alertIdx < 0 || e2eIdx > alertIdx {
-		t.Fatalf("expected e2e group to precede alert group, got %q", rendered)
+	if e2eIdx, alertIdx := strings.Index(rendered, "e2e (1)"), strings.Index(rendered, "alert (1)"); e2eIdx < 0 || alertIdx < 0 || e2eIdx > alertIdx {
+		t.Fatalf("expected e2e category to precede alert category, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "Failure details (2)") {
-		t.Fatalf("expected total failure count of 2, got %q", rendered)
+	if strings.Contains(rendered, "Failure details") {
+		t.Fatalf("did not expect a single wrapping 'Failure details' expander, got %q", rendered)
+	}
+}
+
+func TestDayRunHistoryFailureDetailsHTMLCollapsesMultiFailureCategory(t *testing.T) {
+	t.Parallel()
+
+	rendered := runLogDayFailureDetailsHTML(readmodelrunlog.JobHistoryRunRow{
+		FailureRows: []readmodelrunlog.JobHistoryFailureRow{
+			{FailureText: "first e2e failure", Lane: "e2e"},
+			{FailureText: "second e2e failure", Lane: "e2e"},
+		},
+	})
+
+	if !strings.Contains(rendered, "e2e (2)") {
+		t.Fatalf("expected e2e category header with count 2, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "<details class=\"lane-group\">") {
+		t.Fatalf("expected multi-failure category to render collapsed, got %q", rendered)
+	}
+	if strings.Contains(rendered, "<details class=\"lane-group\" open>") {
+		t.Fatalf("did not expect multi-failure category to be expanded by default, got %q", rendered)
 	}
 }
 

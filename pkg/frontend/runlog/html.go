@@ -191,7 +191,10 @@ func runLogDaySearchScriptTag() string {
   }
 
   function expandMatches(row, q) {
-    var dets = row.querySelectorAll("details");
+    // Only auto-expand the lane-group category expanders so a match hidden in
+    // a collapsed category becomes visible; never force-open the raw-failure
+    // toggles, so the full failure log stays collapsed until the user asks.
+    var dets = row.querySelectorAll("details.lane-group");
     for (var i = 0; i < dets.length; i++) {
       var d = dets[i];
       if (d.open) { continue; }

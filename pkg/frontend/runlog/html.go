@@ -49,6 +49,12 @@ func RenderHTML(
 	b.WriteString("    .action-primary:hover { background: #1f2937; }\n")
 	b.WriteString("    .action-secondary { border: 1px solid #d1d5db; background: #ffffff; color: #1f2937; }\n")
 	b.WriteString("    .action-secondary:hover { background: #f3f4f6; }\n")
+	b.WriteString("    .run-search { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 6px 0 16px; }\n")
+	b.WriteString("    .run-search-input { flex: 1 1 360px; min-width: 240px; max-width: 680px; padding: 8px 14px; border: 1px solid #d1d5db; border-radius: 999px; font-size: 13px; color: #1f2937; background: #ffffff; }\n")
+	b.WriteString("    .run-search-input:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15); }\n")
+	b.WriteString("    .run-search-status { color: #6b7280; font-size: 12px; white-space: nowrap; }\n")
+	b.WriteString("    .run-search-empty { color: #6b7280; font-style: italic; margin: 4px 0 12px; }\n")
+	b.WriteString("    tr.run-row.is-hidden, section.section.is-hidden { display: none; }\n")
 	b.WriteString("    .runs-table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0 12px; }\n")
 	b.WriteString("    .runs-table th, .runs-table td { border: 1px solid #e5e7eb; padding: 8px 9px; text-align: left; vertical-align: top; }\n")
 	b.WriteString("    .runs-table th { background: #f3f4f6; color: #374151; font-weight: 700; }\n")
@@ -64,6 +70,10 @@ func RenderHTML(
 	b.WriteString("    .signal-flake { color: #b45309; }\n")
 	b.WriteString("    .signal-new { color: #7c3aed; }\n")
 	b.WriteString("    .detail-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }\n")
+	b.WriteString("    .lane-group { margin-top: 0; }\n")
+	b.WriteString("    .detail-list > .lane-group { margin-top: 0; }\n")
+	b.WriteString("    .lane-group > summary { text-transform: uppercase; letter-spacing: 0.02em; font-size: 11px; }\n")
+	b.WriteString("    .lane-detail-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }\n")
 	b.WriteString("    .detail-item { border: 1px solid #e5e7eb; border-radius: 8px; background: #f9fafb; padding: 8px 10px; }\n")
 	b.WriteString("    .detail-title { font-weight: 700; }\n")
 	b.WriteString("    .job-link { font-weight: 700; }\n")
@@ -82,6 +92,9 @@ func RenderHTML(
 	b.WriteString("    :root[data-theme=\"dark\"] .action-primary:hover { background: #1d4ed8; }\n")
 	b.WriteString("    :root[data-theme=\"dark\"] .action-secondary { background: #1f2937; border-color: #334155; color: #e2e8f0; }\n")
 	b.WriteString("    :root[data-theme=\"dark\"] .action-secondary:hover { background: #0f172a; }\n")
+	b.WriteString("    :root[data-theme=\"dark\"] .run-search-input { background: #1f2937; border-color: #334155; color: #e2e8f0; }\n")
+	b.WriteString("    :root[data-theme=\"dark\"] .run-search-input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.25); }\n")
+	b.WriteString("    :root[data-theme=\"dark\"] .run-search-status, :root[data-theme=\"dark\"] .run-search-empty { color: #94a3b8; }\n")
 	b.WriteString("    :root[data-theme=\"dark\"] details summary { color: #93c5fd; }\n")
 	b.WriteString("    :root[data-theme=\"dark\"] .mini-badge { background: #1e293b; border-color: #334155; color: #93c5fd; }\n")
 	b.WriteString("    :root[data-theme=\"dark\"] .raw-failure-toggle > summary { background: #1f2937; border-color: #334155; color: #e2e8f0; }\n")
@@ -93,6 +106,7 @@ func RenderHTML(
 	b.WriteString(frontui.ReportChromeHTML(options.Chrome))
 	b.WriteString("<main class=\"page-content\">\n")
 	b.WriteString(runLogDayActionsHTML(options))
+	b.WriteString(runLogDaySearchBoxHTML())
 
 	for _, environment := range data.Environments {
 		b.WriteString(fmt.Sprintf("  <section id=\"runs-%s\" class=\"section\">\n", html.EscapeString(strings.TrimSpace(environment.Environment))))
@@ -116,6 +130,7 @@ func RenderHTML(
 	b.WriteString("</main>\n")
 	b.WriteString(frontui.ThemeToggleScriptTag())
 	b.WriteString(frontui.TimezoneToggleScriptTag())
+	b.WriteString(runLogDaySearchScriptTag())
 	b.WriteString("</body>\n")
 	b.WriteString("</html>\n")
 	return b.String()
@@ -134,6 +149,128 @@ func runLogDayActionsHTML(options PageOptions) string {
 	return b.String()
 }
 
+// runLogDaySearchBoxHTML renders the free-text filter box. Filtering is applied
+// client-side against each run row's text (including collapsed raw failure
+// logs), so operators can narrow the view to runs whose failures match a phrase
+// such as "timeout during CreateHCPClusterAndWait" or
+// "alert [svc] KubeNodeUnreachable fired".
+func runLogDaySearchBoxHTML() string {
+	var b strings.Builder
+	b.WriteString("  <div class=\"run-search\">\n")
+	b.WriteString("    <input type=\"search\" id=\"run-log-search\" class=\"run-search-input\" ")
+	b.WriteString("placeholder=\"Filter runs by failure text (e.g. timeout during CreateHCPClusterAndWait)\" ")
+	b.WriteString("autocomplete=\"off\" spellcheck=\"false\" aria-label=\"Filter runs by failure text\" />\n")
+	b.WriteString("    <span class=\"run-search-status\" id=\"run-log-search-status\" role=\"status\" aria-live=\"polite\"></span>\n")
+	b.WriteString("  </div>\n")
+	b.WriteString("  <p class=\"run-search-empty\" id=\"run-log-search-empty\" hidden>No runs match your search.</p>\n")
+	return b.String()
+}
+
+// runLogDaySearchScriptTag renders the client-side filtering behaviour for the
+// run-log search box. It hides run rows whose text does not contain the query,
+// auto-expands the categories/raw sections that hold the match so it is visible
+// in context, hides environment sections that end up empty, and keeps the query
+// in the URL (?q=) so a filtered view is shareable and survives reload.
+func runLogDaySearchScriptTag() string {
+	return strings.TrimSpace(`
+<script>
+(function () {
+  var input = document.getElementById("run-log-search");
+  if (!input) { return; }
+  var status = document.getElementById("run-log-search-status");
+  var emptyMsg = document.getElementById("run-log-search-empty");
+  var rows = Array.prototype.slice.call(document.querySelectorAll("tr.run-row"));
+  var sections = Array.prototype.slice.call(document.querySelectorAll("section.section"));
+
+  function clearSearchOpens() {
+    var opened = document.querySelectorAll("[data-search-open]");
+    for (var i = 0; i < opened.length; i++) {
+      opened[i].open = false;
+      opened[i].removeAttribute("data-search-open");
+    }
+  }
+
+  function expandMatches(row, q) {
+    // Only auto-expand the lane-group category expanders so a match hidden in
+    // a collapsed category becomes visible; never force-open the raw-failure
+    // toggles, so the full failure log stays collapsed until the user asks.
+    var dets = row.querySelectorAll("details.lane-group");
+    for (var i = 0; i < dets.length; i++) {
+      var d = dets[i];
+      if (d.open) { continue; }
+      if ((d.textContent || "").toLowerCase().indexOf(q) !== -1) {
+        d.open = true;
+        d.setAttribute("data-search-open", "");
+      }
+    }
+  }
+
+  function apply(rawQuery) {
+    var q = (rawQuery || "").trim().toLowerCase();
+    clearSearchOpens();
+    var visible = 0;
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var match = q === "" || (row.textContent || "").toLowerCase().indexOf(q) !== -1;
+      if (match) {
+        row.classList.remove("is-hidden");
+        visible++;
+        if (q !== "") { expandMatches(row, q); }
+      } else {
+        row.classList.add("is-hidden");
+      }
+    }
+    for (var s = 0; s < sections.length; s++) {
+      var sec = sections[s];
+      var secRows = sec.querySelectorAll("tr.run-row");
+      if (secRows.length === 0) {
+        sec.classList.toggle("is-hidden", q !== "");
+        continue;
+      }
+      var anyVisible = false;
+      for (var r = 0; r < secRows.length; r++) {
+        if (!secRows[r].classList.contains("is-hidden")) { anyVisible = true; break; }
+      }
+      sec.classList.toggle("is-hidden", !anyVisible);
+    }
+    if (status) {
+      status.textContent = q === "" ? "" : ("Showing " + visible + " of " + rows.length + " runs");
+    }
+    if (emptyMsg) {
+      emptyMsg.hidden = !(q !== "" && visible === 0);
+    }
+    syncURL(rawQuery);
+  }
+
+  function syncURL(rawQuery) {
+    if (!window.history || !window.history.replaceState) { return; }
+    try {
+      var url = new URL(window.location.href);
+      var v = (rawQuery || "").trim();
+      if (v === "") { url.searchParams.delete("q"); } else { url.searchParams.set("q", v); }
+      window.history.replaceState(null, "", url.toString());
+    } catch (err) {}
+  }
+
+  function initialQuery() {
+    try {
+      return new URL(window.location.href).searchParams.get("q") || "";
+    } catch (err) { return ""; }
+  }
+
+  var initial = initialQuery();
+  if (initial) { input.value = initial; }
+  var timer = null;
+  input.addEventListener("input", function () {
+    if (timer) { clearTimeout(timer); }
+    timer = setTimeout(function () { apply(input.value); }, 120);
+  });
+  apply(input.value);
+})();
+</script>
+`) + "\n"
+}
+
 func runLogDayCardHTML(label string, value string) string {
 	return fmt.Sprintf(
 		"    <div class=\"card\"><div class=\"label\">%s</div><div class=\"value\">%s</div></div>\n",
@@ -144,7 +281,7 @@ func runLogDayCardHTML(label string, value string) string {
 
 func runLogDayRunRowHTML(row readmodelrunlog.JobHistoryRunRow) string {
 	var b strings.Builder
-	b.WriteString("        <tr>\n")
+	b.WriteString("        <tr class=\"run-row\">\n")
 	b.WriteString(fmt.Sprintf("          <td class=\"time-col\">%s</td>\n", runLogDayRunTimeHTML(row.Run.OccurredAt)))
 	b.WriteString("          <td>")
 	b.WriteString(runLogDayJobHTML(row.Run))
@@ -158,11 +295,17 @@ func runLogDayRunRowHTML(row readmodelrunlog.JobHistoryRunRow) string {
 	b.WriteString(fmt.Sprintf("          <td class=\"pr-col\">%s</td>\n", runLogDayPRHTML(row)))
 	b.WriteString(fmt.Sprintf("          <td class=\"failed-tests-col\">%s</td>\n", html.EscapeString(runLogDayFailedTestsLabel(row))))
 	b.WriteString("          <td>")
-	b.WriteString(html.EscapeString(runLogDayPrimaryPhrase(row)))
-	if submeta := runLogDayPrimaryPhraseSubmeta(row); submeta != "" {
-		b.WriteString(fmt.Sprintf("<div class=\"phrase-submeta\">%s</div>", html.EscapeString(submeta)))
+	detailsHTML := runLogDayFailureDetailsHTML(row)
+	if detailsHTML == "" {
+		// Only show the single-line summary when there are no per-category
+		// expanders; otherwise it just duplicates the category breakdown
+		// (e.g. "Multiple failures (10)").
+		b.WriteString(html.EscapeString(runLogDayPrimaryPhrase(row)))
+		if submeta := runLogDayPrimaryPhraseSubmeta(row); submeta != "" {
+			b.WriteString(fmt.Sprintf("<div class=\"phrase-submeta\">%s</div>", html.EscapeString(submeta)))
+		}
 	}
-	if detailsHTML := runLogDayFailureDetailsHTML(row); detailsHTML != "" {
+	if detailsHTML != "" {
 		b.WriteString(detailsHTML)
 	}
 	b.WriteString("</td>\n")
@@ -370,12 +513,19 @@ func runLogDayFailureDetailsHTML(row readmodelrunlog.JobHistoryRunRow) string {
 	groups, order := runLogDayGroupFailuresByLane(row.FailureRows)
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("<details><summary>Failure details (%d)</summary>", len(row.FailureRows)))
 	b.WriteString("<div class=\"detail-list\">")
 	for _, lane := range order {
 		failures := groups[lane]
-		b.WriteString("<div class=\"detail-group\">")
-		b.WriteString(fmt.Sprintf("<div class=\"detail-group-title\">%s (%d)</div>", html.EscapeString(runLogDayLaneLabel(lane)), len(failures)))
+		// Expand a category by default only when it holds a single failure so
+		// the pattern is visible at a glance; keep multi-failure categories
+		// collapsed so the operator can choose what to expand.
+		openAttr := ""
+		if len(failures) == 1 {
+			openAttr = " open"
+		}
+		b.WriteString(fmt.Sprintf("<details class=\"lane-group\"%s>", openAttr))
+		b.WriteString(fmt.Sprintf("<summary>%s (%d)</summary>", html.EscapeString(runLogDayLaneLabel(lane)), len(failures)))
+		b.WriteString("<div class=\"lane-detail-list\">")
 		for _, failure := range failures {
 			b.WriteString("<div class=\"detail-item\">")
 			b.WriteString(fmt.Sprintf("<div class=\"detail-title\">%s</div>", html.EscapeString(runLogDayFailureTitle(failure))))
@@ -387,8 +537,9 @@ func runLogDayFailureDetailsHTML(row readmodelrunlog.JobHistoryRunRow) string {
 			b.WriteString("</div>")
 		}
 		b.WriteString("</div>")
+		b.WriteString("</details>")
 	}
-	b.WriteString("</div></details>")
+	b.WriteString("</div>")
 	return b.String()
 }
 
@@ -427,9 +578,9 @@ func runLogDayGroupFailuresByLane(rows []readmodelrunlog.JobHistoryFailureRow) (
 func runLogDayLaneLabel(lane string) string {
 	trimmed := strings.TrimSpace(lane)
 	if trimmed == "" {
-		return "Unknown"
+		return "unknown"
 	}
-	return "Failed at " + trimmed
+	return trimmed
 }
 
 func runLogDayAllFailuresNonArtifactBacked(rows []readmodelrunlog.JobHistoryFailureRow) bool {

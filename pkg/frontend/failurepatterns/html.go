@@ -47,6 +47,14 @@ func RenderHTML(
 	b.WriteString("    .section { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; margin: 14px 0; }\n")
 	b.WriteString("    .section-note { color: #4b5563; font-size: 12px; margin-top: -4px; margin-bottom: 8px; }\n")
 	b.WriteString("    .muted { color: #6b7280; }\n")
+	b.WriteString("    .run-search { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 6px 0 16px; }\n")
+	b.WriteString("    .run-search-input { flex: 1 1 360px; min-width: 240px; max-width: 680px; padding: 8px 14px; border: 1px solid #d1d5db; border-radius: 999px; font-size: 13px; color: #1f2937; background: #ffffff; }\n")
+	b.WriteString("    .run-search-input:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15); }\n")
+	b.WriteString("    .run-search-status { color: #6b7280; font-size: 12px; white-space: nowrap; }\n")
+	b.WriteString("    .run-search-empty { color: #6b7280; font-style: italic; margin: 4px 0 12px; }\n")
+	b.WriteString("    :root[data-theme=\"dark\"] .run-search-input { background: #1f2937; border-color: #334155; color: #e2e8f0; }\n")
+	b.WriteString("    :root[data-theme=\"dark\"] .run-search-input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.25); }\n")
+	b.WriteString("    :root[data-theme=\"dark\"] .run-search-status, :root[data-theme=\"dark\"] .run-search-empty { color: #94a3b8; }\n")
 	b.WriteString(frontui.ReportChromeCSS())
 	b.WriteString(frontui.StylesCSS())
 	b.WriteString(frontui.ThemeCSS())
@@ -55,6 +63,7 @@ func RenderHTML(
 	b.WriteString("<body>\n")
 	b.WriteString(frontui.ReportChromeHTML(options.Chrome))
 	b.WriteString("<main class=\"page-content\">\n")
+	b.WriteString(failurePatternsSearchBoxHTML())
 
 	for _, environment := range data.Environments {
 		failurePatternRows := failurePatternsFailurePatternRows(environment.Rows, environment.Summary.MatchedFailureCount)
@@ -170,6 +179,18 @@ func failurePatternsContributingTests(rows []readmodelpatterns.FailurePatternRep
 	return out
 }
 
+func failurePatternsSearchBoxHTML() string {
+	var b strings.Builder
+	b.WriteString("  <div class=\"run-search\">\n")
+	b.WriteString("    <input type=\"search\" id=\"failure-patterns-search\" class=\"run-search-input\" ")
+	b.WriteString("placeholder=\"Filter failure patterns by text (e.g. timeout during CreateHCPClusterAndWait)\" ")
+	b.WriteString("autocomplete=\"off\" spellcheck=\"false\" aria-label=\"Filter failure patterns by text\" />\n")
+	b.WriteString("    <span class=\"run-search-status\" id=\"failure-patterns-search-status\" role=\"status\" aria-live=\"polite\"></span>\n")
+	b.WriteString("  </div>\n")
+	b.WriteString("  <p class=\"run-search-empty\" id=\"failure-patterns-search-empty\" hidden>No failure patterns match your search.</p>\n")
+	return b.String()
+}
+
 func failurePatternsCardHTML(label string, value string) string {
 	return fmt.Sprintf(
 		"    <div class=\"card\"><div class=\"label\">%s</div><div class=\"value\">%s</div></div>\n",
@@ -177,7 +198,6 @@ func failurePatternsCardHTML(label string, value string) string {
 		html.EscapeString(strings.TrimSpace(value)),
 	)
 }
-
 func failurePatternsPercent(value int, total int) float64 {
 	if total <= 0 {
 		return 0

@@ -21,6 +21,7 @@ type RunLogDayQuery struct {
 	Date         string
 	Week         string
 	Environments []string
+	FailedAt     []string
 	GeneratedAt  time.Time
 }
 
@@ -207,6 +208,7 @@ func BuildDay(ctx context.Context, deps DayBuilderDeps, query RunLogDayQuery) (R
 			factsByEnvironment[normalizedEnvironment],
 			clusterByReference,
 		)
+		runs = filterRunsByFailedAt(runs, query.FailedAt)
 		environments = append(environments, RunLogDayEnvironment{
 			Environment: normalizedEnvironment,
 			Summary:     buildRunLogDaySummary(runs),
@@ -573,6 +575,34 @@ func jobHistoryRunLanes(rows []JobHistoryFailureRow) []string {
 		}
 	}
 	return readmodelmodel.SortedStringSet(set)
+}
+
+// filterRunsByFailedAt keeps only runs that failed at one of the requested
+// source lanes. Each run's raw lanes are mapped to their filterable source
+// bucket (provision/e2e/alert/other) before matching. An empty selection
+// disables filtering and returns the runs unchanged.
+func filterRunsByFailedAt(runs []JobHistoryRunRow, failedAt []string) []JobHistoryRunRow {
+	selected := map[string]struct{}{}
+	for _, value := range failedAt {
+		normalized := strings.ToLower(strings.TrimSpace(value))
+		if normalized == "" {
+			continue
+		}
+		selected[normalized] = struct{}{}
+	}
+	if len(selected) == 0 {
+		return runs
+	}
+	filtered := make([]JobHistoryRunRow, 0, len(runs))
+	for _, run := range runs {
+		for _, lane := range run.Lanes {
+			if _, ok := selected[sourcelanes.BucketSource(lane)]; ok {
+				filtered = append(filtered, run)
+				break
+			}
+		}
+	}
+	return filtered
 }
 
 func jobHistoryFailedTestCount(rows []JobHistoryFailureRow) int {

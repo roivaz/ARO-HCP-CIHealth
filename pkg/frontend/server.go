@@ -326,9 +326,10 @@ func (h *handler) generateDayRunHistoryPage(ctx context.Context, query readmodel
 		return "", err
 	}
 	environments := query.Environments
+	failedAt := query.FailedAt
 	return frontrunlog.RenderHTML(data, frontrunlog.PageOptions{
 		Query:               query,
-		FailurePatternsHref: failurePatternsHref("/failure-patterns", "", data.Meta.Date, data.Meta.Date, environments, nil, ""),
+		FailurePatternsHref: failurePatternsHref("/failure-patterns", "", data.Meta.Date, data.Meta.Date, environments, failedAt, ""),
 		Chrome: frontui.ReportChromeOptions{
 			CurrentView:         frontui.ReportViewRunLog,
 			OverviewHref:        "/",
@@ -338,8 +339,8 @@ func (h *handler) generateDayRunHistoryPage(ctx context.Context, query readmodel
 			TimeSelector: frontui.TimeSelectorOptions{
 				Mode:          frontui.TimeSelectorModeDay,
 				Label:         formatTimeSelectorLabel(frontui.TimeSelectorModeDay, data.Meta.Date, data.Meta.Date),
-				PreviousHref:  h.shiftedRunLogHref(ctx, data.Meta.Date, -1, environments),
-				NextHref:      h.shiftedRunLogHref(ctx, data.Meta.Date, 1, environments),
+				PreviousHref:  h.shiftedRunLogHref(ctx, data.Meta.Date, -1, environments, failedAt),
+				NextHref:      h.shiftedRunLogHref(ctx, data.Meta.Date, 1, environments, failedAt),
 				ShowDateInput: true,
 				DateValue:     data.Meta.Date,
 				AutoSubmit:    true,
@@ -348,7 +349,11 @@ func (h *handler) generateDayRunHistoryPage(ctx context.Context, query readmodel
 				Value:      chromeEnvironmentValue(environments),
 				AutoSubmit: true,
 			},
-			JSONAPIHref: runLogDayHref("/api/run-log/day", data.Meta.Date, "", environments),
+			FailedAt: frontui.FailedAtControlOptions{
+				Value:      chromeFailedAtValue(failedAt),
+				AutoSubmit: true,
+			},
+			JSONAPIHref: runLogDayHref("/api/run-log/day", data.Meta.Date, "", environments, failedAt),
 		},
 	}), nil
 }
@@ -1238,6 +1243,7 @@ func (h *handler) shiftedRunLogHref(
 	currentDate string,
 	days int,
 	environments []string,
+	failedAt []string,
 ) string {
 	dateValue, err := parseDateInputValue("date", currentDate)
 	if err != nil {
@@ -1248,7 +1254,7 @@ func (h *handler) shiftedRunLogHref(
 	if targetDate > today {
 		return ""
 	}
-	return runLogDayHref("/run-log", targetDate, "", environments)
+	return runLogDayHref("/run-log", targetDate, "", environments, failedAt)
 }
 
 func shiftDateWindow(startDate string, endDate string, days int) (string, string, error) {
@@ -1325,7 +1331,7 @@ func shiftedFailurePatternsHref(
 	return failurePatternsHref(path, trimmedTargetWeek, shiftedStart, shiftedEnd, environments, nil, "")
 }
 
-func runLogDayHref(path string, date string, week string, environments []string) string {
+func runLogDayHref(path string, date string, week string, environments []string, failedAt []string) string {
 	trimmedPath := strings.TrimSpace(path)
 	if trimmedPath == "" {
 		return ""
@@ -1342,6 +1348,9 @@ func runLogDayHref(path string, date string, week string, environments []string)
 	}
 	for _, environment := range normalizedQueryEnvironments(environments) {
 		q.Add("env", environment)
+	}
+	for _, source := range normalizedQueryFailedAt(failedAt) {
+		q.Add("failed_at", source)
 	}
 	if encoded := q.Encode(); encoded != "" {
 		return trimmedPath + "?" + encoded
@@ -1364,14 +1373,14 @@ func shiftedDayRunHistoryHref(
 	currentWeekStart, errCurrentWeek := time.Parse("2006-01-02", strings.TrimSpace(currentWeek))
 	currentDateValue, errCurrentDate := time.Parse("2006-01-02", strings.TrimSpace(currentDate))
 	if errTargetWeek != nil || errCurrentWeek != nil || errCurrentDate != nil {
-		return runLogDayHref(path, trimmedTargetWeek, trimmedTargetWeek, environments)
+		return runLogDayHref(path, trimmedTargetWeek, trimmedTargetWeek, environments, nil)
 	}
 	offset := int(currentDateValue.UTC().Sub(currentWeekStart.UTC()) / (24 * time.Hour))
 	if offset < 0 || offset > 6 {
-		return runLogDayHref(path, trimmedTargetWeek, trimmedTargetWeek, environments)
+		return runLogDayHref(path, trimmedTargetWeek, trimmedTargetWeek, environments, nil)
 	}
 	targetDate := targetWeekStart.UTC().AddDate(0, 0, offset).Format("2006-01-02")
-	return runLogDayHref(path, targetDate, trimmedTargetWeek, environments)
+	return runLogDayHref(path, targetDate, trimmedTargetWeek, environments, nil)
 }
 
 func isSingleDayWindow(startDate string, endDate string) bool {
@@ -1439,6 +1448,7 @@ func runLogDayQueryFromRequest(r *http.Request) readmodelrunlog.RunLogDayQuery {
 		Date:         strings.TrimSpace(r.URL.Query().Get("date")),
 		Week:         strings.TrimSpace(r.URL.Query().Get("week")),
 		Environments: parseListQueryValues(r.URL.Query()["env"]),
+		FailedAt:     normalizedQueryFailedAt(parseListQueryValues(r.URL.Query()["failed_at"])),
 	}
 }
 

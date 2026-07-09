@@ -732,6 +732,9 @@ func TestHandleRunsPageRendersHTML(t *testing.T) {
 	if !strings.Contains(body, "<th>Details</th>") {
 		t.Fatalf("expected details column in body, got %q", body)
 	}
+	if !strings.Contains(body, `<select class="report-env-select" name="failed_at" onchange=`) {
+		t.Fatalf("expected auto-submitting failed_at selector in run-log chrome, got %q", body)
+	}
 	if strings.Contains(body, "Semantic status") {
 		t.Fatalf("did not expect semantic status column in body, got %q", body)
 	}
@@ -788,6 +791,57 @@ func TestHandleRunsPageRendersHTML(t *testing.T) {
 		if !strings.Contains(body, snippet) {
 			t.Fatalf("expected default route navigation link %q in body, got %q", snippet, body)
 		}
+	}
+}
+
+func TestHandleRunsPageFailedAtFilter(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	fixture := newHandlerFixture(t)
+	store := fixture.openWeekStore(t, "2026-03-16")
+	if err := store.UpsertRuns(ctx, jobHistoryAPIRuns()); err != nil {
+		t.Fatalf("seed runs: %v", err)
+	}
+	if err := store.UpsertRawFailures(ctx, jobHistoryAPIRawFailures()); err != nil {
+		t.Fatalf("seed raw failures: %v", err)
+	}
+
+	handler, err := NewHandler(HandlerOptions{
+		PostgresPool: fixture.pool,
+	})
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	// The fixture failures classify as the "other" source bucket. Filtering by
+	// e2e must drop every run, while filtering by other keeps them.
+	e2eReq := httptest.NewRequest(http.MethodGet, "/run-log?date=2026-03-16&env=dev&failed_at=e2e", nil)
+	e2eRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(e2eRecorder, e2eReq)
+	if got, want := e2eRecorder.Code, http.StatusOK; got != want {
+		t.Fatalf("unexpected status code: got=%d want=%d body=%s", got, want, e2eRecorder.Body.String())
+	}
+	e2eBody := e2eRecorder.Body.String()
+	if strings.Contains(e2eBody, "Installer failed to reach bootstrap machine") {
+		t.Fatalf("expected failed_at=e2e to filter out other-bucket runs, got %q", e2eBody)
+	}
+	if !strings.Contains(e2eBody, `<option value="e2e" selected="selected">Failed at: E2E</option>`) {
+		t.Fatalf("expected failed_at=e2e option to render as selected, got %q", e2eBody)
+	}
+
+	otherReq := httptest.NewRequest(http.MethodGet, "/run-log?date=2026-03-16&env=dev&failed_at=other", nil)
+	otherRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(otherRecorder, otherReq)
+	if got, want := otherRecorder.Code, http.StatusOK; got != want {
+		t.Fatalf("unexpected status code: got=%d want=%d body=%s", got, want, otherRecorder.Body.String())
+	}
+	otherBody := otherRecorder.Body.String()
+	if !strings.Contains(otherBody, "Installer failed to reach bootstrap machine") {
+		t.Fatalf("expected failed_at=other to retain other-bucket runs, got %q", otherBody)
+	}
+	if !strings.Contains(otherBody, "failed_at=other") {
+		t.Fatalf("expected failed_at=other to be preserved in navigation hrefs, got %q", otherBody)
 	}
 }
 

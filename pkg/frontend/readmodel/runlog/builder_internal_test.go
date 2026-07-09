@@ -103,3 +103,38 @@ func TestBuildJobHistoryReferenceIndexUsesResolverBackedBadPRSignal(t *testing.T
 		t.Fatalf("unexpected resolver-backed bad PR reasons: %+v", got.BadPRReasons)
 	}
 }
+
+func TestFilterRunsByFailedAt(t *testing.T) {
+	t.Parallel()
+
+	provisionRun := JobHistoryRunRow{Lanes: []string{"provision"}}
+	e2eRun := JobHistoryRunRow{Lanes: []string{"e2e"}}
+	alertRun := JobHistoryRunRow{Lanes: []string{"alert"}}
+	mixedRun := JobHistoryRunRow{Lanes: []string{"provision", "e2e"}}
+	otherRun := JobHistoryRunRow{Lanes: []string{"unknown"}}
+	passingRun := JobHistoryRunRow{Lanes: nil}
+	all := []JobHistoryRunRow{provisionRun, e2eRun, alertRun, mixedRun, otherRun, passingRun}
+
+	testCases := []struct {
+		name     string
+		failedAt []string
+		want     int
+	}{
+		{name: "empty selection keeps all runs", failedAt: nil, want: len(all)},
+		{name: "provision keeps provision and mixed", failedAt: []string{"provision"}, want: 2},
+		{name: "e2e keeps e2e and mixed", failedAt: []string{"e2e"}, want: 2},
+		{name: "alert keeps alert only", failedAt: []string{"alert"}, want: 1},
+		{name: "other buckets unknown lane", failedAt: []string{"other"}, want: 1},
+		{name: "multiple sources union", failedAt: []string{"provision", "alert"}, want: 3},
+		{name: "unknown source matches nothing", failedAt: []string{"bogus"}, want: 0},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := filterRunsByFailedAt(all, testCase.failedAt)
+			if len(got) != testCase.want {
+				t.Fatalf("filterRunsByFailedAt(%v) kept %d runs, want %d", testCase.failedAt, len(got), testCase.want)
+			}
+		})
+	}
+}

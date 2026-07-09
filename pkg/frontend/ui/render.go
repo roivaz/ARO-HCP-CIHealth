@@ -1436,15 +1436,30 @@ func renderTableSortScriptTag() string {
     return pairs;
   }
   function applyVisibility(table, pairs) {
+    var query = currentFailurePatternsSearchQuery();
+    if (query) {
+      // When a search query is active, show every matching row across the whole
+      // loaded set (ignoring the pagination limit) and hide the rest. Detail
+      // rows follow their main row but their collapsed <details> are left
+      // untouched, so nothing is auto-expanded.
+      for (var i = 0; i < pairs.length; i++) {
+        var isMatch = rowMatchesFailurePatternsQuery(pairs[i].main, query);
+        pairs[i].main.style.display = isMatch ? "" : "none";
+        if (pairs[i].detail) {
+          pairs[i].detail.style.display = isMatch ? "" : "none";
+        }
+      }
+      return;
+    }
     var visible = parseInt(table.getAttribute("data-initial-visible") || "0", 10);
     if (!isFinite(visible) || visible <= 0) {
       visible = pairs.length;
     }
-    for (var i = 0; i < pairs.length; i++) {
-      var isVisible = i < visible;
-      pairs[i].main.style.display = isVisible ? "" : "none";
-      if (pairs[i].detail) {
-        pairs[i].detail.style.display = isVisible ? "" : "none";
+    for (var j = 0; j < pairs.length; j++) {
+      var isVisible = j < visible;
+      pairs[j].main.style.display = isVisible ? "" : "none";
+      if (pairs[j].detail) {
+        pairs[j].detail.style.display = isVisible ? "" : "none";
       }
     }
   }
@@ -1512,9 +1527,90 @@ func renderTableSortScriptTag() string {
     }
     applySort(table, sortKey, sortDirection);
   }
+  function currentFailurePatternsSearchQuery() {
+    var input = document.getElementById("failure-patterns-search");
+    if (!input) { return ""; }
+    return (input.value || "").trim().toLowerCase();
+  }
+  function rowMatchesFailurePatternsQuery(main, query) {
+    if (!query) { return true; }
+    var haystack = main.getAttribute("data-filter-search") || "";
+    if (haystack.indexOf(query) !== -1) { return true; }
+    return (main.textContent || "").toLowerCase().indexOf(query) !== -1;
+  }
+  function refilterFailurePatterns() {
+    var query = currentFailurePatternsSearchQuery();
+    var tables = document.querySelectorAll("table.failure-patterns-table[data-sortable=\"true\"]");
+    var totalRows = 0;
+    var visibleRows = 0;
+    for (var t = 0; t < tables.length; t++) {
+      var tbody = tables[t].querySelector("tbody");
+      if (!tbody) { continue; }
+      var pairs = collectRowPairs(tbody);
+      applyVisibility(tables[t], pairs);
+      for (var p = 0; p < pairs.length; p++) {
+        totalRows++;
+        if (pairs[p].main.style.display !== "none") { visibleRows++; }
+      }
+    }
+    var sections = document.querySelectorAll("section.section");
+    for (var s = 0; s < sections.length; s++) {
+      var sec = sections[s];
+      var mains = sec.querySelectorAll("tr.failure-pattern-row");
+      if (mains.length === 0) {
+        sec.style.display = query ? "none" : "";
+        continue;
+      }
+      var anyVisible = false;
+      for (var m = 0; m < mains.length; m++) {
+        if (mains[m].style.display !== "none") { anyVisible = true; break; }
+      }
+      sec.style.display = anyVisible ? "" : "none";
+    }
+    var status = document.getElementById("failure-patterns-search-status");
+    if (status) {
+      status.textContent = query === "" ? "" : ("Showing " + visibleRows + " of " + totalRows + " failure patterns");
+    }
+    var emptyMsg = document.getElementById("failure-patterns-search-empty");
+    if (emptyMsg) {
+      emptyMsg.hidden = !(query !== "" && visibleRows === 0);
+    }
+    syncFailurePatternsSearchURL();
+  }
+  function syncFailurePatternsSearchURL() {
+    if (!window.history || !window.history.replaceState) { return; }
+    var input = document.getElementById("failure-patterns-search");
+    if (!input) { return; }
+    try {
+      var url = new URL(window.location.href);
+      var value = (input.value || "").trim();
+      if (value === "") { url.searchParams.delete("q"); } else { url.searchParams.set("q", value); }
+      window.history.replaceState(null, "", url.toString());
+    } catch (err) {}
+  }
+  function wireFailurePatternsSearch() {
+    var input = document.getElementById("failure-patterns-search");
+    if (!input || input.getAttribute("data-search-wired") === "true") { return; }
+    input.setAttribute("data-search-wired", "true");
+    try {
+      var initial = new URL(window.location.href).searchParams.get("q") || "";
+      if (initial) { input.value = initial; }
+    } catch (err) {}
+    var timer = null;
+    input.addEventListener("input", function () {
+      if (timer) { clearTimeout(timer); }
+      timer = setTimeout(refilterFailurePatterns, 120);
+    });
+    refilterFailurePatterns();
+  }
   var tables = document.querySelectorAll("table.failure-patterns-table[data-sortable=\"true\"]");
   for (var i = 0; i < tables.length; i++) {
     initSortableTable(tables[i]);
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", wireFailurePatternsSearch);
+  } else {
+    wireFailurePatternsSearch();
   }
 })();
 </script>

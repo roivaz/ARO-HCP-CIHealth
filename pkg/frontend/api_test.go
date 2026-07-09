@@ -328,6 +328,12 @@ func TestHandleFailurePatternsPageWindowRendersHTML(t *testing.T) {
 	if !strings.Contains(body, "CreateNodePool timeout after 45 minutes") {
 		t.Fatalf("expected failure-pattern row phrase in body, got %q", body)
 	}
+	if !strings.Contains(body, `id="failure-patterns-search"`) {
+		t.Fatalf("expected failure-patterns search box in body, got %q", body)
+	}
+	if !strings.Contains(body, `getElementById("failure-patterns-search")`) {
+		t.Fatalf("expected failure-patterns search wiring in body, got %q", body)
+	}
 	if !strings.Contains(body, "Single Day: Mar 16") {
 		t.Fatalf("expected single-day time selector label in body, got %q", body)
 	}

@@ -135,6 +135,8 @@ The primary surfaces served by `cihealth app` are:
 
 The run-log surface is intentionally run-centric. It loads one UTC day of runs and raw failures, then enriches those rows with the contributing failure-pattern matches for that same day.
 
+Tide batch runs are classified from the run URL (`.../pull/batch/...`), not from a stored flag. They are surfaced with a `batch` badge (replacing the `post-good`/`merged PR` badges) and are treated as post-good in the DEV daily metrics, since every PR in a batch has already passed e2e in its own PR check.
+
 ## User-Facing Terminology
 
 The UI and docs use these core terms:

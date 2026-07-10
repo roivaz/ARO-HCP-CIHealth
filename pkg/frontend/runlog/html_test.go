@@ -301,3 +301,33 @@ func TestDayRunHistoryPRHTMLShowsNewPatternIcon(t *testing.T) {
 		t.Fatalf("expected New failure pattern tooltip, got %q", rendered)
 	}
 }
+
+func TestRunLogDayRunFlagsHTMLMarksBatchRuns(t *testing.T) {
+	t.Parallel()
+
+	batch := runLogDayRunFlagsHTML(storecontracts.RunRecord{
+		Environment:    "dev",
+		RunURL:         "https://prow.ci.openshift.org/view/gs/test-platform-results/pr-logs/pull/batch/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455498",
+		MergedPR:       true,
+		PostGoodCommit: true,
+	})
+	if !strings.Contains(batch, ">batch<") {
+		t.Fatalf("expected batch badge, got %q", batch)
+	}
+	if strings.Contains(batch, "post-good") || strings.Contains(batch, "merged PR") {
+		t.Fatalf("did not expect post-good/merged PR badges on batch run, got %q", batch)
+	}
+
+	prCheck := runLogDayRunFlagsHTML(storecontracts.RunRecord{
+		Environment:    "dev",
+		RunURL:         "https://prow.ci.openshift.org/view/gs/test-platform-results/pr-logs/pull/Azure_ARO-HCP/4062/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455488",
+		MergedPR:       true,
+		PostGoodCommit: true,
+	})
+	if strings.Contains(prCheck, ">batch<") {
+		t.Fatalf("did not expect batch badge on PR-check run, got %q", prCheck)
+	}
+	if !strings.Contains(prCheck, "post-good") || !strings.Contains(prCheck, "merged PR") {
+		t.Fatalf("expected post-good and merged PR badges on PR-check run, got %q", prCheck)
+	}
+}

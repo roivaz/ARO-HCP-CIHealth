@@ -282,6 +282,28 @@ func ArtifactPrefixFromRunURL(runURL string) (string, error) {
 	return "", fmt.Errorf("unsupported run URL format %q", runURL)
 }
 
+// IsBatchRunURL reports whether a run URL belongs to a Tide batch job rather
+// than a single-PR presubmit check. Batch jobs are stored under the synthetic
+// pull identity "batch" (e.g. .../pr-logs/pull/batch/<job>/<build>), whereas PR
+// checks are stored under "<org>_<repo>" (e.g. .../pr-logs/pull/Azure_ARO-HCP/
+// <pr>/<job>/<build>). The classification is derived from the run URL alone.
+func IsBatchRunURL(runURL string) bool {
+	prefix, err := ArtifactPrefixFromRunURL(runURL)
+	if err != nil {
+		return false
+	}
+	segments := strings.Split(strings.Trim(prefix, "/"), "/")
+	for i, segment := range segments {
+		if segment != "pull" {
+			continue
+		}
+		if i+1 < len(segments) && segments[i+1] == "batch" {
+			return true
+		}
+	}
+	return false
+}
+
 func prefixFromHTTPPath(rawPath string) (string, bool) {
 	p := strings.TrimSpace(rawPath)
 	if strings.HasPrefix(p, "/view/gs/") {

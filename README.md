@@ -71,6 +71,8 @@ The day-scoped run history surface is:
 
 It renders one row per run for that day and enriches attached raw failures with inline failure-pattern matches derived from the current fact store.
 
+Tide batch runs (whose `run_url` is under `.../pull/batch/...`) are marked with a `batch` badge in place of the `post-good`/`merged PR` badges. Because every PR in a batch has already passed e2e in its own PR check, a batch failure is statistically a flake on known-good code, so batch runs are automatically counted as post-good ("after last push of merged PR") in the DEV metrics regardless of their PR-based signal.
+
 Current limitation: this is intentionally not yet a full Prow-history clone. `RunRecord` currently carries `run_url`, `job_name`, PR metadata, `failed`, and `occurred_at`, but not richer build/duration metadata, and some raw failures can still reference runs that need run-record backfill.
 
 ### 4. Refresh local embedded PostgreSQL from a remote dump

@@ -11,6 +11,7 @@ import (
 	"github.com/go-logr/logr"
 
 	sourcelanes "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/lanes"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/source/prowartifacts"
 	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -219,7 +220,11 @@ func (c *metricsRollupDailyController) processKey(ctx context.Context, key strin
 		postGoodFailedRunsWithoutURL := 0
 		for _, run := range runs {
 			runURL := strings.TrimSpace(run.RunURL)
-			if run.PostGoodCommit {
+			// Tide batch runs test PRs that each already passed e2e in their own PR
+			// checks, so a batch failure is statistically a flake on known-good
+			// code. Count batch runs as post-good regardless of PR-based signal.
+			postGood := run.PostGoodCommit || prowartifacts.IsBatchRunURL(runURL)
+			if postGood {
 				postGoodRunCount++
 			}
 			if !run.Failed {
@@ -227,13 +232,13 @@ func (c *metricsRollupDailyController) processKey(ctx context.Context, key strin
 			}
 			if runURL == "" {
 				failedRunsWithoutURL++
-				if run.PostGoodCommit {
+				if postGood {
 					postGoodFailedRunsWithoutURL++
 				}
 				continue
 			}
 			failedRunURLs[runURL] = struct{}{}
-			if run.PostGoodCommit {
+			if postGood {
 				postGoodFailedRunURLs[runURL] = struct{}{}
 			}
 		}
@@ -387,9 +392,9 @@ func isMetricPostGoodRun(
 	}
 	if cachedFound, ok := runFoundCache[normalizedRunURL]; ok {
 		if !cachedFound {
-			return false, nil
+			return prowartifacts.IsBatchRunURL(normalizedRunURL), nil
 		}
-		return runCache[normalizedRunURL].PostGoodCommit, nil
+		return runCache[normalizedRunURL].PostGoodCommit || prowartifacts.IsBatchRunURL(normalizedRunURL), nil
 	}
 	run, found, err := store.GetRun(ctx, environment, normalizedRunURL)
 	if err != nil {
@@ -397,10 +402,10 @@ func isMetricPostGoodRun(
 	}
 	runFoundCache[normalizedRunURL] = found
 	if !found {
-		return false, nil
+		return prowartifacts.IsBatchRunURL(normalizedRunURL), nil
 	}
 	runCache[normalizedRunURL] = run
-	return run.PostGoodCommit, nil
+	return run.PostGoodCommit || prowartifacts.IsBatchRunURL(normalizedRunURL), nil
 }
 
 func mergeFailedRunLaneFamily(current string, next string) string {

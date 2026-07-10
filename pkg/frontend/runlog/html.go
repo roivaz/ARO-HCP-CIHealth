@@ -10,6 +10,7 @@ import (
 	readmodelrunlog "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/runlog"
 	frontui "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/ui"
 	sourceoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/options"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/source/prowartifacts"
 	storecontracts "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
@@ -346,6 +347,13 @@ func runLogDayJobHTML(run storecontracts.RunRecord) string {
 }
 
 func runLogDayRunFlagsHTML(run storecontracts.RunRecord) string {
+	// Tide batch runs are marked with a single "batch" badge instead of the
+	// post-good / merged-PR badges. Batch runs test PRs that each already passed
+	// e2e, so they are counted as post-good in metrics, but surfaced distinctly
+	// here so they are easy to identify.
+	if prowartifacts.IsBatchRunURL(run.RunURL) {
+		return "<div class=\"run-flags\"><span class=\"mini-badge\">batch</span></div>"
+	}
 	flags := make([]string, 0, 2)
 	if run.PostGoodCommit {
 		flags = append(flags, "post-good")

@@ -54,6 +54,62 @@ func TestArtifactPrefixFromRunURL(t *testing.T) {
 	}
 }
 
+func TestIsBatchRunURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		runURL string
+		want   bool
+	}{
+		{
+			name:   "batch prow URL",
+			runURL: "https://prow.ci.openshift.org/view/gs/test-platform-results/pr-logs/pull/batch/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455498",
+			want:   true,
+		},
+		{
+			name:   "batch gs URL",
+			runURL: "gs://test-platform-results/pr-logs/pull/batch/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455498",
+			want:   true,
+		},
+		{
+			name:   "batch storage artifact URL",
+			runURL: "https://storage.googleapis.com/test-platform-results/pr-logs/pull/batch/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2074433538186285056/artifacts/e2e-parallel/aro-hcp-test-local/artifacts/junit.xml",
+			want:   true,
+		},
+		{
+			name:   "pr check prow URL",
+			runURL: "https://prow.ci.openshift.org/view/gs/test-platform-results/pr-logs/pull/Azure_ARO-HCP/4062/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455488",
+			want:   false,
+		},
+		{
+			name:   "pr check gs URL",
+			runURL: "gs://test-platform-results/pr-logs/pull/Azure_ARO-HCP/4062/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455488",
+			want:   false,
+		},
+		{
+			name:   "empty",
+			runURL: "",
+			want:   false,
+		},
+		{
+			name:   "unsupported",
+			runURL: "https://example.com/not/a/prow/url",
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsBatchRunURL(tt.runURL); got != tt.want {
+				t.Fatalf("IsBatchRunURL(%q): got=%v want=%v", tt.runURL, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCanonicalRunURL(t *testing.T) {
 	t.Parallel()
 

@@ -608,9 +608,18 @@ func weeklyTopSignatureJobsAffected(item topSignature) int {
 	return len(readmodelmodel.OrderedUniqueReferences(item.References))
 }
 
+func topSignaturePrimaryLane(item topSignature) string {
+	ordered := readmodelmodel.OrderedContributingTests(item.ContributingTests)
+	if len(ordered) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(ordered[0].FailedAt)
+}
+
 func topSignatureToFailurePatternRow(item topSignature) readmodelmodel.FailurePatternRow {
 	row := readmodelmodel.FailurePatternRow{
 		Environment:        item.Environment,
+		FailedAt:           topSignaturePrimaryLane(item),
 		FailurePattern:     item.Phrase,
 		FailurePatternID:   item.ClusterID,
 		SearchQuery:        item.SearchQuery,

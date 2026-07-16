@@ -116,6 +116,7 @@ func TestClassifyFailurePatternRegression(t *testing.T) {
 
 	category, reasons := ClassifyFailurePattern(FailurePatternRow{
 		Environment:        "dev",
+		FailedAt:           "e2e",
 		AfterLastPushCount: 0,
 		PriorWeeksPresent:  0,
 		AffectedRuns: []RunReference{
@@ -135,6 +136,7 @@ func TestClassifyFailurePatternFlake(t *testing.T) {
 
 	category, reasons := ClassifyFailurePattern(FailurePatternRow{
 		Environment:        "dev",
+		FailedAt:           "e2e",
 		AfterLastPushCount: 5,
 		PriorWeeksPresent:  3,
 		TrendCounts:        []int{1, 0, 1, 0, 1, 0, 1},
@@ -156,6 +158,7 @@ func TestClassifyFailurePatternNoise(t *testing.T) {
 
 	category, _ := ClassifyFailurePattern(FailurePatternRow{
 		Environment:        "dev",
+		FailedAt:           "e2e",
 		FailurePattern:     "failure",
 		AfterLastPushCount: 1,
 		PriorWeeksPresent:  0,
@@ -174,6 +177,7 @@ func TestClassifyFailurePatternIndeterminate(t *testing.T) {
 
 	category, reasons := ClassifyFailurePattern(FailurePatternRow{
 		Environment:        "dev",
+		FailedAt:           "e2e",
 		FailurePattern:     "some specific error: context deadline exceeded in foo bar",
 		AfterLastPushCount: 2,
 		PriorWeeksPresent:  1,
@@ -196,6 +200,7 @@ func TestClassifyFailurePatternRegressionNotTriggeredWithPriorHistory(t *testing
 
 	category, _ := ClassifyFailurePattern(FailurePatternRow{
 		Environment:        "dev",
+		FailedAt:           "provision",
 		FailurePattern:     "context deadline exceeded in provisioning step",
 		AfterLastPushCount: 0,
 		PriorWeeksPresent:  2,
@@ -208,12 +213,37 @@ func TestClassifyFailurePatternRegressionNotTriggeredWithPriorHistory(t *testing
 	}
 }
 
+func TestClassifyFailurePatternNotApplicableForNonProvisionE2E(t *testing.T) {
+	t.Parallel()
+
+	// Same inputs that would classify as a regression for provision/e2e, but the
+	// signal must not be computed for alert/other/build/merge sources.
+	for _, lane := range []string{"alert", "other", "unknown", "", "build"} {
+		category, reasons := ClassifyFailurePattern(FailurePatternRow{
+			Environment:        "dev",
+			FailedAt:           lane,
+			AfterLastPushCount: 0,
+			PriorWeeksPresent:  0,
+			AffectedRuns: []RunReference{
+				{RunURL: "https://prow.example/run/1", PRNumber: 4313, OccurredAt: "2026-03-07T10:00:00Z"},
+			},
+		})
+		if category != CategoryNotApplicable {
+			t.Fatalf("lane %q: expected not-applicable, got %q", lane, category)
+		}
+		if len(reasons) != 0 {
+			t.Fatalf("lane %q: expected no reasons, got %v", lane, reasons)
+		}
+	}
+}
+
 func TestRenderTableShowsBadPRIndicator(t *testing.T) {
 	t.Parallel()
 
 	html := RenderTable([]FailurePatternRow{
 		{
 			Environment:        "dev",
+			FailedAt:           "e2e",
 			FailurePattern:     "deadline exceeded",
 			Occurrences:        3,
 			OccurrenceShare:    50,
@@ -268,6 +298,7 @@ func TestRenderTableShowsNewPatternStarIcon(t *testing.T) {
 	rendered := RenderTable([]FailurePatternRow{
 		{
 			Environment:        "dev",
+			FailedAt:           "e2e",
 			FailurePattern:     "unique brand new failure pattern never seen before",
 			Occurrences:        2,
 			OccurrenceShare:    10,
@@ -830,6 +861,7 @@ func TestRenderTableUsesInlineTooltipsForSignalImpactAndTrendCells(t *testing.T)
 	rendered := RenderTable([]FailurePatternRow{
 		{
 			Environment:        "dev",
+			FailedAt:           "provision",
 			FailurePattern:     "deadline exceeded in provisioning step",
 			FailurePatternID:   "cluster-1",
 			Occurrences:        1,

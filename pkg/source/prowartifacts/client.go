@@ -30,6 +30,7 @@ type Failure struct {
 
 type Client interface {
 	ListFailures(ctx context.Context, environment string, runURL string) ([]Failure, error)
+	ListOperatorFallbackFailures(ctx context.Context, environment string, runURL string) ([]Failure, error)
 }
 
 type ClientOptions struct {

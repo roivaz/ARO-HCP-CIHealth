@@ -286,6 +286,7 @@ func TestDayRunHistoryPRHTMLShowsNewPatternIcon(t *testing.T) {
 		},
 		FailureRows: []readmodelrunlog.JobHistoryFailureRow{
 			{
+				Lane: "e2e",
 				SemanticAttachment: readmodelrunlog.JobHistorySemanticAttachment{
 					Status:    "clustered",
 					ClusterID: "fp-1",

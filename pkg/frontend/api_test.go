@@ -626,7 +626,7 @@ func TestHandleAPIRunsDayReturnsJSON(t *testing.T) {
 	if got, want := len(multipleRun.Lanes), 1; got != want {
 		t.Fatalf("unexpected multiple run lane count: got=%d want=%d", got, want)
 	}
-	if got, want := multipleRun.Lanes[0], "unknown"; got != want {
+	if got, want := multipleRun.Lanes[0], "e2e"; got != want {
 		t.Fatalf("unexpected multiple run lane: got=%q want=%q", got, want)
 	}
 	if got, want := unmatchedRun.SemanticRollups.AttachmentSummary, "single_clustered"; got != want {
@@ -756,7 +756,7 @@ func TestHandleRunsPageRendersHTML(t *testing.T) {
 	if strings.Contains(body, "Multiple failures (2)") {
 		t.Fatalf("did not expect the duplicated multiple-failure summary line when category expanders render, got %q", body)
 	}
-	if !strings.Contains(body, "unknown (2)") {
+	if !strings.Contains(body, "e2e (2)") {
 		t.Fatalf("expected per-category expander for the multi-failure run, got %q", body)
 	}
 	if !strings.Contains(body, "Installer failed to reach bootstrap machine") {
@@ -814,8 +814,9 @@ func TestHandleRunsPageFailedAtFilter(t *testing.T) {
 		t.Fatalf("new handler: %v", err)
 	}
 
-	// The fixture failures classify as the "other" source bucket. Filtering by
-	// e2e must drop every run, while filtering by other keeps them.
+	// The installer-failure run classifies as the "other" source bucket, while
+	// the oauth/throttle run classifies as e2e. Filtering by e2e must drop the
+	// other-bucket run, while filtering by other keeps it.
 	e2eReq := httptest.NewRequest(http.MethodGet, "/run-log?date=2026-03-16&env=dev&failed_at=e2e", nil)
 	e2eRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(e2eRecorder, e2eReq)
@@ -1304,7 +1305,7 @@ func jobHistoryAPIRawFailures() []storecontracts.RawFailureRecord {
 			RowID:          "job-history-row-1",
 			RunURL:         "https://prow.example.com/view/job-history-1",
 			TestName:       "should oauth",
-			TestSuite:      "suite-a",
+			TestSuite:      "rp-api-compat-all/parallel",
 			SignatureID:    "sig-oauth",
 			OccurredAt:     "2026-03-16T08:00:00Z",
 			RawText:        "OAuth timeout while waiting for cluster operator",
@@ -1315,7 +1316,7 @@ func jobHistoryAPIRawFailures() []storecontracts.RawFailureRecord {
 			RowID:          "job-history-row-2",
 			RunURL:         "https://prow.example.com/view/job-history-1",
 			TestName:       "should throttle",
-			TestSuite:      "suite-a",
+			TestSuite:      "rp-api-compat-all/parallel",
 			SignatureID:    "sig-throttle",
 			OccurredAt:     "2026-03-16T08:05:00Z",
 			RawText:        "API throttling while reconciling install state",

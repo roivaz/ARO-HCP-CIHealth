@@ -53,6 +53,12 @@ func FilterableSources() []string {
 // keyed off the originating artifact path instead.
 const alertJUnitArtifactSuffix = "junit_alerts.xml"
 
+// operatorJUnitArtifactSuffix identifies the ci-operator step-graph junit used
+// as a fallback failure source. Its synthesized rows carry the step ref as the
+// test name and cannot be classified by the suite/name rules, so they are lane
+// -mapped from the step ref instead.
+const operatorJUnitArtifactSuffix = "junit_operator.xml"
+
 type TestFilter struct {
 	TestSuite     string
 	TestNameRegex string
@@ -150,16 +156,28 @@ func FiltersForEnvironment(environment string) ([]TestFilter, bool) {
 
 // DeriveLane resolves the lane for a failure. Alert failures are identified by
 // their originating JUnit artifact (the alert artifact), since their test
-// suite/name cannot be distinguished from the e2e suite. All other failures fall
+// suite/name cannot be distinguished from the e2e suite. Operator step-graph
+// fallback failures are lane-mapped from their step ref. All other failures fall
 // back to the suite/name classification rules.
 func DeriveLane(environment string, artifactPath string, testSuite string, testName string) Lane {
 	if isAlertArtifactPath(artifactPath) {
 		return LaneAlert
 	}
+	if isOperatorArtifactPath(artifactPath) {
+		return operatorStepLane(testName)
+	}
 	return ClassifyLane(environment, testSuite, testName)
 }
 
 func isAlertArtifactPath(artifactPath string) bool {
+	return hasArtifactSuffix(artifactPath, alertJUnitArtifactSuffix)
+}
+
+func isOperatorArtifactPath(artifactPath string) bool {
+	return hasArtifactSuffix(artifactPath, operatorJUnitArtifactSuffix)
+}
+
+func hasArtifactSuffix(artifactPath string, suffix string) bool {
 	trimmed := strings.ToLower(strings.TrimSpace(artifactPath))
 	if trimmed == "" {
 		return false
@@ -167,7 +185,25 @@ func isAlertArtifactPath(artifactPath string) bool {
 	if idx := strings.IndexAny(trimmed, "?#"); idx >= 0 {
 		trimmed = trimmed[:idx]
 	}
-	return trimmed == alertJUnitArtifactSuffix || strings.HasSuffix(trimmed, "/"+alertJUnitArtifactSuffix)
+	return trimmed == suffix || strings.HasSuffix(trimmed, "/"+suffix)
+}
+
+// operatorStepLane maps an operator fallback step ref to a lane. Steps whose
+// failure maps to an existing single-source lane are classified accordingly;
+// every other strict step (build/merge/source/cleanup) is left unknown and
+// collapses into the "other" bucket.
+func operatorStepLane(stepRef string) Lane {
+	ref := strings.ToLower(strings.TrimSpace(stepRef))
+	switch {
+	case strings.Contains(ref, "provision-environment"):
+		return LaneProvision
+	case strings.Contains(ref, "test-local"), strings.Contains(ref, "test-persistent"):
+		return LaneE2E
+	case strings.Contains(ref, "gather-observability"):
+		return LaneAlert
+	default:
+		return LaneUnknown
+	}
 }
 
 func ClassifyLane(environment string, testSuite string, testName string) Lane {

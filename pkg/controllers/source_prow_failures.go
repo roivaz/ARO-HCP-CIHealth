@@ -249,6 +249,19 @@ func (c *sourceProwFailuresController) processKey(ctx context.Context, key strin
 
 	records := buildArtifactFailureRecords(environment, runURL, failures)
 	if len(records) == 0 {
+		// No higher-precedence per-step junit produced a failure for this failed
+		// run. Fall back to the ci-operator step graph, which captures strict
+		// step/build failures that never emitted their own junit.
+		operatorFailures, err := c.prowClient.ListOperatorFallbackFailures(listCtx, environment, runURL)
+		if err != nil {
+			return fmt.Errorf("list operator fallback failures for run %q after %s: %w", runURL, time.Since(start).Round(time.Millisecond), err)
+		}
+		records = buildArtifactFailureRecords(environment, runURL, operatorFailures)
+		if len(records) > 0 {
+			c.logger.V(1).Info("Using ci-operator step-graph fallback failures for run.", "key", key, "rows", len(records))
+		}
+	}
+	if len(records) == 0 {
 		shouldWriteMarker, err := shouldWriteMissingArtifactMarker(ctx, c.store, c.artifactRetryWindow, environment, runURL, time.Now().UTC())
 		if err != nil {
 			return fmt.Errorf("resolve missing-artifact retry state for key %q: %w", key, err)

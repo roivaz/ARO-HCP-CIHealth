@@ -8,6 +8,7 @@ import (
 	"unicode"
 
 	"github.com/roivaz/ARO-HCP-CIHealth/pkg/failurepatterns"
+	sourcelanes "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/lanes"
 )
 
 func OrderedUniqueReferences(rows []RunReference) []RunReference {
@@ -250,7 +251,26 @@ const (
 	CategoryFlake         FailureCategory = "flake"
 	CategoryNoise         FailureCategory = "noise"
 	CategoryIndeterminate FailureCategory = "indeterminate"
+	// CategoryNotApplicable marks failure patterns for which no signal is
+	// computed. The flake/regression/indeterminate signal heuristics are tuned
+	// for provision and e2e failures only; every other source (alerts, build,
+	// merge, and other) is left unclassified.
+	CategoryNotApplicable FailureCategory = "not-applicable"
 )
+
+// SignalApplicableLane reports whether the flake/regression/indeterminate/new
+// signal heuristics should be computed for a failure with the given lane. The
+// heuristics are tuned for provision and e2e failures only; every other source
+// (alerts, build, merge, and other) is left unclassified. This is the single
+// source of truth shared by the failure-patterns and run-log surfaces.
+func SignalApplicableLane(lane string) bool {
+	switch sourcelanes.BucketSource(lane) {
+	case string(sourcelanes.LaneProvision), string(sourcelanes.LaneE2E):
+		return true
+	default:
+		return false
+	}
+}
 
 func CategoryRank(c FailureCategory) int {
 	switch c {
@@ -262,6 +282,8 @@ func CategoryRank(c FailureCategory) int {
 		return 2
 	case CategoryIndeterminate:
 		return 3
+	case CategoryNotApplicable:
+		return 5
 	default:
 		return 4
 	}
@@ -277,6 +299,8 @@ func CategoryLabel(c FailureCategory) string {
 		return "Noise"
 	case CategoryIndeterminate:
 		return "Indeterminate"
+	case CategoryNotApplicable:
+		return "—"
 	default:
 		return string(c)
 	}
@@ -292,12 +316,18 @@ func CategoryClass(c FailureCategory) string {
 		return "category-noise"
 	case CategoryIndeterminate:
 		return "category-indeterminate"
+	case CategoryNotApplicable:
+		return "category-none"
 	default:
 		return "category-indeterminate"
 	}
 }
 
 func ClassifyFailurePattern(row FailurePatternRow) (FailureCategory, []string) {
+	if !SignalApplicableLane(row.FailedAt) {
+		return CategoryNotApplicable, nil
+	}
+
 	badPRScore, badPRReasons := BadPRScoreAndReasons(row)
 	if badPRScore > 0 && row.PriorWeeksPresent == 0 {
 		return CategoryRegression, badPRReasons

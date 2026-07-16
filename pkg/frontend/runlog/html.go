@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	readmodelmodel "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/model"
 	readmodelrunlog "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/readmodel/runlog"
 	frontui "github.com/roivaz/ARO-HCP-CIHealth/pkg/frontend/ui"
 	sourceoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/options"
@@ -463,7 +464,14 @@ func runLogDayBestRegression(row readmodelrunlog.JobHistoryRunRow) (bool, []stri
 
 func runLogDayHasNewPattern(row readmodelrunlog.JobHistoryRunRow) bool {
 	for _, f := range row.FailureRows {
-		if strings.TrimSpace(f.SemanticAttachment.Status) == "clustered" && f.PriorWeeksPresent == 0 {
+		if strings.TrimSpace(f.SemanticAttachment.Status) != "clustered" {
+			continue
+		}
+		// The new-pattern signal is tuned for provision and e2e failures only.
+		if !readmodelmodel.SignalApplicableLane(f.Lane) {
+			continue
+		}
+		if f.PriorWeeksPresent == 0 {
 			return true
 		}
 	}

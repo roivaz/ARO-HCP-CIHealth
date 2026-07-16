@@ -633,6 +633,11 @@ func jobHistoryWeeklyBadPR(failures []JobHistoryFailureRow) (int, []string) {
 		if strings.TrimSpace(row.SemanticAttachment.Status) != "clustered" {
 			continue
 		}
+		// The regression signal is tuned for provision and e2e failures only;
+		// alerts, build/merge and other sources never contribute a signal.
+		if !readmodelmodel.SignalApplicableLane(row.Lane) {
+			continue
+		}
 		key := strings.TrimSpace(row.SemanticAttachment.ClusterID)
 		if key == "" {
 			key = strings.TrimSpace(row.SignatureID)

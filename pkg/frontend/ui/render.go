@@ -54,6 +54,7 @@ const (
 	CategoryFlake         = readmodelmodel.CategoryFlake
 	CategoryNoise         = readmodelmodel.CategoryNoise
 	CategoryIndeterminate = readmodelmodel.CategoryIndeterminate
+	CategoryNotApplicable = readmodelmodel.CategoryNotApplicable
 )
 
 func ClassifyFailurePattern(row FailurePatternRow) (FailureCategory, []string) {
@@ -340,6 +341,7 @@ func StylesCSS() string {
 		"    .category-flake { color: #92400e; }",
 		"    .category-noise { color: #6b7280; }",
 		"    .category-indeterminate { color: #374151; }",
+		"    .category-none { color: #9ca3af; }",
 		"    .signal-icon { display: inline-flex; align-items: center; justify-content: center; margin-right: 4px; font-weight: 700; }",
 		"    .signal-regression { color: #dc2626; }",
 		"    .signal-flake { color: #b45309; }",
@@ -1729,6 +1731,9 @@ func signalIconTooltipHTML(className string, glyph string, tooltip string) strin
 }
 
 func signalIconsPlainHTML(category FailureCategory, priorWeeksPresent int) string {
+	if category == CategoryNotApplicable {
+		return ""
+	}
 	var icons strings.Builder
 	switch category {
 	case CategoryRegression:
@@ -1743,6 +1748,9 @@ func signalIconsPlainHTML(category FailureCategory, priorWeeksPresent int) strin
 }
 
 func categoryTooltipText(category FailureCategory, catLabel string, categoryReasons []string, priorWeeksPresent int) string {
+	if category == CategoryNotApplicable {
+		return "No signal — computed for provision and e2e failures only"
+	}
 	parts := []string{fmt.Sprintf("Signal: %s", strings.TrimSpace(catLabel))}
 	if len(categoryReasons) > 0 {
 		parts = append(parts, strings.Join(categoryReasons, "; "))

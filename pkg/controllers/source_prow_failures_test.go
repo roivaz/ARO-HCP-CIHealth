@@ -5,6 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
+
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/source/prowartifacts"
 	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
@@ -70,4 +73,134 @@ func (f *fakeCheckpointStore) UpsertCheckpoints(_ context.Context, rows []contra
 func (f *fakeCheckpointStore) GetCheckpoint(_ context.Context, name string) (contracts.CheckpointRecord, bool, error) {
 	row, found := f.checkpoints[name]
 	return row, found, nil
+}
+
+type fakeFailuresProwClient struct {
+	granular      []prowartifacts.Failure
+	operator      []prowartifacts.Failure
+	listCalls     int
+	operatorCalls int
+}
+
+func (f *fakeFailuresProwClient) ListFailures(_ context.Context, _ string, _ string) ([]prowartifacts.Failure, error) {
+	f.listCalls++
+	return append([]prowartifacts.Failure(nil), f.granular...), nil
+}
+
+func (f *fakeFailuresProwClient) ListOperatorFallbackFailures(_ context.Context, _ string, _ string) ([]prowartifacts.Failure, error) {
+	f.operatorCalls++
+	return append([]prowartifacts.Failure(nil), f.operator...), nil
+}
+
+type capturingFailuresStore struct {
+	*fakeProwRunsStore
+	upserted []contracts.ArtifactFailureRecord
+}
+
+func (s *capturingFailuresStore) UpsertArtifactFailures(_ context.Context, rows []contracts.ArtifactFailureRecord) error {
+	s.upserted = append(s.upserted, rows...)
+	return nil
+}
+
+func newFailuresTestController(t *testing.T, store contracts.Store, client prowartifacts.Client) *sourceProwFailuresController {
+	t.Helper()
+	opts := testSourceOptions(t, []string{"dev"})
+	controller, err := newSourceProwFailuresController(logr.Discard(), Dependencies{
+		Store:  store,
+		Source: opts,
+	}, client)
+	if err != nil {
+		t.Fatalf("newSourceProwFailuresController returned error: %v", err)
+	}
+	// Disable the retry-window so the missing-artifact marker is written
+	// deterministically on the first pass instead of waiting.
+	controller.artifactRetryWindow = 0
+	return controller
+}
+
+func TestProcessKeyPrefersGranularFailuresOverOperatorFallback(t *testing.T) {
+	store := &capturingFailuresStore{fakeProwRunsStore: &fakeProwRunsStore{
+		runs:        map[string]contracts.RunRecord{},
+		checkpoints: map[string]contracts.CheckpointRecord{},
+	}}
+	client := &fakeFailuresProwClient{
+		granular: []prowartifacts.Failure{{
+			ArtifactURL: "https://example.com/run/artifacts/aro-hcp-test-local/junit.xml",
+			TestName:    "some e2e test",
+			TestSuite:   "rp/parallel",
+			FailureText: "boom",
+		}},
+		operator: []prowartifacts.Failure{{
+			ArtifactURL: "https://example.com/run/artifacts/junit_operator.xml",
+			TestName:    "aro-hcp-provision-environment",
+			TestSuite:   "step graph",
+			FailureText: `step "aro-hcp-provision-environment" container failed`,
+		}},
+	}
+
+	controller := newFailuresTestController(t, store, client)
+	if err := controller.processKey(context.Background(), "dev|https://example.com/run"); err != nil {
+		t.Fatalf("processKey returned error: %v", err)
+	}
+	if client.operatorCalls != 0 {
+		t.Fatalf("expected operator fallback not to be called, got %d calls", client.operatorCalls)
+	}
+	if len(store.upserted) != 1 || store.upserted[0].TestName != "some e2e test" {
+		t.Fatalf("expected 1 granular row, got %#v", store.upserted)
+	}
+}
+
+func TestProcessKeyUsesOperatorFallbackWhenNoGranularFailures(t *testing.T) {
+	store := &capturingFailuresStore{fakeProwRunsStore: &fakeProwRunsStore{
+		runs:        map[string]contracts.RunRecord{},
+		checkpoints: map[string]contracts.CheckpointRecord{},
+	}}
+	client := &fakeFailuresProwClient{
+		granular: nil,
+		operator: []prowartifacts.Failure{{
+			ArtifactURL: "https://example.com/run/artifacts/junit_operator.xml",
+			TestName:    "aro-hcp-provision-environment",
+			TestSuite:   "step graph",
+			FailureText: `step "aro-hcp-provision-environment" container failed`,
+		}},
+	}
+
+	controller := newFailuresTestController(t, store, client)
+	if err := controller.processKey(context.Background(), "dev|https://example.com/run"); err != nil {
+		t.Fatalf("processKey returned error: %v", err)
+	}
+	if client.operatorCalls != 1 {
+		t.Fatalf("expected operator fallback to be called once, got %d", client.operatorCalls)
+	}
+	if len(store.upserted) != 1 {
+		t.Fatalf("expected 1 fallback row, got %#v", store.upserted)
+	}
+	if store.upserted[0].TestName != "aro-hcp-provision-environment" {
+		t.Fatalf("expected operator step row, got %#v", store.upserted[0])
+	}
+	if store.upserted[0].TestSuite == artifactMissingMarkerTestSuite {
+		t.Fatalf("expected a real fallback row, got missing-artifact marker")
+	}
+}
+
+func TestProcessKeyWritesMarkerWhenOperatorFallbackAlsoEmpty(t *testing.T) {
+	store := &capturingFailuresStore{fakeProwRunsStore: &fakeProwRunsStore{
+		runs:        map[string]contracts.RunRecord{},
+		checkpoints: map[string]contracts.CheckpointRecord{},
+	}}
+	client := &fakeFailuresProwClient{granular: nil, operator: nil}
+
+	controller := newFailuresTestController(t, store, client)
+	if err := controller.processKey(context.Background(), "dev|https://example.com/run"); err != nil {
+		t.Fatalf("processKey returned error: %v", err)
+	}
+	if client.operatorCalls != 1 {
+		t.Fatalf("expected operator fallback to be attempted once, got %d", client.operatorCalls)
+	}
+	if len(store.upserted) != 1 {
+		t.Fatalf("expected 1 marker row, got %#v", store.upserted)
+	}
+	if store.upserted[0].TestSuite != artifactMissingMarkerTestSuite {
+		t.Fatalf("expected missing-artifact marker, got %#v", store.upserted[0])
+	}
 }

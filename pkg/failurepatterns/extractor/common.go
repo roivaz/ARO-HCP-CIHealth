@@ -15,6 +15,7 @@ var genericCodes = map[string]struct{}{
 	"multipleerrorsoccurred": {},
 	// Codes where the detail message carries meaningful context.
 	"notfound":              {},
+	"resourcenotfound":      {},
 	"invalidrequestcontent": {},
 }
 
@@ -54,5 +55,21 @@ func collapseWS(value string) string {
 
 func isGenericCode(value string) bool {
 	_, ok := genericCodes[strings.ToLower(strings.TrimSpace(value))]
+	return ok
+}
+
+// alwaysDetailedProviders are Azure resource providers for which we always
+// attempt to surface the inner "code"/"message" detail, regardless of
+// whether the outer ERROR CODE happens to be in the genericCodes allowlist.
+// Microsoft.RedHatOpenShift is the RP under test here, so any error code it
+// returns - including ones we haven't seen yet - should come through with
+// full detail rather than requiring a follow-up patch to genericCodes each
+// time a new code surfaces.
+var alwaysDetailedProviders = map[string]struct{}{
+	"microsoft.redhatopenshift": {},
+}
+
+func isAlwaysDetailedProvider(provider string) bool {
+	_, ok := alwaysDetailedProviders[strings.ToLower(strings.TrimSpace(provider))]
 	return ok
 }

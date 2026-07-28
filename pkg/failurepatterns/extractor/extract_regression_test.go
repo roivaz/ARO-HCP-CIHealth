@@ -995,3 +995,347 @@ ERROR CODE: DeploymentFailed
 		t.Fatalf("expected quoted resource-group placeholder, got=%q", gotA)
 	}
 }
+
+func TestExtractEvidenceMergesVaultAlreadyExistsAcrossGeneratedNames(t *testing.T) {
+	t.Parallel()
+
+	rawA := `fail [github.com/Azure/ARO-HCP/test/e2e/nodepool_version_upgrade.go:579]: failed to create cluster customer resources
+Unexpected error:
+    <*fmt.wrapError | 0xc0008a3560>: 
+    failed to create customer-infra: failed waiting for deployment "customer-infra-np-downgrade-xrk9p4-fvbtlh" in resourcegroup="rg-np-downgrade-xrk9p4-7gbnwz" to finish: GET https://management.azure.com/subscriptions/XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX/resourcegroups/rg-np-downgrade-xrk9p4-7gbnwz/providers/Microsoft.Resources/deployments/customer-infra-np-downgrade-xrk9p4-fvbtlh/operationStatuses/08584175744362285058
+    --------------------------------------------------------------------------------
+    RESPONSE 200: 200 OK
+    ERROR CODE: DeploymentFailed
+    --------------------------------------------------------------------------------
+    {
+      "status": "Failed",
+      "error": {
+        "code": "DeploymentFailed",
+        "message": "At least one resource deployment operation failed. Please list deployment operations for details. Please see https://aka.ms/arm-deployment-operations for usage details.",
+        "details": [
+          {
+            "code": "Conflict",
+            "message": "{\r\n  \"error\": {\r\n    \"code\": \"VaultAlreadyExists\",\r\n    \"message\": \"The vault name 'cust-kv-7rz373fqcqw3a' is already in use. Vault names are globally unique so it is possible that the name is already taken.\"\r\n  }\r\n}"
+          }
+        ]
+      }
+    }
+    --------------------------------------------------------------------------------
+    
+    ...
+occurred`
+	rawB := `fail [github.com/Azure/ARO-HCP/test/e2e/control_plane_automated_z_stream_upgrade.go:92]: failed to create customer resources for z-stream cluster "cluster-zstream-4-20-lmtsfr"
+Unexpected error:
+    <*fmt.wrapError | 0xc000d10f60>: 
+    failed to create customer-infra: failed waiting for deployment "customer-infra-cluster-zstream-4-20-lmtsfr-7g6lz7" in resourcegroup="rg-zstream-upgrade-4-20-g9whvx" to finish: GET https://management.azure.com/subscriptions/XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX/resourcegroups/rg-zstream-upgrade-4-20-g9whvx/providers/Microsoft.Resources/deployments/customer-infra-cluster-zstream-4-20-lmtsfr-7g6lz7/operationStatuses/08584175816013259434
+    --------------------------------------------------------------------------------
+    RESPONSE 200: 200 OK
+    ERROR CODE: DeploymentFailed
+    --------------------------------------------------------------------------------
+    {
+      "status": "Failed",
+      "error": {
+        "code": "DeploymentFailed",
+        "message": "At least one resource deployment operation failed. Please list deployment operations for details. Please see https://aka.ms/arm-deployment-operations for usage details.",
+        "details": [
+          {
+            "code": "Conflict",
+            "message": "{\r\n  \"error\": {\r\n    \"code\": \"VaultAlreadyExists\",\r\n    \"message\": \"The vault name 'cust-kv-chfzla5wndhwk' is already in use. Vault names are globally unique so it is possible that the name is already taken.\"\r\n  }\r\n}"
+          }
+        ]
+      }
+    }
+    --------------------------------------------------------------------------------
+    
+    ...
+occurred`
+
+	gotA := extractEvidence(rawA).CanonicalEvidencePhrase
+	gotB := extractEvidence(rawB).CanonicalEvidencePhrase
+
+	if gotA != gotB {
+		t.Fatalf("expected generated vault names to normalize to the same canonical phrase:\n  A=%q\n  B=%q", gotA, gotB)
+	}
+	if !strings.Contains(strings.ToLower(gotA), "'<vault-name>' is already in use") {
+		t.Fatalf("expected vault-name placeholder in canonical phrase, got=%q", gotA)
+	}
+}
+
+func TestExtractEvidenceNormalizesResourceGroupsPathSegmentInResourceID(t *testing.T) {
+	t.Parallel()
+
+	rawA := `fail [github.com/Azure/ARO-HCP/test/e2e/oidc_issuer_workload_identity.go:296]: failed to create federated identity credential for service account system:serviceaccount:e2e-oidc-wi:wi-test-sa
+Unexpected error:
+    <*exported.ResponseError | 0xc002600150>: 
+    PUT https://management.azure.com/subscriptions/XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX/resourceGroups/oidc-wi-2jj8pc/providers/Microsoft.ManagedIdentity/userAssignedIdentities/e2e-oidc-wi-test/federatedIdentityCredentials/e2e-wi-fic
+    --------------------------------------------------------------------------------
+    RESPONSE 404: 404 Not Found
+    ERROR CODE: NotFound
+    --------------------------------------------------------------------------------
+    {
+      "error": {
+        "code": "NotFound",
+        "message": "Resource '/subscriptions/XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX/resourcegroups/oidc-wi-2jj8pc/providers/Microsoft.ManagedIdentity/userAssignedIdentities/e2e-oidc-wi-test' was not found."
+      }
+    }
+    --------------------------------------------------------------------------------
+    
+    ...
+occurred`
+	rawB := `fail [github.com/Azure/ARO-HCP/test/e2e/oidc_issuer_workload_identity.go:296]: failed to create federated identity credential for service account system:serviceaccount:e2e-oidc-wi:wi-test-sa
+Unexpected error:
+    <*exported.ResponseError | 0xc0029906c0>: 
+    PUT https://management.azure.com/subscriptions/XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX/resourceGroups/oidc-wi-67rdmn/providers/Microsoft.ManagedIdentity/userAssignedIdentities/e2e-oidc-wi-test/federatedIdentityCredentials/e2e-wi-fic
+    --------------------------------------------------------------------------------
+    RESPONSE 404: 404 Not Found
+    ERROR CODE: NotFound
+    --------------------------------------------------------------------------------
+    {
+      "error": {
+        "code": "NotFound",
+        "message": "Resource '/subscriptions/XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX/resourcegroups/oidc-wi-67rdmn/providers/Microsoft.ManagedIdentity/userAssignedIdentities/e2e-oidc-wi-test' was not found."
+      }
+    }
+    --------------------------------------------------------------------------------
+    
+    ...
+occurred`
+
+	gotA := extractEvidence(rawA).CanonicalEvidencePhrase
+	gotB := extractEvidence(rawB).CanonicalEvidencePhrase
+
+	if gotA != gotB {
+		t.Fatalf("expected generated resource-group names embedded in a resource ID path to normalize to the same canonical phrase:\n  A=%q\n  B=%q", gotA, gotB)
+	}
+	if !strings.Contains(gotA, "/resourcegroups/<resource-group>/") {
+		t.Fatalf("expected resourcegroups path-segment placeholder, got=%q", gotA)
+	}
+}
+
+func TestExtractEvidenceDistinguishesContextDeadlineFailuresByAssertionHeader(t *testing.T) {
+	t.Parallel()
+
+	rawAdminCred := `fail [github.com/Azure/ARO-HCP/test/e2e/admin_credential_lifecycle.go:191]: failed to poll admin credential 1 to completion
+Unexpected error:
+    <context.deadlineExceededError>: 
+    context deadline exceeded
+occurred`
+	rawFirstCluster := `fail [github.com/Azure/ARO-HCP/test/e2e/clusters_sharing_resgroup.go:131]: failed to wait for first cluster "basic-hcp-cluster" to complete creation (timeout '20.000000' minutes)
+Unexpected error:
+    <context.deadlineExceededError>: 
+    context deadline exceeded
+occurred`
+	rawSecondCluster := `fail [github.com/Azure/ARO-HCP/test/e2e/clusters_sharing_resgroup.go:138]: failed to wait for second cluster "basic-hcp-cluster2" to complete creation (timeout '20.000000' minutes)
+Unexpected error:
+    <context.deadlineExceededError>: 
+    context deadline exceeded
+occurred`
+
+	gotAdminCred := extractEvidence(rawAdminCred).CanonicalEvidencePhrase
+	gotFirstCluster := extractEvidence(rawFirstCluster).CanonicalEvidencePhrase
+	gotSecondCluster := extractEvidence(rawSecondCluster).CanonicalEvidencePhrase
+
+	if gotAdminCred == gotFirstCluster || gotAdminCred == gotSecondCluster || gotFirstCluster == gotSecondCluster {
+		t.Fatalf("expected distinct assertion failures to stay distinct instead of collapsing into the generic wrapper:\n  adminCred=%q\n  firstCluster=%q\n  secondCluster=%q", gotAdminCred, gotFirstCluster, gotSecondCluster)
+	}
+	for _, got := range []string{gotAdminCred, gotFirstCluster, gotSecondCluster} {
+		if strings.EqualFold(strings.TrimSpace(got), "context deadline exceeded") {
+			t.Fatalf("expected canonical phrase to be more specific than the generic context-deadline wrapper, got=%q", got)
+		}
+	}
+	if !strings.Contains(strings.ToLower(gotAdminCred), "failed to poll admin credential") {
+		t.Fatalf("expected admin-credential detail in canonical phrase, got=%q", gotAdminCred)
+	}
+	if !strings.Contains(strings.ToLower(gotFirstCluster), "first cluster") {
+		t.Fatalf("expected first-cluster detail in canonical phrase, got=%q", gotFirstCluster)
+	}
+	if !strings.Contains(strings.ToLower(gotSecondCluster), "second cluster") {
+		t.Fatalf("expected second-cluster detail in canonical phrase, got=%q", gotSecondCluster)
+	}
+}
+
+func TestExtractEvidenceNormalizesOnClusterPhrase(t *testing.T) {
+	t.Parallel()
+
+	rawA := `fail [ ]: expected exactly one external auth <external-auth> on cluster ea-listcf4xll`
+	rawB := `fail [ ]: expected exactly one external auth <external-auth> on cluster ea-listz4ptjc`
+
+	gotA := extractEvidence(rawA).CanonicalEvidencePhrase
+	gotB := extractEvidence(rawB).CanonicalEvidencePhrase
+
+	if gotA != gotB {
+		t.Fatalf("expected generated cluster-name suffixes after 'on cluster' to normalize to the same canonical phrase:\n  A=%q\n  B=%q", gotA, gotB)
+	}
+	if !strings.Contains(gotA, "on cluster <cluster>") {
+		t.Fatalf("expected 'on cluster' placeholder, got=%q", gotA)
+	}
+}
+
+func TestExtractEvidenceMergesStepErrorProgressPollingVariants(t *testing.T) {
+	t.Parallel()
+
+	rawA := `time=2026-07-27T12:24:07.823Z level=INFO msg="Running step." serviceGroup=Microsoft.Azure.ARO.HCP.Management.Infra resourceGroup=management step=swift-vnet stamp=1 description="Step swift-vnet\n  Kind: Shell\n  Command: ./swift-vnet.sh\n"
+time=2026-07-27T12:33:11.965Z level=ERROR msg="Step errored." serviceGroup=Microsoft.Azure.ARO.HCP.Management.Infra resourceGroup=management step=swift-vnet stamp=1 err="stamp 1: error running Shell Step, failed to execute shell command: Launching container group swift-vnet-aks-net as globalMSI...\nWaiting for swift-vnet-aks-net to finish (state: pending, elapsed 2s)...\nWaiting for swift-vnet-aks-net to finish (state: Running, elapsed 240s)...\n=== swift-vnet-aks-net logs ===\n[swift-vnet] dns readiness (login.microsoftonline.com): attempt 1 failed (elapsed 5s/480s; likely container DNS cold-start or RBAC propagation); retrying in 5s...\n[swift-vnet] dns readiness (login.microsoftonline.com): attempt 48 failed (elapsed 477s/480s; likely container DNS cold-start or RBAC propagation); retrying in 5s...\n[swift-vnet] dns readiness (login.microsoftonline.com): giving up after 49 attempt(s) / 487s (limit 480s)\n\nCleaning up swift-vnet-aks-net...\n✗ swift-vnet-aks-net exited with code 1\n exit status 1"`
+	rawB := `time=2026-07-21T21:47:26.084Z level=INFO msg="Running step." serviceGroup=Microsoft.Azure.ARO.HCP.Management.Infra resourceGroup=management step=swift-vnet stamp=1 description="Step swift-vnet\n  Kind: Shell\n  Command: ./swift-vnet.sh\n"
+time=2026-07-21T21:56:33.375Z level=ERROR msg="Step errored." serviceGroup=Microsoft.Azure.ARO.HCP.Management.Infra resourceGroup=management step=swift-vnet stamp=1 err="stamp 1: error running Shell Step, failed to execute shell command: Launching container group swift-vnet-aks-net as globalMSI...\nWaiting for swift-vnet-aks-net to finish (state: pending, elapsed 1s)...\nWaiting for swift-vnet-aks-net to finish (state: Running, elapsed 190s)...\n=== swift-vnet-aks-net logs ===\n[swift-vnet] dns readiness (login.microsoftonline.com): attempt 1 failed (elapsed 5s/480s; likely container DNS cold-start or RBAC propagation); retrying in 5s...\n[swift-vnet] dns readiness (login.microsoftonline.com): attempt 46 failed (elapsed 457s/480s; likely container DNS cold-start or RBAC propagation); retrying in 5s...\n[swift-vnet] dns readiness (login.microsoftonline.com): giving up after 47 attempt(s) / 465s (limit 480s)\n\nCleaning up swift-vnet-aks-net...\n✗ swift-vnet-aks-net exited with code 1\n exit status 1"`
+
+	gotA := extractEvidence(rawA).CanonicalEvidencePhrase
+	gotB := extractEvidence(rawB).CanonicalEvidencePhrase
+
+	if gotA != gotB {
+		t.Fatalf("expected identical DNS-readiness retry-loop failures to normalize to the same canonical phrase despite differing elapsed-time/attempt counters:\n  A=%q\n  B=%q", gotA, gotB)
+	}
+	lowered := strings.ToLower(gotA)
+	if strings.Contains(lowered, "elapsed") || strings.Contains(lowered, "pending") {
+		t.Fatalf("expected repetitive progress-polling detail to be excluded from canonical phrase, got=%q", gotA)
+	}
+	if !strings.Contains(lowered, "giving up after") {
+		t.Fatalf("expected canonical phrase to use the terminal giving-up summary, got=%q", gotA)
+	}
+}
+
+func TestExtractEvidenceSurfacesClusterServiceNoMessagePlaceholder(t *testing.T) {
+	t.Parallel()
+
+	// ClusterService returns this exact JSON error body when it fails but
+	// provides no further detail. Go's default json.Marshal HTML-escapes
+	// '<'/'>' as \u003c/\u003e, so real payloads carry that literal escaping.
+	rawSingleLeaf := `fail [github.com/Azure/ARO-HCP/test/e2e/nodepool_autoscaling.go:101]: failed to create HCP cluster np-autoscale-cluster
+Unexpected error:
+    <*fmt.wrapError | 0xc0015ba420>: 
+    failed to create HCP cluster np-autoscale-cluster: failed waiting for cluster="np-autoscale-cluster" in resourcegroup="np-autoscaling-zkzp62mtgcxk" to finish creating: GET https://rp.example.hcpsvc.osadev.cloud/subscriptions/XXXX/providers/Microsoft.RedHatOpenShift/locations/westus3/hcpOperationStatuses/32fedae4-2ad1-481c-9c94-83f625471ccf
+    --------------------------------------------------------------------------------
+    RESPONSE 200: 200 OK
+    ERROR CODE: InternalServerError
+    --------------------------------------------------------------------------------
+    {
+      "id": "/subscriptions/XXXX/providers/Microsoft.RedHatOpenShift/locations/westus3/hcpOperationStatuses/32fedae4-2ad1-481c-9c94-83f625471ccf",
+      "name": "32fedae4-2ad1-481c-9c94-83f625471ccf",
+      "status": "Failed",
+      "error": {
+        "code": "InternalServerError",
+        "message": "[clusterServiceClusterStatus] \u003cno_message\u003e"
+      }
+    }
+    --------------------------------------------------------------------------------
+occurred`
+
+	got := extractEvidence(rawSingleLeaf).CanonicalEvidencePhrase
+	loweredGot := strings.ToLower(got)
+
+	if strings.Contains(loweredGot, `\u003c`) {
+		t.Fatalf("expected \\u003c/\\u003e HTML-escapes to be decoded to real angle brackets, got=%q", got)
+	}
+	if !strings.Contains(loweredGot, "<no_message>") {
+		t.Fatalf("expected ClusterService's <no_message> placeholder to be surfaced in the canonical phrase (so it's evident the upstream service, not extraction, lacks detail), got=%q", got)
+	}
+	if !strings.Contains(loweredGot, "clusterserviceclusterstatus") {
+		t.Fatalf("expected the leaf tag preceding <no_message> to be preserved, got=%q", got)
+	}
+}
+
+func TestExtractEvidenceKeepsFullMessageWithEmbeddedEscapedQuote(t *testing.T) {
+	t.Parallel()
+
+	// Real RP response: the message legitimately contains an escaped quoted
+	// substring. decodeEscapedErrorPayload's blanket \" -> " unescape (needed
+	// to unwrap nested-JSON-in-string cases like VaultAlreadyExists) used to
+	// make extractAzureMessageForCode's `[^"]+` capture stop at the first
+	// unescaped quote, truncating the message down to "Invalid value:" and
+	// silently dropping the actionable detail.
+	raw := `fail [github.com/Azure/ARO-HCP/test/e2e/cluster_fips_mode.go:84]: failed to create HCP cluster "fips-enabled-cluster" with FIPS enabled
+Unexpected error:
+    <*fmt.wrapError | 0xc000ccd860>: 
+    failed starting cluster creation "fips-enabled-cluster" in resourcegroup="fips-enabled-m894z8": PUT https://management.azure.com/subscriptions/XXXX/resourceGroups/fips-enabled-m894z8/providers/Microsoft.RedHatOpenShift/hcpOpenShiftClusters/fips-enabled-cluster
+    --------------------------------------------------------------------------------
+    RESPONSE 400: 400 Bad Request
+    ERROR CODE: InvalidRequestContent
+    --------------------------------------------------------------------------------
+    {
+      "error": {
+        "code": "InvalidRequestContent",
+        "message": "Invalid value: \"aro-hcp.experimental.cluster.max-creation-duration\": unrecognized experimental tag",
+        "target": "tags[aro-hcp.experimental.cluster.max-creation-duration]"
+      }
+    }
+    --------------------------------------------------------------------------------
+occurred`
+
+	got := extractEvidence(raw).CanonicalEvidencePhrase
+	if !strings.Contains(got, "unrecognized experimental tag") {
+		t.Fatalf("expected the full RP detail message (including its embedded escaped quote) to survive extraction instead of being truncated to just \"Invalid value:\", got=%q", got)
+	}
+	if !strings.Contains(got, "detail message") {
+		t.Fatalf("expected a detail message segment in the canonical phrase, got=%q", got)
+	}
+}
+
+func TestExtractEvidenceSurfacesResourceNotFoundDetailMessage(t *testing.T) {
+	t.Parallel()
+
+	// "ResourceNotFound" (the code RP actually returns) was missing from the
+	// generic-code allowlist that gates detail-message extraction, so any
+	// detail (here, the informative "under resource group ''" hint) was
+	// silently dropped in favor of a bare "ERROR CODE: ResourceNotFound".
+	raw := `fail [github.com/Azure/ARO-HCP/test/e2e/external_auth_list_and_verify.go:86]: failed to create HCP cluster for external auth list test
+Unexpected error:
+    <*fmt.wrapError | 0xc000669440>: 
+    failed to create HCP cluster ea-listsjvd5r: failed waiting for cluster="ea-listsjvd5r" in resourcegroup="ea-list-47q6dt" to finish creating: GET https://rp.example.hcpsvc.osadev.cloud/subscriptions/XXXX/providers/Microsoft.RedHatOpenShift/locations/westus3/hcpOperationStatuses/f5e67f73-1a1b-4a43-b367-a1a98b42834d
+    --------------------------------------------------------------------------------
+    RESPONSE 404: 404 Not Found
+    ERROR CODE: ResourceNotFound
+    --------------------------------------------------------------------------------
+    {
+      "error": {
+        "code": "ResourceNotFound",
+        "message": "The resource 'locations/hcpOperationStatuses/f5e67f73-1a1b-4a43-b367-a1a98b42834d' under resource group '' was not found.",
+        "target": "/subscriptions/XXXX/providers/Microsoft.RedHatOpenShift/locations/westus3/hcpOperationStatuses/f5e67f73-1a1b-4a43-b367-a1a98b42834d"
+      }
+    }
+    --------------------------------------------------------------------------------
+occurred`
+
+	got := extractEvidence(raw).CanonicalEvidencePhrase
+	if !strings.Contains(got, "detail message") || !strings.Contains(got, "under resource group") {
+		t.Fatalf("expected ResourceNotFound's detail message to be surfaced instead of dropped, got=%q", got)
+	}
+}
+
+func TestExtractEvidenceAlwaysSurfacesDetailForRedHatOpenShiftProviderUnknownCode(t *testing.T) {
+	t.Parallel()
+
+	// "QuotaExceeded" is deliberately NOT in genericCodes, simulating a
+	// brand-new RP error code we haven't special-cased yet. Because
+	// Microsoft.RedHatOpenShift is the provider under test, its detail
+	// message must always be surfaced so future/unseen failure patterns are
+	// complete without requiring another allowlist patch.
+	raw := `PUT https://management.azure.com/subscriptions/XXXX/providers/Microsoft.RedHatOpenShift/hcpOpenShiftClusters/cluster
+RESPONSE 429: 429 Too Many Requests
+ERROR CODE: QuotaExceeded
+{
+  "error": {
+    "code": "QuotaExceeded",
+    "message": "Subscription quota for standardDSv5Family cores has been exceeded, requested 32, available 8"
+  }
+}`
+	got := extractEvidence(raw).CanonicalEvidencePhrase
+	if !strings.Contains(got, "detail message") || !strings.Contains(got, "quota") {
+		t.Fatalf("expected an unrecognized RedHatOpenShift error code to still surface its detail message, got=%q", got)
+	}
+
+	// The same unrecognized code for an unrelated provider must keep the
+	// existing conservative (no-detail) behavior.
+	rawOtherProvider := `PUT https://management.azure.com/subscriptions/XXXX/providers/Microsoft.Storage/storageAccounts/foo
+RESPONSE 429: 429 Too Many Requests
+ERROR CODE: QuotaExceeded
+{
+  "error": {
+    "code": "QuotaExceeded",
+    "message": "Subscription quota for storage accounts has been exceeded"
+  }
+}`
+	gotOtherProvider := extractEvidence(rawOtherProvider).CanonicalEvidencePhrase
+	if strings.Contains(gotOtherProvider, "detail message") {
+		t.Fatalf("expected non-RedHatOpenShift providers to keep the existing allowlist-gated behavior, got=%q", gotOtherProvider)
+	}
+}

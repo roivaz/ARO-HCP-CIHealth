@@ -7,15 +7,24 @@ import (
 )
 
 var (
-	reProviderPath                = regexp.MustCompile(`/providers/(Microsoft\.[A-Za-z]+(?:\.[A-Za-z]+)?)/`)
-	reProviderText                = regexp.MustCompile(`(Microsoft\.[A-Za-z]+(?:\.[A-Za-z]+)?)`)
-	reCleanFmtWrap                = regexp.MustCompile(`<\*[^>]+\|\s*0x[0-9a-fA-F]+>\s*:?`)
-	reCleanHexAddress             = regexp.MustCompile(`\b0x[0-9a-fA-F]+\b`)
-	reCleanGoFileLine             = regexp.MustCompile(`\b\w[\w./-]*\.go:\d+\b`)
-	reCleanUnexpectedPrefix       = regexp.MustCompile(`(?i)^\s*unexpected error:\s*`)
-	reCleanWrapperPrefix          = regexp.MustCompile(`(?i)^\s*(msg:|err:|caused by:)\s*`)
-	reCleanURL                    = regexp.MustCompile(`https?://\S+`)
-	reCleanSubscription           = regexp.MustCompile(`/subscriptions/[0-9a-fA-F-]+`)
+	reProviderPath          = regexp.MustCompile(`/providers/(Microsoft\.[A-Za-z]+(?:\.[A-Za-z]+)?)/`)
+	reProviderText          = regexp.MustCompile(`(Microsoft\.[A-Za-z]+(?:\.[A-Za-z]+)?)`)
+	reCleanFmtWrap          = regexp.MustCompile(`<\*[^>]+\|\s*0x[0-9a-fA-F]+>\s*:?`)
+	reCleanHexAddress       = regexp.MustCompile(`\b0x[0-9a-fA-F]+\b`)
+	reCleanGoFileLine       = regexp.MustCompile(`\b\w[\w./-]*\.go:\d+\b`)
+	reCleanUnexpectedPrefix = regexp.MustCompile(`(?i)^\s*unexpected error:\s*`)
+	reCleanWrapperPrefix    = regexp.MustCompile(`(?i)^\s*(msg:|err:|caused by:)\s*`)
+	reCleanURL              = regexp.MustCompile(`https?://\S+`)
+	reCleanSubscription     = regexp.MustCompile(`/subscriptions/[0-9a-fA-F-]+`)
+	// Azure resource-ID path segment, e.g. .../resourcegroups/oidc-wi-2jj8pc/...
+	// The generated resource-group name is instance-specific; normalize so the
+	// same class of error merges across runs.
+	reCleanResourceGroupsPathSegment = regexp.MustCompile(`(?i)/resourcegroups/[a-z0-9-]+/`)
+	// "The vault name '<name>' is already in use." — the Key Vault name embeds a
+	// random suffix (and may contain hyphens), so it will not match the generic
+	// 20+ char alnum opaque-ID regex below. Normalize explicitly so repeated
+	// vault-name-collision failures merge into a single pattern.
+	reCleanVaultNameAlreadyInUse  = regexp.MustCompile(`(?i)the vault name '[^']+' is already in use\.?`)
 	reCleanUUID                   = regexp.MustCompile(`\b[0-9a-fA-F]{8}-[0-9a-fA-F-]{27,}\b`)
 	reCleanHexLong                = regexp.MustCompile(`\b[0-9a-fA-F]{32,}\b`)
 	reCleanLookupHostOnServer     = regexp.MustCompile(`(?i)\blookup\s+[a-z0-9.-]+\s+on\s+\d{1,3}(?:\.\d{1,3}){3}:\d+\b`)
@@ -27,6 +36,7 @@ var (
 	reCleanClusterCreationQuoted  = regexp.MustCompile(`(?i)\bcluster creation ["'][^"']+["']`)
 	reCleanForClusterPhrase       = regexp.MustCompile(`(?i)\bfor cluster [a-z0-9-]+\b`)
 	reCleanInClusterPhrase        = regexp.MustCompile(`(?i)\bin cluster [a-z0-9-]+\b`)
+	reCleanOnClusterPhrase        = regexp.MustCompile(`(?i)\bon cluster [a-z0-9-]+\b`)
 	reCleanHCPClusterPhrase       = regexp.MustCompile(`(?i)\bhcp cluster [a-z0-9-]+\b`)
 	reCleanExternalAuthQuoted     = regexp.MustCompile(`(?i)external auth "[^"]+"`)
 	reCleanExternalAuthBare       = regexp.MustCompile(`(?i)\bexternal auth [a-z0-9-]+\b`)
@@ -46,6 +56,23 @@ var (
 	reRouteHostNeverFound         = regexp.MustCompile(`(?i)route host was never found:[^\n]+`)
 	reClusterOperatorsUnavailable = regexp.MustCompile(`(?i)cluster operators not available:[^\n]+`)
 	reRateLimiterDeadline         = regexp.MustCompile(`(?i)client rate limiter wait returned an error: context deadline exceeded`)
+	// Ginkgo assertion header, e.g. `fail [file.go:191]: failed to poll admin
+	// credential 1 to completion`. Normally excluded as wrapper noise, but used
+	// as a last-resort fallback so a generic "context deadline exceeded" block
+	// doesn't discard the only test-specific detail available (the message
+	// following the file:line marker).
+	reFailAssertionHeader = regexp.MustCompile(`(?i)^fail \[[^\]]*\]:\s*(.+)$`)
+	// Step-progress polling noise: repeated "Waiting for X to finish (state:
+	// Y, elapsed Ns)..." lines and DNS/service-readiness retry-loop attempt
+	// lines. Both vary only by an elapsed-seconds/attempt counter and carry no
+	// distinguishing failure signal, so they must never be picked as the
+	// canonical evidence phrase.
+	reWaitingToFinishProgressLine = regexp.MustCompile(`(?i)^waiting for [^)]+\(state:\s*[^,]+,\s*elapsed \d+s\)\.\.\.$`)
+	reRetryAttemptProgressLine    = regexp.MustCompile(`(?i)\battempt \d+ failed \(elapsed \d+s/\d+s;[^)]*\);\s*retrying in \d+s\.\.\.$`)
+	// Terminal "giving up after N attempt(s) / Xs (limit Ys)" summary line
+	// that follows a retry loop; used as a last-resort stable canonical when
+	// no other distinguishing error line is found.
+	reGivingUpAfterAttempts       = regexp.MustCompile(`(?i)giving up after \d+ attempt\(s\) / \d+s \(limit \d+s\)`)
 	reUnexpectedOnly              = regexp.MustCompile(`(?i)unexpected error:?`)
 	reFailurePatternPlaceholder   = regexp.MustCompile(`<uuid>|<hex>|<url>`)
 	reDeserializationLiteral      = regexp.MustCompile(`(?i)Deserializa(?:ti|i)on Error:[^\n]+`)
@@ -325,7 +352,7 @@ func ExtractWithOptions(text string, opts ExtractOptions) FailurePattern {
 	}
 	canonical := normalizeExtractedCanonical(cleanCanonical(picked))
 
-	if code != "" && isGenericCode(code) {
+	if code != "" && (isGenericCode(code) || isAlwaysDetailedProvider(provider)) {
 		leafCode, leafMessage = extractLeafAzureDetail(raw, code)
 		parts := []string{"ERROR CODE: " + code}
 		if leafCode != "" {
@@ -378,7 +405,7 @@ func ExtractWithOptions(text string, opts ExtractOptions) FailurePattern {
 		}
 	}
 
-	if code != "" && !isGenericCode(code) && provider != "" &&
+	if code != "" && !isGenericCode(code) && !isAlwaysDetailedProvider(provider) && provider != "" &&
 		strings.HasPrefix(strings.ToLower(canonical), "error code:") &&
 		!strings.Contains(strings.ToLower(canonical), "; provider ") {
 		canonical += "; provider " + provider
@@ -456,6 +483,8 @@ func cleanCanonical(value string) string {
 	text = reCleanWrapperPrefix.ReplaceAllString(text, "")
 	text = reCleanURL.ReplaceAllString(text, "<url>")
 	text = reCleanSubscription.ReplaceAllString(text, "/subscriptions/<subscription>")
+	text = reCleanResourceGroupsPathSegment.ReplaceAllString(text, "/resourcegroups/<resource-group>/")
+	text = reCleanVaultNameAlreadyInUse.ReplaceAllString(text, "the vault name '<vault-name>' is already in use.")
 	text = reCleanUUID.ReplaceAllString(text, "<uuid>")
 	text = reCleanHexLong.ReplaceAllString(text, "<hex>")
 	text = reCleanLookupHostOnServer.ReplaceAllString(text, "lookup <host> on <dns-server>")
@@ -467,6 +496,7 @@ func cleanCanonical(value string) string {
 	text = reCleanClusterCreationQuoted.ReplaceAllString(text, `cluster creation "<cluster>"`)
 	text = reCleanForClusterPhrase.ReplaceAllString(text, "for cluster <cluster>")
 	text = reCleanInClusterPhrase.ReplaceAllString(text, "in cluster <cluster>")
+	text = reCleanOnClusterPhrase.ReplaceAllString(text, "on cluster <cluster>")
 	text = reCleanHCPClusterPhrase.ReplaceAllString(text, "HCP cluster <cluster>")
 	text = reCleanExternalAuthQuoted.ReplaceAllString(text, `external auth "<external-auth>"`)
 	text = reCleanExternalAuthBare.ReplaceAllString(text, "external auth <external-auth>")
@@ -879,7 +909,7 @@ func extractLogfmtStepError(raw string) string {
 		if value == "" {
 			return ""
 		}
-		if refined := bestInnerStepErrorLine(value); refined != "" {
+		if refined := bestInnerStepErrorLine(unescapeLogfmtNewlines(value)); refined != "" {
 			return refined
 		}
 		return value
@@ -893,7 +923,7 @@ func extractLogfmtStepError(raw string) string {
 	if value == "" {
 		return ""
 	}
-	if refined := bestInnerStepErrorLine(value); refined != "" {
+	if refined := bestInnerStepErrorLine(unescapeLogfmtNewlines(value)); refined != "" {
 		return refined
 	}
 	return value
@@ -1067,6 +1097,13 @@ func decodeEscapedErrorPayload(text string) string {
 		out = strings.ReplaceAll(out, `\n`, "\n")
 		out = strings.ReplaceAll(out, `\t`, " ")
 		out = strings.ReplaceAll(out, `\"`, `"`)
+		// Go's json.Marshal HTML-escapes '<', '>' and '&' as \u003c, \u003e
+		// and \u0026 by default; several ClusterService error payloads carry
+		// this literal escaping (e.g. "\u003cno_message\u003e"). Decode it so
+		// downstream detail extraction sees the real placeholder text.
+		out = strings.ReplaceAll(out, `\u003c`, "<")
+		out = strings.ReplaceAll(out, `\u003e`, ">")
+		out = strings.ReplaceAll(out, `\u0026`, "&")
 	}
 	return out
 }
@@ -1093,7 +1130,13 @@ func extractAzureMessageForCode(text string, code string) string {
 	if targetCode == "" {
 		return ""
 	}
-	pattern := `(?is)(?:ERROR CODE:\s*` + regexp.QuoteMeta(targetCode) + `|"code"\s*:\s*"` + regexp.QuoteMeta(targetCode) + `").{0,900}"message"\s*:\s*"([^"]+)"`
+	// The message capture is intentionally lazy and stops only at a quote
+	// immediately followed by a JSON delimiter (,}]). A plain `[^"]+` stops
+	// at the FIRST bare quote, which truncates messages that legitimately
+	// contain an escaped quote (e.g. `Invalid value: \"tag\": unrecognized
+	// experimental tag`) once decodeEscapedErrorPayload has unescaped it to
+	// a literal `"` for nested-JSON-in-string parsing elsewhere.
+	pattern := `(?is)(?:ERROR CODE:\s*` + regexp.QuoteMeta(targetCode) + `|"code"\s*:\s*"` + regexp.QuoteMeta(targetCode) + `").{0,900}"message"\s*:\s*"(.+?)"\s*[,}\]]`
 	reCodeMessage := regexp.MustCompile(pattern)
 	matches := reCodeMessage.FindAllStringSubmatch(text, -1)
 	for i := len(matches) - 1; i >= 0; i-- {
@@ -1152,6 +1195,15 @@ func summarizeAzureDetailMessage(message string) string {
 	}
 	if idx := strings.Index(normalized, ". "); idx > 0 && idx < 220 {
 		normalized = strings.TrimSpace(normalized[:idx+1])
+	}
+
+	// "<no_message>" is ClusterService's own placeholder for "no failure
+	// detail was provided". It's short (often just "[tag] <no_message>"),
+	// but it is meaningful: dropping it here would make it indistinguishable
+	// from an extractor bug that silently ate real detail. Always surface it
+	// so it's evident the upstream service, not this extractor, is at fault.
+	if strings.Contains(strings.ToLower(normalized), "<no_message>") {
+		return truncateCanonical(normalized, 180)
 	}
 
 	if len(strings.Fields(normalized)) < 3 && !strings.EqualFold(strings.TrimSpace(normalized), "Allocation failed.") {
@@ -1335,6 +1387,7 @@ func bestImageMirrorInnerFailure(text string) string {
 func bestInnerStepErrorLine(text string) string {
 	lines := splitNonEmptyLines(text)
 	best := ""
+	givingUp := ""
 	for _, line := range lines {
 		token := collapseWS(line)
 		lowered := strings.ToLower(token)
@@ -1344,15 +1397,62 @@ func bestInnerStepErrorLine(text string) string {
 		if isStructuredStepWrapperPick(token) || isStepSetupNoiseLine(lowered) {
 			continue
 		}
+		// Repetitive progress-polling lines (state-transition waits and
+		// retry-loop attempts) carry no distinguishing signal beyond elapsed
+		// seconds/attempt counts that vary run-to-run; skip them so they
+		// never become the picked canonical text.
+		if isProgressPollingNoiseLine(lowered) {
+			continue
+		}
+		if givingUp == "" {
+			if match := reGivingUpAfterAttempts.FindString(token); match != "" {
+				givingUp = normalizeGivingUpAfterAttempts(token)
+			}
+		}
 		if strings.HasPrefix(lowered, "error:") {
 			best = token
+			continue
+		}
+		// A bare "context deadline exceeded" line carries no distinguishing
+		// detail on its own (see reCleanQuotedOpaqueID / wrapperOnly generic
+		// handling elsewhere); prefer letting a genuinely distinguishing line
+		// (or the unmodified raw value fallback) win instead of collapsing to
+		// this wrapper phrase.
+		if lowered == "context deadline exceeded" {
 			continue
 		}
 		if rePickErrorSignal.MatchString(token) {
 			best = token
 		}
 	}
-	return best
+	if best != "" {
+		return best
+	}
+	return givingUp
+}
+
+// unescapeLogfmtNewlines converts literal "\r\n"/"\n"/"\r" escape sequences
+// (as they appear inside a logfmt/JSON quoted string field) into real newline
+// characters so downstream line-based noise filtering can operate per log
+// line instead of treating the whole multi-line value as one unsplit token.
+func unescapeLogfmtNewlines(value string) string {
+	value = strings.ReplaceAll(value, `\r\n`, "\n")
+	value = strings.ReplaceAll(value, `\n`, "\n")
+	value = strings.ReplaceAll(value, `\r`, "\n")
+	return value
+}
+
+// isProgressPollingNoiseLine matches repetitive step-progress log lines whose
+// only variance is an elapsed-time or attempt counter, e.g.:
+//
+//	Waiting for swift-vnet-aks-net to finish (state: Running, elapsed 180s)...
+//	[swift-vnet] dns readiness (login.microsoftonline.com): attempt 12 failed (elapsed 116s/480s; ...); retrying in 5s...
+func isProgressPollingNoiseLine(lowered string) bool {
+	return reWaitingToFinishProgressLine.MatchString(lowered) || reRetryAttemptProgressLine.MatchString(lowered)
+}
+
+func normalizeGivingUpAfterAttempts(line string) string {
+	return reGivingUpAfterAttempts.ReplaceAllString(line, "giving up after <n> attempt(s) / <duration>s (limit <duration>s)")
 }
 
 func isStructBoundaryLine(line string) bool {
@@ -1491,10 +1591,26 @@ func isLowInformationCanonical(value string) bool {
 func bestContextDeadlineDetail(text string) string {
 	lines := splitNonEmptyLines(text)
 	best := ""
+	assertionFallback := ""
 	for _, line := range lines {
 		token := collapseWS(line)
 		lowered := strings.ToLower(token)
-		if token == "" || isWrapperNoiseLine(token) || isStructFieldNoiseLine(token) || isStatusBannerLine(token) || isAssertionTail(token) {
+		if token == "" {
+			continue
+		}
+		// Ginkgo assertion headers ("fail [file.go:191]: <message>") are
+		// normally treated as wrapper noise, but when the rest of the block is
+		// generic ("Unexpected error:" / type annotation / bare "context
+		// deadline exceeded" / "occurred") this header's message is the only
+		// test-specific detail available. Capture it as a last-resort fallback
+		// so distinct failures (e.g. different assertions that all end in a
+		// deadline error) don't collapse into the same generic canonical text.
+		if assertionFallback == "" {
+			if detail := assertionHeaderDetail(token); detail != "" {
+				assertionFallback = detail
+			}
+		}
+		if isWrapperNoiseLine(token) || isStructFieldNoiseLine(token) || isStatusBannerLine(token) || isAssertionTail(token) {
 			continue
 		}
 		if reRateLimiterDeadline.MatchString(token) {
@@ -1514,7 +1630,27 @@ func bestContextDeadlineDetail(text string) string {
 	if route := reRouteHostNeverFound.FindString(text); route != "" {
 		return route
 	}
+	if assertionFallback != "" {
+		return assertionFallback
+	}
 	return ""
+}
+
+// assertionHeaderDetail extracts the message following a Ginkgo
+// "fail [file.go:line]:" marker, e.g. "failed to wait for first cluster
+// \"basic-hcp-cluster\" to complete creation (timeout '20.000000' minutes)".
+// Returns "" if there is no header, or the message itself is just the
+// generic "context deadline exceeded" phrase.
+func assertionHeaderDetail(line string) string {
+	match := reFailAssertionHeader.FindStringSubmatch(line)
+	if len(match) < 2 {
+		return ""
+	}
+	detail := strings.TrimSpace(match[1])
+	if detail == "" || strings.EqualFold(detail, "context deadline exceeded") {
+		return ""
+	}
+	return detail
 }
 
 func truncateText(value string, max int) string {

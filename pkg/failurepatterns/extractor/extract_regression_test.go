@@ -1,6 +1,7 @@
 package extractor
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -1337,5 +1338,377 @@ ERROR CODE: QuotaExceeded
 	gotOtherProvider := extractEvidence(rawOtherProvider).CanonicalEvidencePhrase
 	if strings.Contains(gotOtherProvider, "detail message") {
 		t.Fatalf("expected non-RedHatOpenShift providers to keep the existing allowlist-gated behavior, got=%q", gotOtherProvider)
+	}
+}
+
+func TestExtractEvidenceSurfacesInvalidTemplateMessage(t *testing.T) {
+	t.Parallel()
+
+	rawA := `PUT https://management.azure.com/subscriptions/XXXX/providers/Microsoft.Resources/deployments/example
+RESPONSE 400: 400 Bad Request
+ERROR CODE: InvalidTemplate
+{
+  "error": {
+    "code": "InvalidTemplate",
+    "message": "Deployment template validation failed: 'The value for the template parameter 'integrationSubnetName' at line '1' and column '2857' is not provided.'"
+  }
+}`
+	rawB := strings.Replace(rawA, "column '2857'", "column '2942'", 1)
+
+	gotA := extractEvidence(rawA).CanonicalEvidencePhrase
+	gotB := extractEvidence(rawB).CanonicalEvidencePhrase
+	if gotA != gotB {
+		t.Fatalf("expected template source positions to normalize identically:\n  A=%q\n  B=%q", gotA, gotB)
+	}
+	if !strings.Contains(gotA, "detail message") || !strings.Contains(gotA, "integrationSubnetName") {
+		t.Fatalf("expected InvalidTemplate detail to be surfaced, got=%q", gotA)
+	}
+}
+
+func TestExtractEvidenceUsesAssertionHeaderWhenExpectedErrorIsNil(t *testing.T) {
+	t.Parallel()
+
+	raw := `fail [github.com/Azure/ARO-HCP/test/e2e/cluster_create_private_ingress.go:176]: private ingress should not be reachable from outside the VNet, but connection succeeded
+Expected an error to have occurred.  Got:
+    <nil>: ...`
+
+	got := extractEvidence(raw).CanonicalEvidencePhrase
+	want := "private ingress should not be reachable from outside the VNet, but connection succeeded"
+	if got != want {
+		t.Fatalf("expected assertion header detail instead of the generic Gomega message, got=%q want=%q", got, want)
+	}
+}
+
+func TestExtractEvidenceMergesOperationTimeoutDurations(t *testing.T) {
+	t.Parallel()
+
+	rawA := `failed waiting for hcpCluster="kms-key-rotate-a" in resourcegroup="rg-a" to finish updating, caused by: timeout '18.000000' minutes exceeded during UpdateHCPCluster20260630 for cluster kms-key-rotate-a in resource group rg-a, error: context deadline exceeded`
+	rawB := `failed waiting for hcpCluster="kms-key-rotate-b" in resourcegroup="rg-b" to finish updating, caused by: timeout '30.000000' minutes exceeded during UpdateHCPCluster20260630 for cluster kms-key-rotate-b in resource group rg-b, error: context deadline exceeded`
+
+	gotA := extractEvidence(rawA).CanonicalEvidencePhrase
+	gotB := extractEvidence(rawB).CanonicalEvidencePhrase
+	want := "UpdateHCPCluster20260630 timed out after <minutes> minutes; context deadline exceeded"
+	if gotA != want || gotB != want {
+		t.Fatalf("expected timeout durations to merge on the operation and terminal cause:\n  A=%q\n  B=%q\nwant=%q", gotA, gotB, want)
+	}
+}
+
+func TestExtractEvidenceKeepsCleanupTimeoutOperation(t *testing.T) {
+	t.Parallel()
+
+	raw := `failed to cleanup resource group: failed deleting hcp clusters in resourcegroup="rg-a", caused by: failed waiting for hcpCluster="cluster-a" in resourcegroup="rg-a" to finish deleting, caused by: timeout '25.000000' minutes exceeded during DeleteHCPCluster for cluster cluster-a in resource group rg-a, error: context deadline exceeded`
+
+	got := extractEvidence(raw).CanonicalEvidencePhrase
+	want := "DeleteHCPCluster timed out after <minutes> minutes; context deadline exceeded"
+	if got != want {
+		t.Fatalf("expected cleanup wrapper truncation to preserve the timed-out operation, got=%q want=%q", got, want)
+	}
+}
+
+func TestExtractEvidenceSurfacesAzureIdentityRootCause(t *testing.T) {
+	t.Parallel()
+
+	raw := `GET https://rp.example/subscriptions/XXXX/providers/Microsoft.RedHatOpenShift/locations/westus3/hcpOperationStatuses/id
+ERROR CODE: InternalServerError
+{
+  "error": {
+    "code": "InternalServerError",
+    "message": "[clusterServiceNodePoolStatus] ClientCertificateCredential authentication failed. \nPOST https://login.microsoftonline.com/tenant/oauth2/v2.0/token\n{\n  \"error\": \"invalid_client\",\n  \"error_description\": \"AADSTS7000213: Invalid certificate chain. Trace ID: volatile Correlation ID: volatile Timestamp: 2026-07-31\"\n}"
+  }
+}`
+
+	got := extractEvidence(raw).CanonicalEvidencePhrase
+	if !strings.Contains(got, "ClientCertificateCredential authentication failed") ||
+		!strings.Contains(got, "AADSTS7000213: Invalid certificate chain.") {
+		t.Fatalf("expected RP certificate-auth canonical to include the stable AADSTS root cause, got=%q", got)
+	}
+	if strings.Contains(got, "Trace ID") || strings.Contains(got, "Timestamp") {
+		t.Fatalf("expected volatile identity diagnostics to be removed, got=%q", got)
+	}
+}
+
+func TestExtractEvidenceMergesWrappedUnknownAuthorityFailures(t *testing.T) {
+	t.Parallel()
+
+	rawA := `VerifySimpleWebApp failed: [strict TLS verification] route was never reachable: Get "https://app-a.example": tls: failed to verify certificate: x509: certificate signed by unknown authority`
+	rawB := `[strict TLS verification] route was never reachable: Get "https://app-b.example": tls: failed to verify certificate: x509: certificate signed by unknown authority`
+
+	gotA := extractEvidence(rawA).CanonicalEvidencePhrase
+	gotB := extractEvidence(rawB).CanonicalEvidencePhrase
+	want := "tls: failed to verify certificate: x509: certificate signed by unknown authority"
+	if gotA != want || gotB != want {
+		t.Fatalf("expected TLS transport wrappers to merge on the certificate failure:\n  A=%q\n  B=%q\nwant=%q", gotA, gotB, want)
+	}
+}
+
+func TestExtractEvidenceUsesAssertionContextForDetailLessAzureError(t *testing.T) {
+	t.Parallel()
+
+	raw := `fail [github.com/Azure/ARO-HCP/test/e2e/admin_api.go:339]: failed to retrieve serial console logs for VM "c9e6l7e5k5c8l7z-worker-vqgww-tm445"
+Unexpected error:
+    expected status 200 OK, got 500: {
+        "error": {
+            "code": "InternalServerError",
+            "message": "Internal server error."
+        }
+    }
+occurred`
+
+	got := extractEvidence(raw).CanonicalEvidencePhrase
+	if !strings.Contains(got, "ERROR CODE: InternalServerError") ||
+		!strings.Contains(got, "context failed to retrieve serial console logs") {
+		t.Fatalf("expected the failing operation to qualify a detail-less Azure error, got=%q", got)
+	}
+	if strings.Contains(got, "c9e6l7e5k5c8l7z-worker-vqgww-tm445") {
+		t.Fatalf("expected the generated VM name to be normalized, got=%q", got)
+	}
+}
+
+func TestExtractEvidenceSummarizesClusterServiceDeletionDetails(t *testing.T) {
+	t.Parallel()
+
+	rawA := `GET https://rp.example/subscriptions/XXXX/providers/Microsoft.RedHatOpenShift/locations/westus3/hcpOperationStatuses/id
+ERROR CODE: InternalServerError
+{
+  "error": {
+    "code": "InternalServerError",
+    "message": "cluster deletion did not complete before the deadline; [clusterServiceDeletion] ClusterService cluster /api/aro_hcp/v1alpha1/clusters/2rvfr07shlm141ejua6jgajchroj0t6r still exists (deletion dispatched at 2026-08-05T06:39:16Z); [clusterServiceStatus] ClusterService state is \"uninstalling\"; [descendantResources] remaining resources: 1 Microsoft.RedHatOpenShift/hcpOpenShiftClusters/nodePools, 1 microsoft.redhatopenshift/hcpopenshiftclusters/nodepools/serviceProviderNodePools, 1 microsoft.redhatopenshift/hcpopenshiftclusters/serviceProviderClusters"
+  }
+}`
+	rawB := strings.ReplaceAll(rawA, "2rvfr07shlm141ejua6jgajchroj0t6r", "2s08kfkgmp6p466kbsrs48lm52bok333")
+	rawB = strings.ReplaceAll(rawB, "2026-08-05T06:39:16Z", "2026-08-05T07:24:38Z")
+
+	gotA := extractEvidence(rawA).CanonicalEvidencePhrase
+	gotB := extractEvidence(rawB).CanonicalEvidencePhrase
+	if gotA != gotB {
+		t.Fatalf("expected cluster IDs and deletion timestamps to merge:\n  A=%q\n  B=%q", gotA, gotB)
+	}
+	for _, unwanted := range []string{"2rvfr07shlm141ejua6jgajchroj0t6r", "2s08kfkgmp6p466kbsrs48lm52bok333", "2026-08-05", "/api/aro_hcp/"} {
+		if strings.Contains(gotA, unwanted) {
+			t.Fatalf("expected transient ClusterService identity to be removed, got=%q", gotA)
+		}
+	}
+	for _, detail := range []string{`state is "uninstalling"`, "nodePools", "serviceProviderNodePools", "serviceProviderClusters"} {
+		if !strings.Contains(gotA, detail) {
+			t.Fatalf("expected complete deletion detail %q, got=%q", detail, gotA)
+		}
+	}
+	if strings.HasSuffix(gotA, "still") {
+		t.Fatalf("expected a complete canonical sentence rather than a mid-clause truncation, got=%q", gotA)
+	}
+}
+
+func TestExtractEvidenceKeepsClusterServiceDeletionVariantsDistinct(t *testing.T) {
+	t.Parallel()
+
+	base := `GET https://rp.example/subscriptions/XXXX/providers/Microsoft.RedHatOpenShift/locations/westus3/hcpOperationStatuses/id
+ERROR CODE: InternalServerError
+{"error":{"code":"InternalServerError","message":"%s"}}`
+	withoutHostedCluster := `cluster deletion did not complete before the deadline; [clusterServiceDeletion] ClusterService cluster /api/aro_hcp/v1alpha1/clusters/2rvfr07shlm141ejua6jgajchroj0t6r still exists (deletion dispatched at 2026-08-05T06:39:16Z); [clusterServiceStatus] ClusterService state is "uninstalling"; [descendantResources] remaining resources: 1 microsoft.redhatopenshift/hcpopenshiftclusters/serviceProviderClusters`
+	withHostedCluster := `cluster deletion did not complete before the deadline; [clusterServiceDeletion] ClusterService cluster /api/aro_hcp/v1alpha1/clusters/2s094mnvr386tf3h8e6ohtguvd9b65to still exists (deletion dispatched at 2026-08-05T07:24:38Z); [clusterServiceStatus] ClusterService state is "uninstalling"; [hostedCluster] HostedCluster still exists; [descendantResources] remaining resources: 1 microsoft.redhatopenshift/hcpopenshiftclusters/serviceProviderClusters`
+
+	gotWithout := extractEvidence(fmt.Sprintf(base, withoutHostedCluster)).CanonicalEvidencePhrase
+	gotWith := extractEvidence(fmt.Sprintf(base, withHostedCluster)).CanonicalEvidencePhrase
+	if gotWithout == gotWith {
+		t.Fatalf("expected hosted-cluster presence to remain a semantic merge boundary, got=%q", gotWith)
+	}
+	if !strings.Contains(gotWith, "[hostedCluster] HostedCluster still exists") {
+		t.Fatalf("expected hosted-cluster detail to be retained, got=%q", gotWith)
+	}
+}
+
+func TestExtractEvidenceNormalizesGeneratedRouteAndNetworkArtifacts(t *testing.T) {
+	t.Parallel()
+
+	rawA := `VerifySimpleWebApp failed: DNS for route host agnhost-e2e-sample-app-bmdd7.apps.aro.cilium-cl.dus8.j7009920.hcp.osadev.cloud did not resolve: DNS for agnhost-e2e-sample-app-bmdd7.apps.aro.cilium-cl.dus8.j7009920.hcp.osadev.cloud did not resolve within 10m0s (last error: lookup agnhost-e2e-sample-app-bmdd7.apps.aro.cilium-cl.dus8.j7009920.hcp.osadev.cloud on 172.30.0.10:53: no such host)`
+	rawB := `VerifySimpleWebApp failed: DNS for route host agnhost-e2e-sample-app-q26kx.apps.aro.cilium-cl.0290.j8953600.hcp.osadev.cloud did not resolve: DNS for agnhost-e2e-sample-app-q26kx.apps.aro.cilium-cl.0290.j8953600.hcp.osadev.cloud did not resolve within 12m0s (last error: lookup agnhost-e2e-sample-app-q26kx.apps.aro.cilium-cl.0290.j8953600.hcp.osadev.cloud on 172.31.0.10:53: no such host)`
+
+	gotA := extractEvidence(rawA).CanonicalEvidencePhrase
+	gotB := extractEvidence(rawB).CanonicalEvidencePhrase
+	if gotA != gotB {
+		t.Fatalf("expected generated route hosts, DNS servers, and durations to merge:\n  A=%q\n  B=%q", gotA, gotB)
+	}
+	for _, artifact := range []string{"bmdd7", "q26kx", "j7009920", "j8953600", "172.30.0.10", "172.31.0.10", "10m0s", "12m0s"} {
+		if strings.Contains(gotA, artifact) {
+			t.Fatalf("expected route/network artifact %q to be normalized, got=%q", artifact, gotA)
+		}
+	}
+}
+
+func TestExtractEvidenceNormalizesKubernetesTestResourceNames(t *testing.T) {
+	t.Parallel()
+
+	rawA := `pods "policy-test-allowed" is forbidden: error looking up service account image-policy-test-bc57p/default: serviceaccount "default" not found`
+	rawB := `pods "policy-test-other" is forbidden: error looking up service account image-policy-test-vghkn/default: serviceaccount "default" not found`
+
+	gotA := extractEvidence(rawA).CanonicalEvidencePhrase
+	gotB := extractEvidence(rawB).CanonicalEvidencePhrase
+	if gotA != gotB {
+		t.Fatalf("expected generated pod and namespace names to merge:\n  A=%q\n  B=%q", gotA, gotB)
+	}
+	if !strings.Contains(gotA, `pod "<pod>"`) || !strings.Contains(gotA, "service account <namespace>/default") {
+		t.Fatalf("expected Kubernetes resource placeholders, got=%q", gotA)
+	}
+}
+
+func TestExtractEvidenceSummarizesBreakglassSessionPath(t *testing.T) {
+	t.Parallel()
+
+	rawA := `failed to get ready session kubeconfig from /admin/v1/hcp/subscriptions/XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX/resourcegroups/admin-api-breakglass-ps66xjjnqrfj/providers/microsoft.redhatopenshift/hcpopenshiftclusters/sre-hcp-cluster/breakglass/breakglass-h7gq5/kubeconfig: timeout waiting for session to become ready (last status: {"HostedControlPlaneAvailable":{"message":"HostedControlPlane exists but is not ready"}})`
+	rawB := strings.ReplaceAll(rawA, "admin-api-breakglass-ps66xjjnqrfj", "admin-api-breakglass-other")
+	rawB = strings.ReplaceAll(rawB, "breakglass-h7gq5", "breakglass-other")
+
+	gotA := extractEvidence(rawA).CanonicalEvidencePhrase
+	gotB := extractEvidence(rawB).CanonicalEvidencePhrase
+	want := "breakglass session kubeconfig not ready: timeout waiting for session to become ready; HostedControlPlane exists but is not ready"
+	if gotA != want || gotB != want {
+		t.Fatalf("expected stable breakglass readiness summary:\n  A=%q\n  B=%q\nwant=%q", gotA, gotB, want)
+	}
+}
+
+func TestExtractEvidenceNormalizesAzureOperationMetadata(t *testing.T) {
+	t.Parallel()
+
+	rawA := `ERROR CODE: DeploymentFailed
+{"error":{"code":"DeploymentFailed","details":[{"code":"OperationNotAllowed","message":"Operation is not allowed because there's an in-progress create node pool operation (operation ID: 81d7fb37-c8d0-453c-9a89-3b0ab2b05ec0) on agent pool userswft1 started on UTC 2026-07-22T15:54:24Z. Please wait for it to finish before starting a new operation."}]}}`
+	rawB := strings.ReplaceAll(rawA, "81d7fb37-c8d0-453c-9a89-3b0ab2b05ec0", "92e8ac48-d9e1-564d-ab90-4c1bc3c16fd1")
+	rawB = strings.ReplaceAll(rawB, "userswft1", "usersabcd")
+	rawB = strings.ReplaceAll(rawB, "2026-07-22T15:54:24Z", "2026-08-05T07:12:01Z")
+
+	gotA := extractEvidence(rawA).CanonicalEvidencePhrase
+	gotB := extractEvidence(rawB).CanonicalEvidencePhrase
+	if gotA != gotB {
+		t.Fatalf("expected operation IDs, agent-pool names, and timestamps to merge:\n  A=%q\n  B=%q", gotA, gotB)
+	}
+	for _, artifact := range []string{"81d7fb37", "92e8ac48", "userswft1", "usersabcd", "2026-"} {
+		if strings.Contains(gotA, artifact) {
+			t.Fatalf("expected operation artifact %q to be normalized, got=%q", artifact, gotA)
+		}
+	}
+}
+
+func TestExtractEvidenceSummarizesDenyAssignmentWithoutResourceIDs(t *testing.T) {
+	t.Parallel()
+
+	raw := `ERROR CODE: InternalServerError
+{"error":{"code":"InternalServerError","details":[{"code":"DenyAssignmentAuthorizationFailed","message":"The client 'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX' with object id '0e96dbb7-17a2-4393-b2d3-d84524e39c32' has permission to perform action 'Microsoft.Compute/virtualMachines/retrieveBootDiagnosticsData/action' on scope '/subscriptions/XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX/resourceGroups/generated/providers/Microsoft.Compute/virtualMachines/generated'; however, the access is denied because of the deny assignment with Id '4e1d5354563b53f0a6639624ce82fcc6'."}]}}`
+
+	got := extractEvidence(raw).CanonicalEvidencePhrase
+	if !strings.Contains(got, `Access denied by deny assignment for action "Microsoft.Compute/virtualMachines/retrieveBootDiagnosticsData/action".`) {
+		t.Fatalf("expected stable deny-assignment summary, got=%q", got)
+	}
+	for _, artifact := range []string{"0e96dbb7", "4e1d5354", "resourceGroups/generated"} {
+		if strings.Contains(got, artifact) {
+			t.Fatalf("expected deny-assignment artifact %q to be removed, got=%q", artifact, got)
+		}
+	}
+}
+
+func TestExtractEvidenceNormalizesHostedClusterComponentLists(t *testing.T) {
+	t.Parallel()
+
+	rawA := `ERROR CODE: InternalServerError
+{"error":{"code":"InternalServerError","message":"[clusterServiceClusterStatus] <no_message>; [hypershiftHostedCluster] hosted cluster is not available: ComponentsNotAvailable: Waiting for components to be available: packageserver, catalog-operator, olm-operator; hosted cluster degraded: UnavailableReplicas: [packageserver deployment has 3 unavailable replicas, catalog-operator deployment has 1 unavailable replicas]"}}`
+	rawB := `ERROR CODE: InternalServerError
+{"error":{"code":"InternalServerError","message":"[clusterServiceClusterStatus] <no_message>; [hypershiftHostedCluster] hosted cluster is not available: ComponentsNotAvailable: Waiting for components to be available: olm-operator, catalog-operator, packageserver; hosted cluster degraded: UnavailableReplicas: [catalog-operator deployment has 2 unavailable replicas, packageserver deployment has 1 unavailable replicas]"}}`
+
+	gotA := extractEvidence(rawA).CanonicalEvidencePhrase
+	gotB := extractEvidence(rawB).CanonicalEvidencePhrase
+	if gotA != gotB {
+		t.Fatalf("expected component ordering and replica counts to merge:\n  A=%q\n  B=%q", gotA, gotB)
+	}
+	if !strings.Contains(gotA, "ComponentsNotAvailable") ||
+		!strings.Contains(gotA, "UnavailableReplicas: [catalog-operator, packageserver]") {
+		t.Fatalf("expected compact complete hosted-cluster summary, got=%q", gotA)
+	}
+	if strings.Contains(gotA, "deployment has") {
+		t.Fatalf("expected volatile replica counts to be removed, got=%q", gotA)
+	}
+}
+
+func TestExtractEvidenceUsesLastLogfmtErrorField(t *testing.T) {
+	t.Parallel()
+
+	raw := `time=2026-08-04T21:26:06.127Z level=ERROR msg="Failed to roll out the Helm release." err="resource Deployment/clusters-service/clusters-service not ready. status: InProgress, message: Available: 2/3\ncontext deadline exceeded"
+time=2026-08-04T21:26:06.127Z level=ERROR msg="Step errored." stamp=1 err="stamp 1: error running Helm release deployment Step, failed to deploy helm release: failed to roll out Helm release: failed post-install: resource Job/multicluster-engine/finalize-mce-config not ready. status: InProgress, message: Job in progress\ncontext deadline exceeded"`
+
+	got := extractEvidence(raw).CanonicalEvidencePhrase
+	if !strings.Contains(got, "resource Job/multicluster-engine/finalize-mce-config not ready") ||
+		!strings.HasSuffix(got, "context deadline exceeded") {
+		t.Fatalf("expected the final step error without logfmt boilerplate or truncation, got=%q", got)
+	}
+	if strings.Contains(got, "level=ERROR") || strings.Contains(got, "stamp 1") {
+		t.Fatalf("expected logfmt wrapper metadata to be removed, got=%q", got)
+	}
+}
+
+func TestExtractEvidenceSummarizesRepeatedConfigMapPatchTimeouts(t *testing.T) {
+	t.Parallel()
+
+	raw := `time=2026-07-23T14:45:42.101Z level=ERROR msg="Step errored." stamp=1 err="stamp 1: error running Helm release deployment Step, failed to deploy helm release: failed to roll out Helm release: the server was unable to return a response in the time allotted, but may still be processing the request (patch configmaps arohcp-monitor-kube-state-metrics-customresourcestate-config)\nthe server was unable to return a response in the time allotted, but may still be processing the request (patch configmaps ama-metrics-settings-configmap)"`
+
+	got := extractEvidence(raw).CanonicalEvidencePhrase
+	want := "server timed out while patching configmaps: ama-metrics-settings-configmap, arohcp-monitor-kube-state-metrics-customresourcestate-config"
+	if got != want {
+		t.Fatalf("expected complete stable configmap timeout summary, got=%q want=%q", got, want)
+	}
+}
+
+func TestExtractEvidenceNormalizesAlertResourceInstances(t *testing.T) {
+	t.Parallel()
+
+	rawA := `Description: Pod ocm-arohcpci01-2s0a6l36dmn4749eat6ubck0rul1qp4j-cilium-cluster/router-7574555b5-qzbmk has been in a non-ready state for longer than 5 minutes.`
+	rawB := `Description: Pod ocm-arohcpci01-2s0a5dce7ual13qn1ges3qb3jbgbe1nu-cilium-cluster/router-56bb9d76bf-b7z7q has been in a non-ready state for longer than 5 minutes.`
+
+	gotA := extractEvidence(rawA).CanonicalEvidencePhrase
+	gotB := extractEvidence(rawB).CanonicalEvidencePhrase
+	want := `Description: Pod <namespace>/router-<pod> has been in a non-ready state for longer than 5 minutes.`
+	if gotA != want || gotB != want {
+		t.Fatalf("expected hosted namespace and pod replicas to merge:\n  A=%q\n  B=%q\nwant=%q", gotA, gotB, want)
+	}
+}
+
+func TestExtractEvidenceNormalizesAlertNodesAndKlusterletNamespaces(t *testing.T) {
+	t.Parallel()
+
+	nodeA := `Description: aks-userswft1-20760849-vmss000004 has been unready for more than 30 minutes.`
+	nodeB := `Description: aks-userswft2-99188438-vmss000001 has been unready for more than 30 minutes.`
+	if gotA, gotB := extractEvidence(nodeA).CanonicalEvidencePhrase, extractEvidence(nodeB).CanonicalEvidencePhrase; gotA != gotB || gotA != "Description: node <node> has been unready for more than 30 minutes." {
+		t.Fatalf("expected alert node identities to merge, got A=%q B=%q", gotA, gotB)
+	}
+
+	leaseA := `Description: Leader election lease governance-policy-framework in namespace klusterlet-2rvbf26ip74iaa4ddjchlnnkh26anmhi on cluster customer-a has not been renewed for more than 37 minutes. The leadership election might be broken or the component stopped running.`
+	leaseB := `Description: Leader election lease governance-policy-framework in namespace klusterlet-2roge5s0ptig9l3e5sfu6hkausj66nj9 on cluster customer-b has not been renewed for more than 37 minutes. The leadership election might be broken or the component stopped running.`
+	gotA := extractEvidence(leaseA).CanonicalEvidencePhrase
+	gotB := extractEvidence(leaseB).CanonicalEvidencePhrase
+	if gotA != gotB || !strings.Contains(gotA, "namespace <namespace> on cluster <cluster>") {
+		t.Fatalf("expected klusterlet namespace and cluster identities to merge, got A=%q B=%q", gotA, gotB)
+	}
+}
+
+func TestExtractEvidenceDoesNotTruncateAlertDescription(t *testing.T) {
+	t.Parallel()
+
+	raw := `Description: More than 72% of cluster create operations are in failed state, indicating a fast error budget burn that would exhaust the SLO budget. A regional install failure of this magnitude typically points at a shared infrastructure dependency rather than an individual test failure.`
+	got := extractEvidence(raw).CanonicalEvidencePhrase
+	if got != raw {
+		t.Fatalf("expected the complete alert description without arbitrary truncation, got=%q", got)
+	}
+}
+
+func TestExtractEvidenceNormalizesAlertLabelDeploymentAndNodePoolAssignment(t *testing.T) {
+	t.Parallel()
+
+	labels := `Labels: alertname="KubeDeploymentRolloutStuck", deployment="klusterlet-2rvavta7vgp33jl81jf2v6d5suo9dls1-work-agent", instance="10.128.64.244:8080"`
+	gotLabels := extractEvidence(labels).CanonicalEvidencePhrase
+	if strings.Contains(gotLabels, "2rvavta7vgp33jl81jf2v6d5suo9dls1") ||
+		!strings.Contains(gotLabels, `deployment="klusterlet-<cluster>-work-agent"`) {
+		t.Fatalf("expected generated klusterlet deployment label to be normalized, got=%q", gotLabels)
+	}
+
+	nodePool := `list nodes (nodePool=npdg-4-21): Get "https://api.example": net/http: TLS handshake timeout`
+	gotNodePool := extractEvidence(nodePool).CanonicalEvidencePhrase
+	if strings.Contains(gotNodePool, "npdg-4-21") || !strings.Contains(gotNodePool, "nodePool=<nodepool>") {
+		t.Fatalf("expected nodePool assignment to be normalized, got=%q", gotNodePool)
 	}
 }

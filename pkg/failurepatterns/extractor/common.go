@@ -17,6 +17,7 @@ var genericCodes = map[string]struct{}{
 	"notfound":              {},
 	"resourcenotfound":      {},
 	"invalidrequestcontent": {},
+	"invalidtemplate":       {},
 }
 
 var wrapperOnly = map[string]struct{}{

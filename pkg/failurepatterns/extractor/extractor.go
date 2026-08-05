@@ -7,15 +7,16 @@ import (
 )
 
 var (
-	reProviderPath          = regexp.MustCompile(`/providers/(Microsoft\.[A-Za-z]+(?:\.[A-Za-z]+)?)/`)
-	reProviderText          = regexp.MustCompile(`(Microsoft\.[A-Za-z]+(?:\.[A-Za-z]+)?)`)
-	reCleanFmtWrap          = regexp.MustCompile(`<\*[^>]+\|\s*0x[0-9a-fA-F]+>\s*:?`)
-	reCleanHexAddress       = regexp.MustCompile(`\b0x[0-9a-fA-F]+\b`)
-	reCleanGoFileLine       = regexp.MustCompile(`\b\w[\w./-]*\.go:\d+\b`)
-	reCleanUnexpectedPrefix = regexp.MustCompile(`(?i)^\s*unexpected error:\s*`)
-	reCleanWrapperPrefix    = regexp.MustCompile(`(?i)^\s*(msg:|err:|caused by:)\s*`)
-	reCleanURL              = regexp.MustCompile(`https?://\S+`)
-	reCleanSubscription     = regexp.MustCompile(`/subscriptions/[0-9a-fA-F-]+`)
+	reProviderPath              = regexp.MustCompile(`/providers/(Microsoft\.[A-Za-z]+(?:\.[A-Za-z]+)?)/`)
+	reProviderText              = regexp.MustCompile(`(Microsoft\.[A-Za-z]+(?:\.[A-Za-z]+)?)`)
+	reCleanFmtWrap              = regexp.MustCompile(`<\*[^>]+\|\s*0x[0-9a-fA-F]+>\s*:?`)
+	reCleanHexAddress           = regexp.MustCompile(`\b0x[0-9a-fA-F]+\b`)
+	reCleanGoFileLine           = regexp.MustCompile(`\b\w[\w./-]*\.go:\d+\b`)
+	reCleanUnexpectedPrefix     = regexp.MustCompile(`(?i)^\s*unexpected error:\s*`)
+	reCleanWrapperPrefix        = regexp.MustCompile(`(?i)^\s*(msg:|err:|caused by:)\s*`)
+	reCleanURL                  = regexp.MustCompile(`https?://[^\s"'<>]+`)
+	reCleanSubscription         = regexp.MustCompile(`/subscriptions/[0-9a-fA-F-]+`)
+	reCleanRedactedSubscription = regexp.MustCompile(`(?i)/subscriptions/X{20,}`)
 	// Azure resource-ID path segment, e.g. .../resourcegroups/oidc-wi-2jj8pc/...
 	// The generated resource-group name is instance-specific; normalize so the
 	// same class of error merges across runs.
@@ -40,8 +41,15 @@ var (
 	reCleanHCPClusterPhrase       = regexp.MustCompile(`(?i)\bhcp cluster [a-z0-9-]+\b`)
 	reCleanExternalAuthQuoted     = regexp.MustCompile(`(?i)external auth "[^"]+"`)
 	reCleanExternalAuthBare       = regexp.MustCompile(`(?i)\bexternal auth [a-z0-9-]+\b`)
+	reCleanVMQuoted               = regexp.MustCompile(`(?i)\bVM "[^"]+"`)
+	reCleanPodQuoted              = regexp.MustCompile(`(?i)\bpods? "[^"]+"`)
+	reCleanNamespaceQuoted        = regexp.MustCompile(`(?i)\bnamespaces? "[^"]+"`)
+	reCleanServiceAccountPath     = regexp.MustCompile(`(?i)\bservice account [^/\s]+/([a-z0-9-]+)`)
 	reCleanNodePoolQuoted         = regexp.MustCompile(`(?i)nodepool="[^"]+"`)
+	reCleanNodePoolAssignment     = regexp.MustCompile(`(?i)nodePool=[a-z0-9-]+`)
 	reCleanNodePoolPhrase         = regexp.MustCompile(`(?i)\bnode pool [a-z0-9-]+\b`)
+	reCleanNodePoolPhraseQuoted   = regexp.MustCompile(`(?i)\bnode pool "[^"]+"`)
+	reCleanAgentPool              = regexp.MustCompile(`(?i)\bagent pool [a-z0-9-]+\b`)
 	reBoolAssertionContext        = regexp.MustCompile(`(?is)Timed out after [0-9.]+s\.\s*\n(?P<context>[^\n]+)\s*\nExpected\s*\n\s*<bool>:\s*false\s*\n\s*to be true`)
 	reAssertionRegexHint          = regexp.MustCompile(`Regexp:\s*"([^"]+)"`)
 	reAssertionErrorSignal        = regexp.MustCompile(`(?i)(error|failed|timeout|forbidden|denied|conflict|deadline|not found|invalid|http2:)`)
@@ -72,30 +80,70 @@ var (
 	// Terminal "giving up after N attempt(s) / Xs (limit Ys)" summary line
 	// that follows a retry loop; used as a last-resort stable canonical when
 	// no other distinguishing error line is found.
-	reGivingUpAfterAttempts       = regexp.MustCompile(`(?i)giving up after \d+ attempt\(s\) / \d+s \(limit \d+s\)`)
-	reUnexpectedOnly              = regexp.MustCompile(`(?i)unexpected error:?`)
-	reFailurePatternPlaceholder   = regexp.MustCompile(`<uuid>|<hex>|<url>`)
-	reDeserializationLiteral      = regexp.MustCompile(`(?i)Deserializa(?:ti|i)on Error:[^\n]+`)
-	reDeserializationNoOutput     = regexp.MustCompile(`(?i)Deserializa(?:ti|i)on Error:\s*no output from command`)
-	reDeserializationToken        = regexp.MustCompile(`(?i)deserializa(?:ti|i)on error`)
-	reCommandErrorLine            = regexp.MustCompile(`(?im)^Command Error:\s*[^\n]+$`)
-	reQuotaRequiredAvailable      = regexp.MustCompile(`(?i)\brequired\s+['"]?\d+['"]?\s*,\s*available\s+['"]?\d+['"]?\b`)
-	reWrapperStepErroredContainer = regexp.MustCompile(`(?i)step errored`)
-	reModelDiffSummary            = regexp.MustCompile(`(?i)operation result model did not match expected model[^\n]*`)
-	reX509CertificateMismatch     = regexp.MustCompile(`(?i)tls: failed to verify certificate: x509: certificate is valid for [^\n]+, not [^\n]+`)
-	reTimedOutAfterDuration       = regexp.MustCompile(`(?i)^timed out after [0-9]+(?:\.[0-9]+)?s\.$`)
-	reTimedOutAssertionWrapper    = regexp.MustCompile(`(?i)^fail \[[^\]]*\]:\s*(timed out after [0-9]+(?:\.[0-9]+)?s\.)$`)
-	rePlaceholderAssertionValue   = regexp.MustCompile(`^<[^>\n]+>:\s*\.{3}\s*$`)
-	reStructuredFieldLine         = regexp.MustCompile(`^[+-]?\s*[A-Za-z_][A-Za-z0-9_]+:\s+.*(?:,\s*|\{\s*)$`)
-	reLogfmtReleaseStatusDesc     = regexp.MustCompile(`(?i)level=info[^\n]*msg="determined release status\."[^\n]*description="((?:\\.|[^"])*)"`)
-	reCleanupWorkflowTarget       = regexp.MustCompile(`(?i)(ordered cleanup workflow failed for )([a-z0-9-]+)(:)`)
-	reCleanupWorkflowMethodURL    = regexp.MustCompile(`(?i):\s*(?:GET|POST|PUT|PATCH|DELETE)\s+<url>`)
-	reCleanupWorkflowResourceName = regexp.MustCompile(`(?i)(failed deleting )([a-z0-9-]+)( \([^)]+\):)`)
+	reGivingUpAfterAttempts           = regexp.MustCompile(`(?i)giving up after \d+ attempt\(s\) / \d+s \(limit \d+s\)`)
+	reUnexpectedOnly                  = regexp.MustCompile(`(?i)unexpected error:?`)
+	reFailurePatternPlaceholder       = regexp.MustCompile(`<uuid>|<hex>|<url>`)
+	reDeserializationLiteral          = regexp.MustCompile(`(?i)Deserializa(?:ti|i)on Error:[^\n]+`)
+	reDeserializationNoOutput         = regexp.MustCompile(`(?i)Deserializa(?:ti|i)on Error:\s*no output from command`)
+	reDeserializationToken            = regexp.MustCompile(`(?i)deserializa(?:ti|i)on error`)
+	reCommandErrorLine                = regexp.MustCompile(`(?im)^Command Error:\s*[^\n]+$`)
+	reQuotaRequiredAvailable          = regexp.MustCompile(`(?i)\brequired\s+['"]?\d+['"]?\s*,\s*available\s+['"]?\d+['"]?\b`)
+	reTimeoutMinutesExceeded          = regexp.MustCompile(`(?i)timeout\s+'\d+(?:\.\d+)?'\s+minutes exceeded`)
+	reOperationTimeout                = regexp.MustCompile(`(?i)timeout\s+'(?:\d+(?:\.\d+)?|<minutes>)'\s+minutes exceeded during ([A-Za-z0-9_]+)`)
+	reTemplateLineColumn              = regexp.MustCompile(`(?i)\bat line '\d+' and column '\d+'`)
+	reExpectedErrorButNil             = regexp.MustCompile(`(?i)expected an error to have occurred\.\s*got:\s*\n\s*<nil>`)
+	reAzureErrorDescription           = regexp.MustCompile(`(?is)"error_description"\s*:\s*"([^"]+)"`)
+	reClusterServiceState             = regexp.MustCompile(`(?i)\bstate is "([^"]+)"`)
+	reClusterServiceClusterRef        = regexp.MustCompile(`(?i)/api/aro_hcp/v1alpha1/clusters/[a-z0-9]+`)
+	reDeletionDispatchedAt            = regexp.MustCompile(`(?i)\s*\(deletion dispatched at [^)]+\)`)
+	reLeadingResourceCount            = regexp.MustCompile(`^\d+\s+`)
+	reInvalidTemplateParameter        = regexp.MustCompile(`(?i)deployment template validation failed:\s*'the value for the template parameter '([^']+)'.*?is not provided\.`)
+	reDenyAssignmentAction            = regexp.MustCompile(`(?i)perform action '([^']+)'`)
+	reNetworkAssociationError         = regexp.MustCompile(`(?i)error message:\s*(.+)$`)
+	reUnavailableDeployment           = regexp.MustCompile(`(?i)^([a-z0-9-]+) deployment has \d+ unavailable replicas?$`)
+	reStampPrefix                     = regexp.MustCompile(`(?i)^stamp \d+:\s*`)
+	reServerPatchTimeout              = regexp.MustCompile(`(?i)the server was unable to return a response in the time allotted, but may still be processing the request \(patch configmaps ([^)]+)\)`)
+	reAlertResourceRef                = regexp.MustCompile(`(?i)\b(Pod|Deployment|StatefulSet|DaemonSet)\s+([a-z0-9-]+)/([a-z0-9-]+)`)
+	reAlertContainerPod               = regexp.MustCompile(`(?i)\bin pod ([a-z0-9-]+)/([a-z0-9-]+)`)
+	reAlertPodInNamespace             = regexp.MustCompile(`(?i)\bpod/([a-z0-9-]+) in namespace ([a-z0-9-]+)`)
+	reAlertNodeDescription            = regexp.MustCompile(`(?i)^(Description:\s+)[a-z0-9-]+(\s+(?:has been unready|is unreachable)\b)`)
+	reAlertHostedCluster              = regexp.MustCompile(`(?i)\bon hosted cluster [a-z0-9-]+ \(management cluster [a-z0-9-]+\)`)
+	reAlertNamespace                  = regexp.MustCompile(`(?i)\bin namespace (?:ocm-arohcpci01-[a-z0-9-]+|klusterlet-[a-z0-9-]+|[a-z0-9]{24,})\b`)
+	reAlertPodCount                   = regexp.MustCompile(`(?i)^(Description:\s+)\d+ Pods\b`)
+	reAlertKustoCluster               = regexp.MustCompile(`(?i)(Kusto cluster )[a-z0-9-]+`)
+	reGetPodsName                     = regexp.MustCompile(`(?i)\bget pods [a-z0-9-]+`)
+	reNotReadyNodes                   = regexp.MustCompile(`(?i)(not ready nodes:\s*)\[[^\]]+\]`)
+	rePodReplicaSuffix                = regexp.MustCompile(`(?i)^(.+)-[a-f0-9]{8,10}-[a-z0-9]{5}$`)
+	rePodShortSuffix                  = regexp.MustCompile(`(?i)^(.+)-[a-z0-9]{5}$`)
+	rePodOrdinalSuffix                = regexp.MustCompile(`(?i)^(.+)-\d+$`)
+	reKlusterletDeployment            = regexp.MustCompile(`(?i)^klusterlet-[a-z0-9]{20,}-(.+)$`)
+	reCleanKlusterletDeploymentQuoted = regexp.MustCompile(`(?i)(deployment=")klusterlet-[a-z0-9]{20,}-(.+?)(")`)
+	reWrapperStepErroredContainer     = regexp.MustCompile(`(?i)step errored`)
+	reModelDiffSummary                = regexp.MustCompile(`(?i)operation result model did not match expected model[^\n]*`)
+	reX509CertificateMismatch         = regexp.MustCompile(`(?i)tls: failed to verify certificate: x509: [^\n"]+`)
+	reTimedOutAfterDuration           = regexp.MustCompile(`(?i)^timed out after [0-9]+(?:\.[0-9]+)?s\.$`)
+	reTimedOutAssertionWrapper        = regexp.MustCompile(`(?i)^fail \[[^\]]*\]:\s*(timed out after [0-9]+(?:\.[0-9]+)?s\.)$`)
+	rePlaceholderAssertionValue       = regexp.MustCompile(`^<[^>\n]+>:\s*\.{3}\s*$`)
+	reStructuredFieldLine             = regexp.MustCompile(`^[+-]?\s*[A-Za-z_][A-Za-z0-9_]+:\s+.*(?:,\s*|\{\s*)$`)
+	reLogfmtReleaseStatusDesc         = regexp.MustCompile(`(?i)level=info[^\n]*msg="determined release status\."[^\n]*description="((?:\\.|[^"])*)"`)
+	reCleanupWorkflowTarget           = regexp.MustCompile(`(?i)(ordered cleanup workflow failed for )([a-z0-9-]+)(:)`)
+	reCleanupWorkflowMethodURL        = regexp.MustCompile(`(?i):\s*(?:GET|POST|PUT|PATCH|DELETE)\s+<url>`)
+	reCleanupWorkflowResourceName     = regexp.MustCompile(`(?i)(failed deleting )([a-z0-9-]+)( \([^)]+\):)`)
 
 	// Dial-TCP address: normalize raw IPs left behind after URL masking.
 	reCleanDialTCPAddress = regexp.MustCompile(`\bdial tcp \d{1,3}(?:\.\d{1,3}){3}:\d+\b`)
 	// Istio/envoy "dialing <ip>:<port>" — same IP/port noise, different verb.
 	reCleanDialingAddress = regexp.MustCompile(`\bdialing \d{1,3}(?:\.\d{1,3}){3}:\d+\b`)
+	reCleanIP             = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b`)
+	reCleanBracketedIPv6  = regexp.MustCompile(`\[[0-9a-fA-F]*:[0-9a-fA-F:]+\](?::\d+)?`)
+	reCleanISOTimestamp   = regexp.MustCompile(`\b20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z\b`)
+	reCleanResolveWithin  = regexp.MustCompile(`(?i)\bdid not resolve within [0-9]+(?:h[0-9]+m)?(?:m[0-9]+s|s)\b`)
+	reCleanRouteHost      = regexp.MustCompile(`(?i)\bagnhost-e2e-sample-app-[a-z0-9]+\.apps\.[a-z0-9.-]+\b`)
+	reCleanBreakglassPath = regexp.MustCompile(`(?i)/hcpopenshiftclusters/[^/]+/breakglass/[^/]+/kubeconfig`)
+	reCleanRedactedQuoted = regexp.MustCompile(`"X{20,}"`)
+	reCleanFailEmpty      = regexp.MustCompile(`(?i)^\s*fail\s*\[\s*\]:\s*`)
+	reCleanSelector       = regexp.MustCompile(`(?i)\bselector "[^"]+"`)
+	reExpectedReadyNodes  = regexp.MustCompile(`(?i)\bexpected \d+ ready \(and schedulable\) nodes\b[^,]*,\s*found \d+\b`)
 	// Logfmt-style timestamp (e.g. time=2026-04-17T11:04:19.211Z).
 	reCleanLogfmtTimestamp = regexp.MustCompile(`\btime=[0-9]{4}-[0-9]{2}-[0-9]{2}T[A-Z0-9:.]+\s*`)
 	// JSON "time" field with ISO-8601 value (e.g. prow entrypoint logs).
@@ -245,7 +293,7 @@ func ExtractWithOptions(text string, opts ExtractOptions) FailurePattern {
 	provider := ProviderAnchor(raw)
 	assertionContext := extractAssertionContext(raw)
 	if assertionContext != "" {
-		canonical := normalizeExtractedCanonical(cleanCanonical(assertionContext))
+		canonical := normalizeExtractedCanonical(cleanCanonical(prepareCanonicalText(assertionContext)))
 		searchPhrase := ""
 		if strings.Contains(raw, assertionContext) {
 			searchPhrase = ChooseSearchPhrase(raw, []string{assertionContext, canonical})
@@ -304,7 +352,7 @@ func ExtractWithOptions(text string, opts ExtractOptions) FailurePattern {
 	if picked == "" {
 		parts := reCauseBySplit.Split(raw, -1)
 		if len(parts) > 1 {
-			picked = truncateText(parts[len(parts)-1], 260)
+			picked = truncatePickedText(parts[len(parts)-1], 260)
 		} else {
 			lines := splitNonEmptyLines(raw)
 			errorLines := make([]string, 0, len(lines))
@@ -323,9 +371,9 @@ func ExtractWithOptions(text string, opts ExtractOptions) FailurePattern {
 				}
 			}
 			if len(errorLines) > 0 {
-				picked = truncateText(errorLines[len(errorLines)-1], 260)
+				picked = truncatePickedText(errorLines[len(errorLines)-1], 260)
 			} else {
-				picked = truncateText(fallback, 260)
+				picked = truncatePickedText(fallback, 260)
 			}
 		}
 	}
@@ -350,7 +398,7 @@ func ExtractWithOptions(text string, opts ExtractOptions) FailurePattern {
 	if code == "" {
 		code = RootAzureErrorCode(raw)
 	}
-	canonical := normalizeExtractedCanonical(cleanCanonical(picked))
+	canonical := normalizeExtractedCanonical(cleanCanonical(prepareCanonicalText(picked)))
 
 	if code != "" && (isGenericCode(code) || isAlwaysDetailedProvider(provider)) {
 		leafCode, leafMessage = extractLeafAzureDetail(raw, code)
@@ -360,6 +408,11 @@ func ExtractWithOptions(text string, opts ExtractOptions) FailurePattern {
 		}
 		if leafMessage != "" {
 			parts = append(parts, "detail message "+leafMessage)
+		}
+		if leafCode == "" && leafMessage == "" {
+			if context := extractAssertionHeaderContext(raw); context != "" {
+				parts = append(parts, "context "+cleanCanonical(context))
+			}
 		}
 		if provider != "" {
 			parts = append(parts, "provider "+provider)
@@ -394,7 +447,7 @@ func ExtractWithOptions(text string, opts ExtractOptions) FailurePattern {
 	if _, found := wrapperOnly[normalizedCanonical]; found || reUnexpectedOnly.MatchString(canonical) {
 		parts := reCauseBySplit.Split(raw, -1)
 		if len(parts) > 1 {
-			canonical = cleanCanonical(truncateText(parts[len(parts)-1], 260))
+			canonical = cleanCanonical(truncatePickedText(parts[len(parts)-1], 260))
 		}
 	}
 	if isLowInformationCanonical(canonical) {
@@ -469,6 +522,10 @@ func isIgnoredProvider(value string) bool {
 }
 
 func cleanCanonical(value string) string {
+	return cleanCanonicalWithLimit(value, 260)
+}
+
+func cleanCanonicalWithLimit(value string, limit int) string {
 	text := value
 	text = strings.ReplaceAll(text, "\r", " ")
 	text = strings.ReplaceAll(text, "\n", " ")
@@ -482,6 +539,7 @@ func cleanCanonical(value string) string {
 	text = reCleanUnexpectedPrefix.ReplaceAllString(text, "")
 	text = reCleanWrapperPrefix.ReplaceAllString(text, "")
 	text = reCleanURL.ReplaceAllString(text, "<url>")
+	text = reCleanRedactedSubscription.ReplaceAllString(text, "/subscriptions/<subscription>")
 	text = reCleanSubscription.ReplaceAllString(text, "/subscriptions/<subscription>")
 	text = reCleanResourceGroupsPathSegment.ReplaceAllString(text, "/resourcegroups/<resource-group>/")
 	text = reCleanVaultNameAlreadyInUse.ReplaceAllString(text, "the vault name '<vault-name>' is already in use.")
@@ -500,33 +558,157 @@ func cleanCanonical(value string) string {
 	text = reCleanHCPClusterPhrase.ReplaceAllString(text, "HCP cluster <cluster>")
 	text = reCleanExternalAuthQuoted.ReplaceAllString(text, `external auth "<external-auth>"`)
 	text = reCleanExternalAuthBare.ReplaceAllString(text, "external auth <external-auth>")
+	text = reCleanVMQuoted.ReplaceAllString(text, `VM "<vm>"`)
+	text = reCleanPodQuoted.ReplaceAllString(text, `pod "<pod>"`)
+	text = reCleanNamespaceQuoted.ReplaceAllString(text, `namespace "<namespace>"`)
+	text = reCleanServiceAccountPath.ReplaceAllString(text, `service account <namespace>/$1`)
 	text = reCleanNodePoolQuoted.ReplaceAllString(text, `nodepool="<nodepool>"`)
+	text = reCleanNodePoolAssignment.ReplaceAllString(text, "nodePool=<nodepool>")
+	text = reCleanNodePoolPhraseQuoted.ReplaceAllString(text, `node pool "<nodepool>"`)
 	text = reCleanNodePoolPhrase.ReplaceAllString(text, "node pool <nodepool>")
 	text = reCleanNodePoolBare.ReplaceAllString(text, "nodepool <nodepool>")
+	text = reCleanAgentPool.ReplaceAllString(text, "agent pool <nodepool>")
 	text = reCleanK8sNodeName.ReplaceAllString(text, "<node>")
 	text = reCleanOCPChannel.ReplaceAllString(text, "<ocp-channel>")
 	text = reCleanDialTCPAddress.ReplaceAllString(text, "dial tcp <ip>:<port>")
 	text = reCleanDialingAddress.ReplaceAllString(text, "dialing <ip>:<port>")
+	text = reCleanRouteHost.ReplaceAllString(text, "<route-host>")
+	text = reCleanBreakglassPath.ReplaceAllString(text, "/hcpopenshiftclusters/<cluster>/breakglass/<session>/kubeconfig")
+	text = reCleanRedactedQuoted.ReplaceAllString(text, `"<redacted-id>"`)
+	text = reCleanBracketedIPv6.ReplaceAllString(text, "<ip>")
+	text = strings.ReplaceAll(text, "::1", "<ip>")
+	text = reCleanIP.ReplaceAllString(text, "<ip>")
 	text = reCleanLogfmtTimestamp.ReplaceAllString(text, "")
 	text = reCleanJSONTimeField.ReplaceAllString(text, "")
+	text = reCleanISOTimestamp.ReplaceAllString(text, "<timestamp>")
 	text = reCleanHCPApiHost.ReplaceAllString(text, "<hcp-api-host>")
 	text = reCleanOCPVersion.ReplaceAllString(text, "openshift-v<version>")
 	text = normalizeQuotedAzureResourcePath(text)
 	text = reCleanQuotedOpaqueID.ReplaceAllString(text, "'<id>'")
 	text = reCleanK8sLogPrefix.ReplaceAllString(text, "")
 	text = reCleanMakeDirectory.ReplaceAllString(text, "")
+	text = reTimeoutMinutesExceeded.ReplaceAllString(text, "timeout '<minutes>' minutes exceeded")
+	text = reTemplateLineColumn.ReplaceAllString(text, "at line '<line>' and column '<column>'")
+	text = reCleanResolveWithin.ReplaceAllString(text, "did not resolve within <duration>")
+	text = reCleanSelector.ReplaceAllString(text, `selector "<selector>"`)
+	text = reExpectedReadyNodes.ReplaceAllString(text, "expected <count> ready (and schedulable) nodes, found <count>")
+	text = reCleanFailEmpty.ReplaceAllString(text, "")
+	text = reCleanKlusterletDeploymentQuoted.ReplaceAllString(text, `${1}klusterlet-<cluster>-${2}${3}`)
 	text = collapseWS(text)
-	if len(text) > 260 {
-		text = truncateCanonical(text, 260)
+	text = normalizeAlertDescription(text)
+	text = trimUnmatchedTerminalQuote(text)
+	if strings.HasPrefix(strings.ToLower(text), "description:") {
+		return text
+	}
+	if limit > 0 && len(text) > limit {
+		text = truncateCanonical(text, limit)
 	}
 	return text
+}
+
+func normalizeAlertDescription(value string) string {
+	text := value
+	text = reAlertResourceRef.ReplaceAllStringFunc(text, func(match string) string {
+		parts := reAlertResourceRef.FindStringSubmatch(match)
+		if len(parts) < 4 {
+			return match
+		}
+		kind := parts[1]
+		name := parts[3]
+		switch strings.ToLower(kind) {
+		case "pod":
+			name = normalizePodName(name)
+		case "deployment":
+			name = normalizeDeploymentName(name)
+		}
+		return kind + " <namespace>/" + name
+	})
+	text = reAlertContainerPod.ReplaceAllStringFunc(text, func(match string) string {
+		parts := reAlertContainerPod.FindStringSubmatch(match)
+		if len(parts) < 3 {
+			return match
+		}
+		return "in pod <namespace>/" + normalizePodName(parts[2])
+	})
+	text = reAlertPodInNamespace.ReplaceAllStringFunc(text, func(match string) string {
+		parts := reAlertPodInNamespace.FindStringSubmatch(match)
+		if len(parts) < 3 {
+			return match
+		}
+		return "pod/" + normalizePodName(parts[1]) + " in namespace <namespace>"
+	})
+	text = reAlertNodeDescription.ReplaceAllString(text, `${1}node <node>${2}`)
+	text = reAlertHostedCluster.ReplaceAllString(text, "on hosted cluster <cluster> (management cluster <management-cluster>)")
+	text = reAlertNamespace.ReplaceAllString(text, "in namespace <namespace>")
+	text = reAlertPodCount.ReplaceAllString(text, `${1}<count> pods`)
+	text = reAlertKustoCluster.ReplaceAllString(text, `${1}<kusto-cluster>`)
+	text = reGetPodsName.ReplaceAllString(text, "get pod <pod>")
+	text = reNotReadyNodes.ReplaceAllString(text, `${1}[<node>]`)
+	return text
+}
+
+func normalizePodName(value string) string {
+	if match := rePodReplicaSuffix.FindStringSubmatch(value); len(match) > 1 {
+		return match[1] + "-<pod>"
+	}
+	if match := rePodShortSuffix.FindStringSubmatch(value); len(match) > 1 {
+		return match[1] + "-<pod>"
+	}
+	if match := rePodOrdinalSuffix.FindStringSubmatch(value); len(match) > 1 {
+		return match[1] + "-<pod>"
+	}
+	if len(value) >= 20 {
+		return "<pod>"
+	}
+	return value
+}
+
+func normalizeDeploymentName(value string) string {
+	if match := reKlusterletDeployment.FindStringSubmatch(value); len(match) > 1 {
+		return "klusterlet-<cluster>-" + match[1]
+	}
+	return value
+}
+
+func trimUnmatchedTerminalQuote(value string) string {
+	text := strings.TrimSpace(value)
+	if strings.Count(text, `"`)%2 == 0 {
+		return text
+	}
+	if strings.HasSuffix(text, `"`) {
+		return strings.TrimSpace(strings.TrimSuffix(text, `"`))
+	}
+	if strings.HasPrefix(text, `"`) {
+		return strings.TrimSpace(strings.TrimPrefix(text, `"`))
+	}
+	return text
+}
+
+func truncatePickedText(value string, max int) string {
+	trimmed := strings.TrimSpace(value)
+	if strings.HasPrefix(strings.ToLower(trimmed), "description:") {
+		return trimmed
+	}
+	return truncateText(trimmed, max)
 }
 
 func normalizeExtractedCanonical(value string) string {
 	normalized := normalizeTimedOutAfterDuration(value)
 	normalized = stripTransportURLPrefixForTLSMismatch(normalized)
 	normalized = stripReleaseFailureWrapper(normalized)
+	normalized = stripUnhandledErrorWrapper(normalized)
 	normalized = normalizeCleanupWorkflowDeletion(normalized)
+	normalized = stripDefaultVMSizeWrapper(normalized)
+	return normalized
+}
+
+func prepareCanonicalText(value string) string {
+	normalized := collapseWS(value)
+	normalized = normalizeOperationTimeout(normalized)
+	normalized = stripReleaseFailureWrapper(normalized)
+	normalized = normalizeServerPatchTimeouts(normalized)
+	normalized = stripDefaultVMSizeWrapper(normalized)
+	normalized = normalizeBreakglassKubeconfigFailure(normalized)
 	return normalized
 }
 
@@ -536,6 +718,19 @@ func normalizeTimedOutAfterDuration(value string) string {
 		return trimmed
 	}
 	return "Timed out after <duration>s."
+}
+
+func normalizeOperationTimeout(value string) string {
+	trimmed := strings.TrimSpace(value)
+	match := reOperationTimeout.FindStringSubmatch(trimmed)
+	if len(match) < 2 {
+		return trimmed
+	}
+	result := match[1] + " timed out after <minutes> minutes"
+	if strings.Contains(strings.ToLower(trimmed), "context deadline exceeded") {
+		result += "; context deadline exceeded"
+	}
+	return result
 }
 
 func contextualizeCanonicalWithTestName(canonical string, testName string) string {
@@ -571,7 +766,7 @@ func stripTransportURLPrefixForTLSMismatch(value string) string {
 }
 
 func stripReleaseFailureWrapper(value string) string {
-	trimmed := strings.TrimSpace(value)
+	trimmed := reStampPrefix.ReplaceAllString(strings.TrimSpace(value), "")
 	lowered := strings.ToLower(trimmed)
 	const helmPrefix = "error running helm release deployment step, failed to deploy helm release:"
 	if strings.HasPrefix(lowered, helmPrefix) {
@@ -591,10 +786,65 @@ func normalizeCleanupWorkflowDeletion(value string) string {
 	if !strings.Contains(lowered, "ordered cleanup workflow failed for") || !strings.Contains(lowered, "failed deleting") {
 		return trimmed
 	}
+
 	normalized := reCleanupWorkflowTarget.ReplaceAllString(trimmed, `${1}<cleanup-target>${3}`)
 	normalized = reCleanupWorkflowResourceName.ReplaceAllString(normalized, `${1}<cleanup-resource>${3}`)
 	normalized = reCleanupWorkflowMethodURL.ReplaceAllString(normalized, ": <url>")
 	return collapseWS(normalized)
+}
+
+func stripDefaultVMSizeWrapper(value string) string {
+	trimmed := strings.TrimSpace(value)
+	lowered := strings.ToLower(trimmed)
+	if !strings.HasPrefix(lowered, "failed to resolve default vm size for node pool ") {
+		return trimmed
+	}
+	if idx := strings.Index(lowered, `selector "`); idx >= 0 {
+		return strings.TrimSpace(trimmed[idx:])
+	}
+	return trimmed
+}
+
+func normalizeBreakglassKubeconfigFailure(value string) string {
+	trimmed := strings.TrimSpace(value)
+	lowered := strings.ToLower(trimmed)
+	if !strings.Contains(lowered, "failed to get ready session kubeconfig from ") ||
+		!strings.Contains(lowered, "timeout waiting for session to become ready") {
+		return trimmed
+	}
+	summary := "breakglass session kubeconfig not ready: timeout waiting for session to become ready"
+	if strings.Contains(lowered, "hostedcontrolplane exists but is not ready") {
+		summary += "; HostedControlPlane exists but is not ready"
+	}
+	return summary
+}
+
+func normalizeServerPatchTimeouts(value string) string {
+	matches := reServerPatchTimeout.FindAllStringSubmatch(value, -1)
+	if len(matches) == 0 {
+		return value
+	}
+	configMaps := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if len(match) > 1 {
+			configMaps = append(configMaps, strings.TrimSpace(match[1]))
+		}
+	}
+	sort.Strings(configMaps)
+	configMaps = compactStrings(configMaps)
+	return "server timed out while patching configmaps: " + strings.Join(configMaps, ", ")
+}
+
+func stripUnhandledErrorWrapper(value string) string {
+	trimmed := strings.TrimSpace(value)
+	lowered := strings.ToLower(trimmed)
+	if !strings.Contains(lowered, "unhandled error") {
+		return trimmed
+	}
+	if idx := strings.Index(lowered, `err="`); idx >= 0 {
+		return trimUnmatchedTerminalQuote(strings.TrimSpace(trimmed[idx+len(`err="`):]))
+	}
+	return trimmed
 }
 
 func normalizeQuotedAzureResourcePath(value string) string {
@@ -636,6 +886,13 @@ func extractAssertionContext(text string) string {
 	}
 	if placeholderEquality := extractPlaceholderOnlyEqualityAssertionContext(text); placeholderEquality != "" {
 		return placeholderEquality
+	}
+	if reExpectedErrorButNil.MatchString(text) {
+		for _, line := range strings.Split(text, "\n") {
+			if detail := assertionHeaderDetail(collapseWS(line)); detail != "" {
+				return detail
+			}
+		}
 	}
 
 	lines := strings.Split(text, "\n")
@@ -899,7 +1156,7 @@ func ChooseSearchPhrase(text string, candidates []string) string {
 
 func extractLogfmtStepError(raw string) string {
 	const errField = ` err="`
-	start := strings.Index(raw, errField)
+	start := strings.LastIndex(raw, errField)
 	if start < 0 {
 		match := reLogfmtStepErroredErr.FindStringSubmatch(raw)
 		if len(match) <= 1 {
@@ -915,10 +1172,7 @@ func extractLogfmtStepError(raw string) string {
 		return value
 	}
 	start += len(errField)
-	end := strings.LastIndex(raw, `"`)
-	if end < start {
-		end = len(raw)
-	}
+	end := findUnescapedQuote(raw, start)
 	value := strings.TrimSpace(raw[start:end])
 	if value == "" {
 		return ""
@@ -927,6 +1181,24 @@ func extractLogfmtStepError(raw string) string {
 		return refined
 	}
 	return value
+}
+
+func findUnescapedQuote(value string, start int) int {
+	escaped := false
+	for index := start; index < len(value); index++ {
+		switch value[index] {
+		case '\\':
+			escaped = !escaped
+		case '"':
+			if !escaped {
+				return index
+			}
+			escaped = false
+		default:
+			escaped = false
+		}
+	}
+	return len(value)
 }
 
 func extractLogfmtReleaseStatusDescription(raw string) string {
@@ -999,6 +1271,7 @@ func extractLeafAzureDetail(text string, rootCode string) (string, string) {
 		}
 
 		message := summarizeAzureDetailMessage(extractAzureMessageForCode(decoded, code))
+		message = appendAzureIdentityErrorDescription(message, decoded)
 		if _, generic := genericCodes[lowered]; generic {
 			if message != "" {
 				return code, message
@@ -1022,6 +1295,7 @@ func extractLeafAzureDetail(text string, rootCode string) (string, string) {
 		return genericFallbackCode, ""
 	}
 	rootMessage := summarizeAzureDetailMessage(extractAzureMessageForCode(decoded, rootCode))
+	rootMessage = appendAzureIdentityErrorDescription(rootMessage, decoded)
 	if rootMessage != "" {
 		return "", rootMessage
 	}
@@ -1157,6 +1431,12 @@ func summarizeAzureDetailMessage(message string) string {
 	if trimmed == "" {
 		return ""
 	}
+	if strings.Contains(strings.ToLower(trimmed), "clientcertificatecredential authentication failed") {
+		if idx := strings.Index(strings.ToLower(trimmed), "clientcertificatecredential authentication failed"); idx >= 0 {
+			prefix := trimmed[:idx+len("ClientCertificateCredential authentication failed")]
+			return cleanCanonicalWithLimit(strings.TrimRight(prefix, " .")+".", 0)
+		}
+	}
 
 	loweredRaw := strings.ToLower(trimmed)
 	if strings.Contains(loweredRaw, `"code":`) ||
@@ -1168,8 +1448,30 @@ func summarizeAzureDetailMessage(message string) string {
 	if strings.Count(trimmed, "{")+strings.Count(trimmed, "}") >= 2 {
 		return ""
 	}
+	if match := reInvalidTemplateParameter.FindStringSubmatch(trimmed); len(match) > 1 {
+		return `Deployment template validation failed: template parameter "` + strings.TrimSpace(match[1]) + `" is not provided.`
+	}
+	if strings.Contains(strings.ToLower(trimmed), "access is denied because of the deny assignment") {
+		if match := reDenyAssignmentAction.FindStringSubmatch(trimmed); len(match) > 1 {
+			return `Access denied by deny assignment for action "` + strings.TrimSpace(match[1]) + `".`
+		}
+		return "Access denied by deny assignment."
+	}
+	if strings.Contains(strings.ToLower(trimmed), "error while processing request for association ") {
+		summary := "Error while processing network security perimeter association."
+		if match := reNetworkAssociationError.FindStringSubmatch(trimmed); len(match) > 1 {
+			summary = "Error while processing network security perimeter association: " + strings.TrimSpace(match[1])
+		}
+		return cleanCanonicalWithLimit(summary, 0)
+	}
+	if deletionSummary := summarizeClusterServiceDeletionMessage(trimmed); deletionSummary != "" {
+		return deletionSummary
+	}
+	if hostedClusterSummary := summarizeHostedClusterMessage(trimmed); hostedClusterSummary != "" {
+		return hostedClusterSummary
+	}
 
-	normalized := cleanCanonical(trimmed)
+	normalized := cleanCanonicalWithLimit(trimmed, 0)
 	normalized = reQuotaRequiredAvailable.ReplaceAllString(normalized, "required <count>, available <count>")
 	if idx := strings.Index(strings.ToLower(normalized), "allocation failed."); idx >= 0 {
 		normalized = strings.TrimSpace(normalized[idx:])
@@ -1193,8 +1495,10 @@ func summarizeAzureDetailMessage(message string) string {
 	if idx := strings.Index(lowered, " refer to "); idx >= 0 {
 		normalized = strings.TrimSpace(normalized[:idx])
 	}
-	if idx := strings.Index(normalized, ". "); idx > 0 && idx < 220 {
-		normalized = strings.TrimSpace(normalized[:idx+1])
+	for _, marker := range []string{" please see ", " please wait for it to finish", " you may also use "} {
+		if idx := strings.Index(strings.ToLower(normalized), marker); idx >= 0 {
+			normalized = strings.TrimSpace(normalized[:idx])
+		}
 	}
 
 	// "<no_message>" is ClusterService's own placeholder for "no failure
@@ -1203,13 +1507,188 @@ func summarizeAzureDetailMessage(message string) string {
 	// from an extractor bug that silently ate real detail. Always surface it
 	// so it's evident the upstream service, not this extractor, is at fault.
 	if strings.Contains(strings.ToLower(normalized), "<no_message>") {
-		return truncateCanonical(normalized, 180)
+		return normalized
 	}
 
 	if len(strings.Fields(normalized)) < 3 && !strings.EqualFold(strings.TrimSpace(normalized), "Allocation failed.") {
 		return ""
 	}
-	return truncateCanonical(normalized, 180)
+	return normalized
+}
+
+func summarizeHostedClusterMessage(message string) string {
+	if !strings.Contains(strings.ToLower(message), "[hypershifthostedcluster]") {
+		return ""
+	}
+	normalized := cleanCanonicalWithLimit(message, 0)
+	hasUnavailableReplicas := strings.Contains(strings.ToLower(normalized), "unavailablereplicas:")
+	parts := strings.Split(normalized, ";")
+	for index, part := range parts {
+		part = strings.TrimSpace(part)
+		if hasUnavailableReplicas && strings.Contains(strings.ToLower(part), "componentsnotavailable: waiting for components to be available:") {
+			if marker := strings.Index(strings.ToLower(part), "componentsnotavailable:"); marker >= 0 {
+				part = strings.TrimSpace(part[:marker+len("ComponentsNotAvailable")])
+			}
+		} else {
+			part = normalizeCommaSeparatedDetail(part, "waiting for components to be available:")
+		}
+		part = normalizeUnavailableReplicas(part)
+		parts[index] = part
+	}
+	return strings.Join(parts, "; ")
+}
+
+func normalizeCommaSeparatedDetail(value string, marker string) string {
+	lowered := strings.ToLower(value)
+	index := strings.Index(lowered, marker)
+	if index < 0 {
+		return value
+	}
+	start := index + len(marker)
+	items := sortedUniqueCommaList(value[start:])
+	if len(items) == 0 {
+		return value
+	}
+	return strings.TrimSpace(value[:start]) + " " + strings.Join(items, ", ")
+}
+
+func normalizeUnavailableReplicas(value string) string {
+	const marker = "unavailablereplicas:"
+	lowered := strings.ToLower(value)
+	index := strings.Index(lowered, marker)
+	if index < 0 {
+		return value
+	}
+	start := index + len(marker)
+	payload := strings.Trim(strings.TrimSpace(value[start:]), "[]")
+	items := sortedUniqueCommaList(payload)
+	if len(items) == 0 {
+		return value
+	}
+	for index, item := range items {
+		if match := reUnavailableDeployment.FindStringSubmatch(item); len(match) > 1 {
+			items[index] = strings.TrimSpace(match[1])
+		}
+	}
+	sort.Strings(items)
+	items = compactStrings(items)
+	if len(items) > 8 {
+		return strings.TrimSpace(value[:start]) + " multiple components"
+	}
+	return strings.TrimSpace(value[:start]) + " [" + strings.Join(items, ", ") + "]"
+}
+
+func sortedUniqueCommaList(value string) []string {
+	items := make([]string, 0)
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			items = append(items, item)
+		}
+	}
+	sort.Strings(items)
+	return compactStrings(items)
+}
+
+func summarizeClusterServiceDeletionMessage(message string) string {
+	normalized := collapseWS(message)
+	lowered := strings.ToLower(normalized)
+	if !strings.Contains(lowered, "cluster deletion did not complete before the deadline") ||
+		!strings.Contains(lowered, "[clusterservicedeletion] clusterservice cluster ") {
+		return ""
+	}
+
+	summary := []string{"cluster deletion did not complete before the deadline"}
+	descendants := make([]string, 0)
+	for _, rawPart := range strings.Split(normalized, ";") {
+		part := strings.TrimSpace(rawPart)
+		partLower := strings.ToLower(part)
+		switch {
+		case strings.Contains(partLower, "[clusterservicedeletion]") &&
+			strings.Contains(partLower, "clusterservice cluster") &&
+			strings.Contains(partLower, "still exists"):
+			summary = append(summary, "[clusterServiceDeletion] ClusterService cluster still exists")
+		case strings.Contains(partLower, "[clusterservicestatus]"):
+			if match := reClusterServiceState.FindStringSubmatch(part); len(match) > 1 {
+				summary = append(summary, `[clusterServiceStatus] state is "`+strings.ToLower(strings.TrimSpace(match[1]))+`"`)
+			}
+		case strings.Contains(partLower, "[hostedcluster]") && strings.Contains(partLower, "still exists"):
+			summary = append(summary, "[hostedCluster] HostedCluster still exists")
+		case strings.Contains(partLower, "[descendantresources]"):
+			if idx := strings.Index(partLower, "remaining resources:"); idx >= 0 {
+				for _, resource := range strings.Split(part[idx+len("remaining resources:"):], ",") {
+					resource = reLeadingResourceCount.ReplaceAllString(strings.TrimSpace(resource), "")
+					if slash := strings.LastIndex(resource, "/"); slash >= 0 {
+						resource = resource[slash+1:]
+					}
+					if resource != "" {
+						descendants = append(descendants, canonicalResourceKind(resource))
+					}
+				}
+			}
+		case strings.Contains(partLower, "cluster deletion did not complete before the deadline"):
+			continue
+		default:
+			part = reClusterServiceClusterRef.ReplaceAllString(part, "<cluster-id>")
+			part = reDeletionDispatchedAt.ReplaceAllString(part, "")
+			if part != "" {
+				summary = append(summary, part)
+			}
+		}
+	}
+	if len(descendants) > 0 {
+		sort.Strings(descendants)
+		descendants = compactStrings(descendants)
+		summary = append(summary, "[descendantResources] remaining resources: "+strings.Join(descendants, ", "))
+	}
+	return strings.Join(summary, "; ")
+}
+
+func canonicalResourceKind(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "nodepools":
+		return "nodePools"
+	case "serviceprovidernodepools":
+		return "serviceProviderNodePools"
+	case "serviceproviderclusters":
+		return "serviceProviderClusters"
+	default:
+		return strings.TrimSpace(value)
+	}
+}
+
+func compactStrings(values []string) []string {
+	if len(values) < 2 {
+		return values
+	}
+	out := values[:1]
+	for _, value := range values[1:] {
+		if value != out[len(out)-1] {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func appendAzureIdentityErrorDescription(message string, text string) string {
+	if !strings.Contains(strings.ToLower(message), "clientcertificatecredential authentication failed") {
+		return message
+	}
+	match := reAzureErrorDescription.FindStringSubmatch(text)
+	if len(match) < 2 {
+		return message
+	}
+	description := strings.TrimSpace(match[1])
+	for _, marker := range []string{" Trace ID:", " Correlation ID:", " Timestamp:"} {
+		if idx := strings.Index(description, marker); idx >= 0 {
+			description = strings.TrimSpace(description[:idx])
+		}
+	}
+	description = strings.TrimRight(description, " .") + "."
+	if description == "." || strings.Contains(strings.ToLower(message), strings.ToLower(description)) {
+		return message
+	}
+	return strings.TrimRight(message, " ;") + "; " + description
 }
 
 func splitNonEmptyLines(text string) []string {
@@ -1553,7 +2032,7 @@ func shouldPreferX509CertificateMismatchDetail(picked string) bool {
 	}
 	return strings.HasPrefix(normalized, "verifybasicaccess failed:") ||
 		strings.HasPrefix(normalized, "verifyallapiservicesavailable failed:") ||
-		(strings.HasPrefix(normalized, `get "`) && strings.Contains(normalized, "tls: failed to verify certificate:"))
+		strings.Contains(normalized, "tls: failed to verify certificate: x509:")
 }
 
 func isStepSetupNoiseLine(lowered string) bool {
@@ -1651,6 +2130,15 @@ func assertionHeaderDetail(line string) string {
 		return ""
 	}
 	return detail
+}
+
+func extractAssertionHeaderContext(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		if detail := assertionHeaderDetail(collapseWS(line)); detail != "" {
+			return detail
+		}
+	}
+	return ""
 }
 
 func truncateText(value string, max int) string {

@@ -65,6 +65,38 @@ func TestNewAppCommandDoesNotExposeExportSiteSubcommand(t *testing.T) {
 	}
 }
 
+func TestSplitAndTrim(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"empty", "", nil},
+		{"whitespace only", "  ", nil},
+		{"single", "dev", []string{"dev"}},
+		{"multiple", "dev,int,stg", []string{"dev", "int", "stg"}},
+		{"with spaces", " dev , int , stg ", []string{"dev", "int", "stg"}},
+		{"trailing comma", "dev,", []string{"dev"}},
+		{"only commas", ",,,", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := splitAndTrim(tc.input)
+			if len(got) != len(tc.want) {
+				t.Fatalf("len: got %d want %d (%v)", len(got), len(tc.want), got)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("index %d: got %q want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestNewAppCommandDefaultsPreparedWindowCacheFlags(t *testing.T) {
 	t.Parallel()
 

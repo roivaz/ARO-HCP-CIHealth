@@ -33,6 +33,7 @@ type HandlerOptions struct {
 	FailurePatternsEngine string
 	PostgresPool          *pgxpool.Pool
 	PreparedWindowCache   frontservice.PreparedWindowCacheOptions
+	MetricsHandler        http.Handler
 }
 
 type handler struct {
@@ -76,6 +77,9 @@ func NewHandler(opts HandlerOptions) (http.Handler, error) {
 	mux.HandleFunc("/run-log", h.handleRunsPage)
 	mux.HandleFunc("/failure-patterns", h.handleFailurePatternsPage)
 	mux.HandleFunc("/global", h.handleLegacyGlobalRedirect)
+	if opts.MetricsHandler != nil {
+		mux.Handle("/metrics", opts.MetricsHandler)
+	}
 	return mux, nil
 }
 

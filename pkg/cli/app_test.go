@@ -104,4 +104,12 @@ func TestNewAppCommandDefaultsPreparedWindowCacheFlags(t *testing.T) {
 	if got, want := cacheTTLFlag.DefValue, "12m0s"; got != want {
 		t.Fatalf("unexpected cache ttl default: got=%q want=%q", got, want)
 	}
+
+	cacheMaxTextBytesFlag := cmd.Flags().Lookup("app.failure-patterns-cache-max-text-bytes")
+	if cacheMaxTextBytesFlag == nil {
+		t.Fatalf("expected app.failure-patterns-cache-max-text-bytes flag")
+	}
+	if got, want := cacheMaxTextBytesFlag.DefValue, "201326592"; got != want {
+		t.Fatalf("unexpected cache max text bytes default: got=%q want=%q", got, want)
+	}
 }

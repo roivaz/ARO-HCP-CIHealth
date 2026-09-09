@@ -219,6 +219,84 @@ func TestPreparedWindowCacheLookupServesEnvironmentSubset(t *testing.T) {
 	}
 }
 
+func TestPreparedWindowCacheUsesPrimaryOptionsForCoveredColdRequest(t *testing.T) {
+	t.Parallel()
+
+	manager, err := newPreparedWindowCacheManager(PreparedWindowCacheOptions{
+		Enabled:          true,
+		EnvelopeDuration: DefaultPreparedWindowCacheEnvelopeDuration,
+		RefreshInterval:  DefaultPreparedWindowCacheRefreshInterval,
+		TTL:              DefaultPreparedWindowCacheTTL,
+	})
+	if err != nil {
+		t.Fatalf("create prepared window cache manager: %v", err)
+	}
+
+	now := time.Date(2026, time.May, 5, 9, 0, 0, 0, time.UTC)
+	primaryOpts := manager.primaryPrepareOptions(now)
+	requestOpts := failurepatternwindow.PrepareOptions{
+		Environments: []string{manager.primaryEnvironments[0]},
+		StartTime:    primaryOpts.StartTime.Add(24 * time.Hour),
+		EndTime:      primaryOpts.EndTime.Add(-24 * time.Hour),
+	}
+	got, ok := manager.coveringPrimaryPrepareOptions(requestOpts, now)
+	if !ok {
+		t.Fatalf("expected covered cold request to use primary preparation options")
+	}
+	if !preparedWindowCacheOptionsEqual(got, primaryOpts) {
+		t.Fatalf("unexpected primary preparation options: got=%+v want=%+v", got, primaryOpts)
+	}
+
+	outsideOpts := requestOpts
+	outsideOpts.StartTime = primaryOpts.StartTime.Add(-time.Second)
+	if _, ok := manager.coveringPrimaryPrepareOptions(outsideOpts, now); ok {
+		t.Fatalf("expected request outside primary envelope to remain on-demand")
+	}
+}
+
+func TestPreparedWindowCacheRejectsSnapshotOverTextBudget(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	fixture := newPreparedWindowCacheFixture(t)
+	store := fixture.OpenStore(t)
+	seedPreparedWindowCacheFacts(t, ctx, store, []preparedWindowCacheFactSeed{
+		{
+			RunURL:      "https://prow.example.com/view/cache-budget-1",
+			OccurredAt:  "2026-05-01T08:00:00Z",
+			RowID:       "row-cache-budget-1",
+			SignatureID: "sig-cache-budget-1",
+		},
+	})
+
+	opts := failurepatternwindow.PrepareOptions{
+		Environments: []string{"dev"},
+		StartTime:    time.Date(2026, time.May, 1, 0, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, time.May, 2, 0, 0, 0, 0, time.UTC),
+	}
+	prepared, err := failurepatternwindow.Prepare(ctx, store, opts)
+	if err != nil {
+		t.Fatalf("prepare window: %v", err)
+	}
+
+	manager, err := newPreparedWindowCacheManager(PreparedWindowCacheOptions{
+		Enabled:          true,
+		EnvelopeDuration: DefaultPreparedWindowCacheEnvelopeDuration,
+		RefreshInterval:  DefaultPreparedWindowCacheRefreshInterval,
+		TTL:              DefaultPreparedWindowCacheTTL,
+		MaxTextBytes:     1,
+	})
+	if err != nil {
+		t.Fatalf("create prepared window cache manager: %v", err)
+	}
+	if manager.store(opts, prepared, time.Now().UTC()) {
+		t.Fatalf("expected snapshot over text budget not to be cached")
+	}
+	if manager.snapshot != nil {
+		t.Fatalf("expected rejected snapshot not to replace cache")
+	}
+}
+
 func newPreparedWindowCacheTestService(t testing.TB, pool *pgxpool.Pool) *Service {
 	t.Helper()
 

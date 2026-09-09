@@ -20,6 +20,7 @@ const (
 	DefaultPreparedWindowCacheEnvelopeDuration = 35 * 24 * time.Hour
 	DefaultPreparedWindowCacheRefreshInterval  = 10 * time.Minute
 	DefaultPreparedWindowCacheTTL              = 12 * time.Minute
+	DefaultPreparedWindowCacheMaxTextBytes     = 192 << 20
 )
 
 type PreparedWindowCacheOptions struct {
@@ -27,6 +28,7 @@ type PreparedWindowCacheOptions struct {
 	EnvelopeDuration time.Duration
 	RefreshInterval  time.Duration
 	TTL              time.Duration
+	MaxTextBytes     int64
 }
 
 type preparedWindowCacheManager struct {
@@ -34,6 +36,7 @@ type preparedWindowCacheManager struct {
 	envelopeDuration    time.Duration
 	refreshInterval     time.Duration
 	ttl                 time.Duration
+	maxTextBytes        int64
 	primaryEnvironments []string
 
 	refreshLoop  sync.Once
@@ -49,6 +52,7 @@ type preparedWindowCacheSnapshot struct {
 	startTime      time.Time
 	endTime        time.Time
 	refreshedAt    time.Time
+	retainedBytes  int64
 }
 
 func newPreparedWindowCacheManager(opts PreparedWindowCacheOptions) (*preparedWindowCacheManager, error) {
@@ -61,6 +65,7 @@ func newPreparedWindowCacheManager(opts PreparedWindowCacheOptions) (*preparedWi
 		envelopeDuration:    normalized.EnvelopeDuration,
 		refreshInterval:     normalized.RefreshInterval,
 		ttl:                 normalized.TTL,
+		maxTextBytes:        normalized.MaxTextBytes,
 		primaryEnvironments: normalizePreparedWindowCacheEnvironmentSet(sourceoptions.SupportedEnvironments()),
 	}, nil
 }
@@ -78,6 +83,9 @@ func normalizePreparedWindowCacheOptions(opts PreparedWindowCacheOptions) (Prepa
 	if opts.TTL <= 0 {
 		opts.TTL = DefaultPreparedWindowCacheTTL
 	}
+	if opts.MaxTextBytes == 0 {
+		opts.MaxTextBytes = DefaultPreparedWindowCacheMaxTextBytes
+	}
 	if opts.EnvelopeDuration <= 0 {
 		return PreparedWindowCacheOptions{}, fmt.Errorf("prepared window cache envelope duration must be > 0")
 	}
@@ -86,6 +94,9 @@ func normalizePreparedWindowCacheOptions(opts PreparedWindowCacheOptions) (Prepa
 	}
 	if opts.TTL <= 0 {
 		return PreparedWindowCacheOptions{}, fmt.Errorf("prepared window cache ttl must be > 0")
+	}
+	if opts.MaxTextBytes < 0 {
+		return PreparedWindowCacheOptions{}, fmt.Errorf("prepared window cache max text bytes must be >= 0")
 	}
 	return opts, nil
 }
@@ -133,12 +144,18 @@ func (s *Service) PrepareFailurePatternWindow(
 		logPreparedWindowCacheRequest("miss", reason, normalizedOpts, nil, false)
 	}
 
-	preparedWindow, shared, err := s.prepareFailurePatternWindowSingleflight(ctx, normalizedOpts)
+	prepareOpts := normalizedOpts
+	computeReason := "on_demand"
+	if primaryOpts, ok := s.preparedWindowCache.coveringPrimaryPrepareOptions(normalizedOpts, now); ok {
+		prepareOpts = primaryOpts
+		computeReason = "primary_cache"
+	}
+	preparedWindow, shared, err := s.prepareFailurePatternWindowSingleflight(ctx, prepareOpts)
 	if err != nil {
 		return failurepatternwindow.PreparedWindow{}, err
 	}
-	logPreparedWindowCacheRequest("compute", "on_demand", normalizedOpts, nil, shared)
-	s.maybeStorePrimaryPreparedWindow(normalizedOpts, preparedWindow, now)
+	logPreparedWindowCacheRequest("compute", computeReason, prepareOpts, nil, shared)
+	s.maybeStorePrimaryPreparedWindow(prepareOpts, preparedWindow, now)
 	return preparedWindow, nil
 }
 
@@ -196,14 +213,16 @@ func (s *Service) refreshPreparedWindowCache(ctx context.Context, now time.Time)
 		)
 		return
 	}
-	s.preparedWindowCache.store(primaryOpts, preparedWindow, now)
+	cached := s.preparedWindowCache.store(primaryOpts, preparedWindow, time.Now().UTC())
 	log.Printf(
-		"failure-pattern-cache refresh status=success envs=%s window=%s refreshed_at=%s duration=%s shared=%t",
+		"failure-pattern-cache refresh status=success envs=%s window=%s refreshed_at=%s duration=%s shared=%t cached=%t retained_text_bytes=%d",
 		strings.Join(primaryOpts.Environments, ","),
 		preparedWindowCacheWindowLabel(primaryOpts.StartTime, primaryOpts.EndTime),
-		now.UTC().Format(time.RFC3339),
+		time.Now().UTC().Format(time.RFC3339),
 		time.Since(startedAt),
 		shared,
+		cached,
+		preparedWindow.RetainedTextBytes(),
 	)
 }
 
@@ -219,7 +238,7 @@ func (s *Service) maybeStorePrimaryPreparedWindow(
 	if !preparedWindowCacheOptionsEqual(opts, primaryOpts) {
 		return
 	}
-	s.preparedWindowCache.store(primaryOpts, preparedWindow, now)
+	s.preparedWindowCache.store(primaryOpts, preparedWindow, time.Now().UTC())
 }
 
 func (m *preparedWindowCacheManager) lookup(
@@ -252,9 +271,20 @@ func (m *preparedWindowCacheManager) store(
 	opts failurepatternwindow.PrepareOptions,
 	preparedWindow failurepatternwindow.PreparedWindow,
 	refreshedAt time.Time,
-) {
+) bool {
 	if m == nil {
-		return
+		return false
+	}
+	retainedBytes := preparedWindow.RetainedTextBytes()
+	if m.maxTextBytes > 0 && retainedBytes > m.maxTextBytes {
+		log.Printf(
+			"failure-pattern-cache store status=skipped reason=text_budget retained_text_bytes=%d max_text_bytes=%d envs=%s window=%s",
+			retainedBytes,
+			m.maxTextBytes,
+			strings.Join(opts.Environments, ","),
+			preparedWindowCacheWindowLabel(opts.StartTime, opts.EndTime),
+		)
+		return false
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -264,7 +294,9 @@ func (m *preparedWindowCacheManager) store(
 		startTime:      opts.StartTime.UTC(),
 		endTime:        opts.EndTime.UTC(),
 		refreshedAt:    refreshedAt.UTC(),
+		retainedBytes:  retainedBytes,
 	}
+	return true
 }
 
 func (m *preparedWindowCacheManager) primaryPrepareOptions(now time.Time) failurepatternwindow.PrepareOptions {
@@ -277,6 +309,21 @@ func (m *preparedWindowCacheManager) primaryPrepareOptions(now time.Time) failur
 		StartTime:    cacheEnd.Add(-m.envelopeDuration).UTC(),
 		EndTime:      cacheEnd,
 	}
+}
+
+func (m *preparedWindowCacheManager) coveringPrimaryPrepareOptions(
+	opts failurepatternwindow.PrepareOptions,
+	now time.Time,
+) (failurepatternwindow.PrepareOptions, bool) {
+	if m == nil || !m.enabled ||
+		!preparedWindowCacheEnvironmentsCovered(opts.Environments, m.primaryEnvironments) {
+		return failurepatternwindow.PrepareOptions{}, false
+	}
+	primaryOpts := m.primaryPrepareOptions(now)
+	if opts.StartTime.Before(primaryOpts.StartTime) || opts.EndTime.After(primaryOpts.EndTime) {
+		return failurepatternwindow.PrepareOptions{}, false
+	}
+	return primaryOpts, true
 }
 
 func (m *preparedWindowCacheManager) refreshTimeout() time.Duration {
@@ -399,6 +446,7 @@ func logPreparedWindowCacheRequest(
 			"snapshot_window="+preparedWindowCacheWindowLabel(snapshot.startTime, snapshot.endTime),
 			"snapshot_refreshed_at="+snapshot.refreshedAt.UTC().Format(time.RFC3339),
 			fmt.Sprintf("snapshot_age=%s", time.Since(snapshot.refreshedAt)),
+			fmt.Sprintf("snapshot_retained_text_bytes=%d", snapshot.retainedBytes),
 		)
 	}
 	if shared {

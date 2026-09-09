@@ -59,6 +59,8 @@ var (
 	reCodeField                   = regexp.MustCompile(`"code"\s*:\s*"([A-Za-z0-9_]+)"`)
 	reCauseBySplit                = regexp.MustCompile(`(?i)caused by:`)
 	reErrorCode                   = regexp.MustCompile(`(?i)ERROR CODE:\s*([A-Za-z0-9_]+)`)
+	reAzureMessage                = regexp.MustCompile(`(?is)"message"\s*:\s*"(.+?)"\s*[,}\]]`)
+	reASCIILetter                 = regexp.MustCompile(`[A-Za-z]`)
 	rePickErrorSignal             = regexp.MustCompile(`(?i)(error|failed|timeout|forbidden|denied|conflict|deadline|not found)`)
 	reHTTPResponseStatusLine      = regexp.MustCompile(`(?i)^response [45][0-9]{2}:\s*.+$`)
 	reRouteHostNeverFound         = regexp.MustCompile(`(?i)route host was never found:[^\n]+`)
@@ -208,56 +210,61 @@ var (
 	reCleanMakeDirectory = regexp.MustCompile(`(?i)make\[\d+\]: (?:Entering|Leaving) directory\s+'[^']*'\s*\.?\s*`)
 )
 
-var normalizePickPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)Deserializa(?:ti|i)on Error:[^\n]+`),
-	regexp.MustCompile(`(?i)Command Error:[^\n]+`),
-	regexp.MustCompile(`(?i)route host was never found:[^\n]+`),
-	regexp.MustCompile(`(?i)cluster operators not available:[^\n]+`),
-	regexp.MustCompile(`(?i)client rate limiter wait returned an error: context deadline exceeded`),
-	regexp.MustCompile(`(?i)missing expected log sources[^\n]+`),
-	regexp.MustCompile(`(?i)failed to gather logs[^\n]+`),
-	regexp.MustCompile(`(?i)failed to get service aro-hcp-exporter/aro-hcp-exporter: services "aro-hcp-exporter" not found`),
-	regexp.MustCompile(`(?i)failed to search for managed resource groups:[^\n]+`),
-	regexp.MustCompile(`(?i)failed to create SRE breakglass session:[^\n]+`),
+type prefixedPattern struct {
+	needle  string
+	pattern *regexp.Regexp
+}
+
+var normalizePickPatterns = []prefixedPattern{
+	{"deserializa", regexp.MustCompile(`(?i)Deserializa(?:ti|i)on Error:[^\n]+`)},
+	{"command error:", regexp.MustCompile(`(?i)Command Error:[^\n]+`)},
+	{"route host was never found:", regexp.MustCompile(`(?i)route host was never found:[^\n]+`)},
+	{"cluster operators not available:", regexp.MustCompile(`(?i)cluster operators not available:[^\n]+`)},
+	{"client rate limiter wait returned an error:", regexp.MustCompile(`(?i)client rate limiter wait returned an error: context deadline exceeded`)},
+	{"missing expected log sources", regexp.MustCompile(`(?i)missing expected log sources[^\n]+`)},
+	{"failed to gather logs", regexp.MustCompile(`(?i)failed to gather logs[^\n]+`)},
+	{"failed to get service aro-hcp-exporter/aro-hcp-exporter", regexp.MustCompile(`(?i)failed to get service aro-hcp-exporter/aro-hcp-exporter: services "aro-hcp-exporter" not found`)},
+	{"failed to search for managed resource groups:", regexp.MustCompile(`(?i)failed to search for managed resource groups:[^\n]+`)},
+	{"failed to create sre breakglass session:", regexp.MustCompile(`(?i)failed to create SRE breakglass session:[^\n]+`)},
 	// ERROR CODE must come before the generic response-status line so that a
 	// richer error code (e.g. NotFound with a detail message) is preferred
 	// over the bare HTTP status text.
-	regexp.MustCompile(`(?i)ERROR CODE:\s*[A-Za-z0-9_]+`),
-	regexp.MustCompile(`(?i)response 404:[^\n]{0,240}`),
-	regexp.MustCompile(`(?i)timeout '\d+\.\d+' minutes exceeded during CreateNodePoolFromParam[^\n]*`),
-	regexp.MustCompile(`(?i)failed waiting for nodepool[^\n]+(?:updating|to finish creating)[^\n]*`),
-	regexp.MustCompile(`(?i)UpdateNodePoolAndWait[^\n]+minutes exceeded[^\n]*`),
-	regexp.MustCompile(`(?i)timeout '\d+\.\d+' minutes exceeded during CreateHCPClusterFromParam[^\n]*`),
-	regexp.MustCompile(`(?i)error running Image Mirror Step, failed to execute shell command:[^\n]+`),
-	regexp.MustCompile(`(?i)error running Helm release deployment Step, failed to deploy helm release:[^\n]+`),
-	regexp.MustCompile(`(?i)error running Shell Step, failed to execute shell command:[^\n]+`),
-	regexp.MustCompile(`(?i)failed to run ARM step:[^\n]+`),
-	regexp.MustCompile(`(?i)Cluster provisioning failed`),
-	regexp.MustCompile(`(?i)Interrupted by User`),
+	{"error code:", regexp.MustCompile(`(?i)ERROR CODE:\s*[A-Za-z0-9_]+`)},
+	{"response 404:", regexp.MustCompile(`(?i)response 404:[^\n]{0,240}`)},
+	{"createnodepoolfromparam", regexp.MustCompile(`(?i)timeout '\d+\.\d+' minutes exceeded during CreateNodePoolFromParam[^\n]*`)},
+	{"failed waiting for nodepool", regexp.MustCompile(`(?i)failed waiting for nodepool[^\n]+(?:updating|to finish creating)[^\n]*`)},
+	{"updatenodepoolandwait", regexp.MustCompile(`(?i)UpdateNodePoolAndWait[^\n]+minutes exceeded[^\n]*`)},
+	{"createhcpclusterfromparam", regexp.MustCompile(`(?i)timeout '\d+\.\d+' minutes exceeded during CreateHCPClusterFromParam[^\n]*`)},
+	{"error running image mirror step", regexp.MustCompile(`(?i)error running Image Mirror Step, failed to execute shell command:[^\n]+`)},
+	{"error running helm release deployment step", regexp.MustCompile(`(?i)error running Helm release deployment Step, failed to deploy helm release:[^\n]+`)},
+	{"error running shell step", regexp.MustCompile(`(?i)error running Shell Step, failed to execute shell command:[^\n]+`)},
+	{"failed to run arm step:", regexp.MustCompile(`(?i)failed to run ARM step:[^\n]+`)},
+	{"cluster provisioning failed", regexp.MustCompile(`(?i)Cluster provisioning failed`)},
+	{"interrupted by user", regexp.MustCompile(`(?i)Interrupted by User`)},
 }
 
-var safeSearchPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)Deserializa(?:ti|i)on Error:[^\n]+`),
-	regexp.MustCompile(`(?i)Command Error:[^\n]+`),
-	regexp.MustCompile(`(?i)route host was never found:[^\n]+`),
-	regexp.MustCompile(`(?i)cluster operators not available:[^\n]+`),
-	regexp.MustCompile(`(?i)client rate limiter wait returned an error: context deadline exceeded`),
-	regexp.MustCompile(`(?i)ERROR CODE:\s*[A-Za-z0-9_]+`),
-	regexp.MustCompile(`(?i)timeout '\d+\.\d+' minutes exceeded during [A-Za-z0-9_]+`),
-	regexp.MustCompile(`(?i)failed waiting for nodepool[^\n]+(?:updating|to finish creating)[^\n]*`),
-	regexp.MustCompile(`(?i)failed to get service aro-hcp-exporter/aro-hcp-exporter: services "aro-hcp-exporter" not found`),
-	regexp.MustCompile(`(?i)failed to search for managed resource groups:[^\n]+`),
-	regexp.MustCompile(`(?i)failed to create SRE breakglass session:[^\n]+`),
-	regexp.MustCompile(`(?i)error running Image Mirror Step, failed to execute shell command:[^\n]+`),
-	regexp.MustCompile(`(?i)error running Helm release deployment Step, failed to deploy helm release:[^\n]+`),
-	regexp.MustCompile(`(?i)error running Shell Step, failed to execute shell command:[^\n]+`),
-	regexp.MustCompile(`(?i)failed to run ARM step:[^\n]+`),
-	regexp.MustCompile(`(?i)response 404:[^\n]+`),
-	regexp.MustCompile(`(?i)missing expected log sources[^\n]+`),
-	regexp.MustCompile(`(?i)failed to gather logs[^\n]+`),
-	regexp.MustCompile(`(?i)context deadline exceeded`),
-	regexp.MustCompile(`(?i)Interrupted by User`),
-	regexp.MustCompile(`(?i)Cluster provisioning failed`),
+var safeSearchPatterns = []prefixedPattern{
+	{"deserializa", regexp.MustCompile(`(?i)Deserializa(?:ti|i)on Error:[^\n]+`)},
+	{"command error:", regexp.MustCompile(`(?i)Command Error:[^\n]+`)},
+	{"route host was never found:", regexp.MustCompile(`(?i)route host was never found:[^\n]+`)},
+	{"cluster operators not available:", regexp.MustCompile(`(?i)cluster operators not available:[^\n]+`)},
+	{"client rate limiter wait returned an error:", regexp.MustCompile(`(?i)client rate limiter wait returned an error: context deadline exceeded`)},
+	{"error code:", regexp.MustCompile(`(?i)ERROR CODE:\s*[A-Za-z0-9_]+`)},
+	{"minutes exceeded during", regexp.MustCompile(`(?i)timeout '\d+\.\d+' minutes exceeded during [A-Za-z0-9_]+`)},
+	{"failed waiting for nodepool", regexp.MustCompile(`(?i)failed waiting for nodepool[^\n]+(?:updating|to finish creating)[^\n]*`)},
+	{"failed to get service aro-hcp-exporter/aro-hcp-exporter", regexp.MustCompile(`(?i)failed to get service aro-hcp-exporter/aro-hcp-exporter: services "aro-hcp-exporter" not found`)},
+	{"failed to search for managed resource groups:", regexp.MustCompile(`(?i)failed to search for managed resource groups:[^\n]+`)},
+	{"failed to create sre breakglass session:", regexp.MustCompile(`(?i)failed to create SRE breakglass session:[^\n]+`)},
+	{"error running image mirror step", regexp.MustCompile(`(?i)error running Image Mirror Step, failed to execute shell command:[^\n]+`)},
+	{"error running helm release deployment step", regexp.MustCompile(`(?i)error running Helm release deployment Step, failed to deploy helm release:[^\n]+`)},
+	{"error running shell step", regexp.MustCompile(`(?i)error running Shell Step, failed to execute shell command:[^\n]+`)},
+	{"failed to run arm step:", regexp.MustCompile(`(?i)failed to run ARM step:[^\n]+`)},
+	{"response 404:", regexp.MustCompile(`(?i)response 404:[^\n]+`)},
+	{"missing expected log sources", regexp.MustCompile(`(?i)missing expected log sources[^\n]+`)},
+	{"failed to gather logs", regexp.MustCompile(`(?i)failed to gather logs[^\n]+`)},
+	{"context deadline exceeded", regexp.MustCompile(`(?i)context deadline exceeded`)},
+	{"interrupted by user", regexp.MustCompile(`(?i)Interrupted by User`)},
+	{"cluster provisioning failed", regexp.MustCompile(`(?i)Cluster provisioning failed`)},
 }
 
 type FailurePattern struct {
@@ -291,7 +298,10 @@ func ExtractWithOptions(text string, opts ExtractOptions) FailurePattern {
 	raw := text
 	lowered := strings.ToLower(raw)
 	provider := ProviderAnchor(raw)
-	assertionContext := extractAssertionContext(raw)
+	assertionContext := ""
+	if likelyContainsAssertion(lowered) {
+		assertionContext = extractAssertionContext(raw)
+	}
 	if assertionContext != "" {
 		canonical := normalizeExtractedCanonical(cleanCanonical(prepareCanonicalText(assertionContext)))
 		searchPhrase := ""
@@ -306,11 +316,18 @@ func ExtractWithOptions(text string, opts ExtractOptions) FailurePattern {
 		}
 	}
 
-	logfmtErr := extractLogfmtStepError(raw)
-	releaseStatusDescription := extractLogfmtReleaseStatusDescription(raw)
+	logfmtErr := ""
+	releaseStatusDescription := ""
+	if strings.Contains(lowered, "level=") {
+		logfmtErr = extractLogfmtStepError(raw)
+		releaseStatusDescription = extractLogfmtReleaseStatusDescription(raw)
+	}
 	picked := ""
-	for _, pattern := range normalizePickPatterns {
-		if match := pattern.FindString(raw); match != "" {
+	for _, candidate := range normalizePickPatterns {
+		if !strings.Contains(lowered, candidate.needle) {
+			continue
+		}
+		if match := candidate.pattern.FindString(raw); match != "" {
 			picked = match
 			break
 		}
@@ -322,11 +339,15 @@ func ExtractWithOptions(text string, opts ExtractOptions) FailurePattern {
 	if releaseStatusDescription != "" && (picked == "" || isReleaseStatusWrapperPick(picked)) {
 		picked = releaseStatusDescription
 	}
-	if candidateGraphFailure := bestCandidateGraphFailure(raw); candidateGraphFailure != "" {
-		picked = candidateGraphFailure
+	if strings.Contains(lowered, "query candidate graph for") {
+		if candidateGraphFailure := bestCandidateGraphFailure(raw); candidateGraphFailure != "" {
+			picked = candidateGraphFailure
+		}
 	}
-	if imageMirrorFailure := bestImageMirrorInnerFailure(raw); imageMirrorFailure != "" {
-		picked = imageMirrorFailure
+	if strings.Contains(lowered, "image mirror") {
+		if imageMirrorFailure := bestImageMirrorInnerFailure(raw); imageMirrorFailure != "" {
+			picked = imageMirrorFailure
+		}
 	}
 
 	if picked == "" {
@@ -377,12 +398,14 @@ func ExtractWithOptions(text string, opts ExtractOptions) FailurePattern {
 			}
 		}
 	}
-	if certMismatch := bestX509CertificateMismatchDetail(raw); certMismatch != "" && shouldPreferX509CertificateMismatchDetail(picked) {
-		picked = certMismatch
+	if strings.Contains(lowered, "x509:") {
+		if certMismatch := bestX509CertificateMismatchDetail(raw); certMismatch != "" && shouldPreferX509CertificateMismatchDetail(picked) {
+			picked = certMismatch
+		}
 	}
 
 	if strings.EqualFold(strings.TrimSpace(picked), "cluster provisioning failed") {
-		if codePick := regexp.MustCompile(`(?i)ERROR CODE:\s*[A-Za-z0-9_]+`).FindString(raw); codePick != "" {
+		if codePick := reErrorCode.FindString(raw); codePick != "" {
 			picked = codePick
 		}
 	}
@@ -872,22 +895,33 @@ func truncateCanonical(value string, max int) string {
 }
 
 func extractAssertionContext(text string) string {
-	if boolContext := extractBoolAssertionContext(text); boolContext != "" {
-		return boolContext
+	lowered := strings.ToLower(text)
+	if strings.Contains(lowered, "timed out after") && strings.Contains(lowered, "to be true") {
+		if boolContext := extractBoolAssertionContext(text); boolContext != "" {
+			return boolContext
+		}
 	}
-	if eventuallyContext := extractEventuallyFailureContext(text); eventuallyContext != "" {
-		return eventuallyContext
+	if strings.Contains(lowered, "expected") {
+		if eventuallyContext := extractEventuallyFailureContext(text); eventuallyContext != "" {
+			return eventuallyContext
+		}
 	}
-	if successContext := extractGomegaSuccessFailureContext(text); successContext != "" {
-		return successContext
+	if strings.Contains(lowered, "expected success, but got an error:") {
+		if successContext := extractGomegaSuccessFailureContext(text); successContext != "" {
+			return successContext
+		}
 	}
-	if modelDiffSummary := extractModelDiffSummaryContext(text); modelDiffSummary != "" {
-		return modelDiffSummary
+	if strings.Contains(lowered, "operation result model did not match") {
+		if modelDiffSummary := extractModelDiffSummaryContext(text); modelDiffSummary != "" {
+			return modelDiffSummary
+		}
 	}
-	if placeholderEquality := extractPlaceholderOnlyEqualityAssertionContext(text); placeholderEquality != "" {
-		return placeholderEquality
+	if strings.Contains(lowered, "to equal") {
+		if placeholderEquality := extractPlaceholderOnlyEqualityAssertionContext(text); placeholderEquality != "" {
+			return placeholderEquality
+		}
 	}
-	if reExpectedErrorButNil.MatchString(text) {
+	if strings.Contains(lowered, "expected an error to have occurred") && reExpectedErrorButNil.MatchString(text) {
 		for _, line := range strings.Split(text, "\n") {
 			if detail := assertionHeaderDetail(collapseWS(line)); detail != "" {
 				return detail
@@ -926,7 +960,7 @@ func extractAssertionContext(text string) string {
 			if reAssertionErrorSignal.MatchString(candidate) {
 				return candidate
 			}
-			if best == "" && regexp.MustCompile(`[A-Za-z]`).MatchString(candidate) {
+			if best == "" && reASCIILetter.MatchString(candidate) {
 				best = candidate
 			}
 		}
@@ -935,6 +969,33 @@ func extractAssertionContext(text string) string {
 		}
 	}
 	return ""
+}
+
+func likelyContainsAssertion(lowered string) bool {
+	if strings.Contains(lowered, "expected success, but got an error:") ||
+		strings.Contains(lowered, "operation result model did not match") ||
+		containsTrimmedLine(lowered, "expected") {
+		return true
+	}
+	for _, prefix := range assertionTailPrefixes {
+		if strings.Contains(lowered, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsTrimmedLine(text string, target string) bool {
+	for {
+		line, rest, found := strings.Cut(text, "\n")
+		if strings.TrimSpace(line) == target {
+			return true
+		}
+		if !found {
+			return false
+		}
+		text = rest
+	}
 }
 
 func unwrapTimedOutAssertionWrapper(value string) string {
@@ -1214,13 +1275,19 @@ func isReleaseStatusWrapperPick(value string) bool {
 }
 
 func safeSearchFromText(text string) string {
-	assertionContext := extractAssertionContext(text)
-	if assertionContext != "" && strings.Contains(text, assertionContext) {
-		return assertionContext
+	lowered := strings.ToLower(text)
+	if likelyContainsAssertion(lowered) {
+		assertionContext := extractAssertionContext(text)
+		if assertionContext != "" && strings.Contains(text, assertionContext) {
+			return assertionContext
+		}
 	}
 
-	for _, pattern := range safeSearchPatterns {
-		if match := pattern.FindString(text); match != "" {
+	for _, candidate := range safeSearchPatterns {
+		if !strings.Contains(lowered, candidate.needle) {
+			continue
+		}
+		if match := candidate.pattern.FindString(text); match != "" {
 			token := strings.TrimSpace(match)
 			if token == "" || containsPlaceholderToken(token) {
 				continue
@@ -1404,20 +1471,16 @@ func extractAzureMessageForCode(text string, code string) string {
 	if targetCode == "" {
 		return ""
 	}
-	// The message capture is intentionally lazy and stops only at a quote
-	// immediately followed by a JSON delimiter (,}]). A plain `[^"]+` stops
-	// at the FIRST bare quote, which truncates messages that legitimately
-	// contain an escaped quote (e.g. `Invalid value: \"tag\": unrecognized
-	// experimental tag`) once decodeEscapedErrorPayload has unescaped it to
-	// a literal `"` for nested-JSON-in-string parsing elsewhere.
-	pattern := `(?is)(?:ERROR CODE:\s*` + regexp.QuoteMeta(targetCode) + `|"code"\s*:\s*"` + regexp.QuoteMeta(targetCode) + `").{0,900}"message"\s*:\s*"(.+?)"\s*[,}\]]`
-	reCodeMessage := regexp.MustCompile(pattern)
-	matches := reCodeMessage.FindAllStringSubmatch(text, -1)
-	for i := len(matches) - 1; i >= 0; i-- {
-		if len(matches[i]) < 2 {
+	hits := collectAzureCodeHits(text)
+	for i := len(hits) - 1; i >= 0; i-- {
+		if !strings.EqualFold(strings.TrimSpace(hits[i].Code), targetCode) {
 			continue
 		}
-		message := strings.TrimSpace(matches[i][1])
+		messageMatch := reAzureMessage.FindStringSubmatchIndex(text[hits[i].Index:])
+		if len(messageMatch) < 4 || messageMatch[0] > 900 {
+			continue
+		}
+		message := strings.TrimSpace(text[hits[i].Index+messageMatch[2] : hits[i].Index+messageMatch[3]])
 		if message == "" {
 			continue
 		}

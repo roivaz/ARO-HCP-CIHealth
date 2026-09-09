@@ -82,3 +82,18 @@ func TestFailurePatternKeyRemovesPlaceholderTokens(t *testing.T) {
 		t.Fatalf("unexpected failure pattern key: got=%q", key)
 	}
 }
+
+func TestExtractPreservesExpectedBlockWithUnlistedMatcher(t *testing.T) {
+	t.Parallel()
+
+	raw := `failed waiting for the hosted cluster deployment to stabilize
+Expected
+    <string>: pending
+to be equivalent to
+    <string>: ready`
+
+	pattern := Extract(raw)
+	if got, want := pattern.CanonicalEvidencePhrase, "failed waiting for the hosted cluster deployment to stabilize"; got != want {
+		t.Fatalf("unexpected canonical phrase: got=%q want=%q", got, want)
+	}
+}

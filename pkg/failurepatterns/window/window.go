@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -131,7 +132,10 @@ type aggregateBucket struct {
 	rows         []ExtractedFailureRow
 }
 
-const maxEnvironmentLoadConcurrency = 4
+const (
+	maxEnvironmentLoadConcurrency = 4
+	maxExtractionConcurrency      = 4
+)
 
 type PreparedWindow struct {
 	startTime          time.Time
@@ -144,6 +148,24 @@ type PreparedWindow struct {
 
 func (prepared PreparedWindow) FactsByEnvironment() map[string]EnvironmentFacts {
 	return cloneFactsByEnvironment(prepared.factsByEnvironment)
+}
+
+func (prepared PreparedWindow) RetainedTextBytes() int64 {
+	var total int64
+	for _, facts := range prepared.factsByEnvironment {
+		for _, row := range facts.RawFailures {
+			total += int64(len(row.RawText) + len(row.NormalizedText))
+		}
+	}
+	for _, row := range prepared.extractedRows {
+		total += int64(
+			len(row.CanonicalEvidencePhrase) +
+				len(row.SearchQueryPhrase) +
+				len(row.ProviderAnchor) +
+				len(row.FailurePatternKey),
+		)
+	}
+	return total
 }
 
 func Compute(
@@ -634,7 +656,12 @@ func buildExtractedFailureRows(
 	}
 	sort.Strings(environments)
 
-	rows := make([]ExtractedFailureRow, 0)
+	type extractionCandidate struct {
+		environment string
+		rawFailure  storecontracts.RawFailureRecord
+		run         storecontracts.RunRecord
+	}
+	candidates := make([]extractionCandidate, 0)
 	for _, environment := range environments {
 		facts := factsByEnvironment[environment]
 		for _, rawFailure := range facts.RawFailures {
@@ -661,50 +688,84 @@ func buildExtractedFailureRows(
 				}
 				continue
 			}
-
-			occurredAt := strings.TrimSpace(rawFailure.OccurredAt)
-			if occurredAt == "" {
-				occurredAt = strings.TrimSpace(run.OccurredAt)
-			}
-
-			evidence := failureextractor.ExtractWithOptions(rawFailure.RawText, failureextractor.ExtractOptions{
-				TestName: rawFailure.TestName,
-			})
-			lane := string(sourcelanes.DeriveLane(environment, rawFailure.ArtifactPath, rawFailure.TestSuite, rawFailure.TestName))
-			canonicalPhrase := strings.TrimSpace(evidence.CanonicalEvidencePhrase)
-			searchPhrase := strings.TrimSpace(evidence.SearchQueryPhrase)
-			failurePatternKey := strings.TrimSpace(failureextractor.FailurePatternKey(evidence))
-			// Alert failures are identified by the alert (scope + name) rather than the
-			// failure text, which is near-identical across alerts ("alert fired N time(s)").
-			if lane == string(sourcelanes.LaneAlert) {
-				if identity, ok := alertIdentityFromTestName(rawFailure.TestName); ok {
-					canonicalPhrase = identity.canonical
-					searchPhrase = identity.canonical
-					failurePatternKey = identity.key
-				}
-			}
-			rows = append(rows, ExtractedFailureRow{
-				Environment:             environment,
-				RowID:                   strings.TrimSpace(rawFailure.RowID),
-				RunURL:                  runURL,
-				OccurredAt:              occurredAt,
-				SignatureID:             strings.TrimSpace(rawFailure.SignatureID),
-				PRNumber:                run.PRNumber,
-				PostGoodCommit:          run.PostGoodCommit,
-				Lane:                    lane,
-				ArtifactPath:            strings.TrimSpace(rawFailure.ArtifactPath),
-				JobName:                 strings.TrimSpace(run.JobName),
-				TestName:                strings.TrimSpace(rawFailure.TestName),
-				TestSuite:               strings.TrimSpace(rawFailure.TestSuite),
-				RawText:                 strings.TrimSpace(rawFailure.RawText),
-				NormalizedText:          strings.TrimSpace(rawFailure.NormalizedText),
-				CanonicalEvidencePhrase: canonicalPhrase,
-				SearchQueryPhrase:       searchPhrase,
-				ProviderAnchor:          strings.TrimSpace(evidence.ProviderAnchor),
-				GenericPhrase:           evidence.GenericPhrase,
-				FailurePatternKey:       failurePatternKey,
+			candidates = append(candidates, extractionCandidate{
+				environment: environment,
+				rawFailure:  rawFailure,
+				run:         run,
 			})
 		}
+	}
+
+	rows := make([]ExtractedFailureRow, len(candidates))
+	workerCount := runtime.GOMAXPROCS(0)
+	if workerCount > maxExtractionConcurrency {
+		workerCount = maxExtractionConcurrency
+	}
+	if workerCount > len(candidates) {
+		workerCount = len(candidates)
+	}
+	if workerCount > 0 {
+		jobs := make(chan int)
+		var wg sync.WaitGroup
+		wg.Add(workerCount)
+		for range workerCount {
+			go func() {
+				defer wg.Done()
+				for index := range jobs {
+					candidate := candidates[index]
+					rawFailure := candidate.rawFailure
+					run := candidate.run
+					runURL := strings.TrimSpace(rawFailure.RunURL)
+					occurredAt := strings.TrimSpace(rawFailure.OccurredAt)
+					if occurredAt == "" {
+						occurredAt = strings.TrimSpace(run.OccurredAt)
+					}
+
+					evidence := failureextractor.ExtractWithOptions(rawFailure.RawText, failureextractor.ExtractOptions{
+						TestName: rawFailure.TestName,
+					})
+					lane := string(sourcelanes.DeriveLane(candidate.environment, rawFailure.ArtifactPath, rawFailure.TestSuite, rawFailure.TestName))
+					canonicalPhrase := strings.TrimSpace(evidence.CanonicalEvidencePhrase)
+					searchPhrase := strings.TrimSpace(evidence.SearchQueryPhrase)
+					failurePatternKey := strings.TrimSpace(failureextractor.FailurePatternKey(evidence))
+					// Alert failures are identified by the alert (scope + name) rather than the
+					// failure text, which is near-identical across alerts ("alert fired N time(s)").
+					if lane == string(sourcelanes.LaneAlert) {
+						if identity, ok := alertIdentityFromTestName(rawFailure.TestName); ok {
+							canonicalPhrase = identity.canonical
+							searchPhrase = identity.canonical
+							failurePatternKey = identity.key
+						}
+					}
+					rows[index] = ExtractedFailureRow{
+						Environment:             candidate.environment,
+						RowID:                   strings.TrimSpace(rawFailure.RowID),
+						RunURL:                  runURL,
+						OccurredAt:              occurredAt,
+						SignatureID:             strings.TrimSpace(rawFailure.SignatureID),
+						PRNumber:                run.PRNumber,
+						PostGoodCommit:          run.PostGoodCommit,
+						Lane:                    lane,
+						ArtifactPath:            strings.TrimSpace(rawFailure.ArtifactPath),
+						JobName:                 strings.TrimSpace(run.JobName),
+						TestName:                strings.TrimSpace(rawFailure.TestName),
+						TestSuite:               strings.TrimSpace(rawFailure.TestSuite),
+						RawText:                 strings.TrimSpace(rawFailure.RawText),
+						NormalizedText:          strings.TrimSpace(rawFailure.NormalizedText),
+						CanonicalEvidencePhrase: canonicalPhrase,
+						SearchQueryPhrase:       searchPhrase,
+						ProviderAnchor:          strings.TrimSpace(evidence.ProviderAnchor),
+						GenericPhrase:           evidence.GenericPhrase,
+						FailurePatternKey:       failurePatternKey,
+					}
+				}
+			}()
+		}
+		for index := range candidates {
+			jobs <- index
+		}
+		close(jobs)
+		wg.Wait()
 	}
 
 	sort.Slice(rows, func(i, j int) bool {

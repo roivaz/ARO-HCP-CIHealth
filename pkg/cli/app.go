@@ -25,6 +25,7 @@ func NewAppCommand() (*cobra.Command, error) {
 	preparedWindowCacheEnvelopeDuration := frontreadmodel.DefaultPreparedWindowCacheEnvelopeDuration
 	preparedWindowCacheRefreshInterval := frontreadmodel.DefaultPreparedWindowCacheRefreshInterval
 	preparedWindowCacheTTL := frontreadmodel.DefaultPreparedWindowCacheTTL
+	preparedWindowCacheMaxTextBytes := int64(frontreadmodel.DefaultPreparedWindowCacheMaxTextBytes)
 	servePostgresRaw := postgresoptions.DefaultCLIOptions()
 
 	cmd := &cobra.Command{
@@ -50,6 +51,7 @@ func NewAppCommand() (*cobra.Command, error) {
 					EnvelopeDuration: preparedWindowCacheEnvelopeDuration,
 					RefreshInterval:  preparedWindowCacheRefreshInterval,
 					TTL:              preparedWindowCacheTTL,
+					MaxTextBytes:     preparedWindowCacheMaxTextBytes,
 				},
 			})
 			if err != nil {
@@ -95,6 +97,7 @@ func NewAppCommand() (*cobra.Command, error) {
 	cmd.Flags().DurationVar(&preparedWindowCacheEnvelopeDuration, "app.failure-patterns-cache-window", preparedWindowCacheEnvelopeDuration, "prepared window cache envelope duration (for example 840h for 35 days)")
 	cmd.Flags().DurationVar(&preparedWindowCacheRefreshInterval, "app.failure-patterns-cache-refresh", preparedWindowCacheRefreshInterval, "refresh interval for the prepared window cache")
 	cmd.Flags().DurationVar(&preparedWindowCacheTTL, "app.failure-patterns-cache-ttl", preparedWindowCacheTTL, "maximum age for serving prepared window cache entries before on-demand fallback")
+	cmd.Flags().Int64Var(&preparedWindowCacheMaxTextBytes, "app.failure-patterns-cache-max-text-bytes", preparedWindowCacheMaxTextBytes, "maximum retained raw, normalized, and extracted text bytes in the prepared window cache")
 	if err := postgresoptions.BindOptions(servePostgresRaw, cmd); err != nil {
 		return nil, err
 	}

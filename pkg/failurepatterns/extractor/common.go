@@ -51,7 +51,11 @@ var assertionTailPrefixes = []string{
 }
 
 func collapseWS(value string) string {
-	return reCollapseWhitespace.ReplaceAllString(strings.TrimSpace(value), " ")
+	trimmed := strings.TrimSpace(value)
+	if !strings.ContainsAny(trimmed, "\t\n\f\r") && !strings.Contains(trimmed, "  ") {
+		return trimmed
+	}
+	return reCollapseWhitespace.ReplaceAllString(trimmed, " ")
 }
 
 func isGenericCode(value string) bool {

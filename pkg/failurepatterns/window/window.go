@@ -23,6 +23,7 @@ import (
 // JUnit testcase name such as
 // "[aro-hcp-observability] [hcp] alert KubeAPIDown does not fire".
 var reAlertTestName = regexp.MustCompile(`(?i)\[(?P<scope>[^\]]+)\]\s+alert\s+(?P<name>.+?)\s+does not fire`)
+var reAlertCosmosAccount = regexp.MustCompile(`(?i)\barohcpci\d+-rp-j\d+\b`)
 
 type alertIdentity struct {
 	canonical string
@@ -40,6 +41,9 @@ func alertIdentityFromTestName(testName string) (alertIdentity, bool) {
 	name := strings.TrimSpace(match[reAlertTestName.SubexpIndex("name")])
 	if name == "" {
 		return alertIdentity{}, false
+	}
+	if strings.Contains(name, "arohcpci") || strings.Contains(name, "AROHCPCI") {
+		name = reAlertCosmosAccount.ReplaceAllString(name, "<cosmos-account>")
 	}
 	canonical := "alert " + name + " fired"
 	if scope != "" {

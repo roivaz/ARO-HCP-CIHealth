@@ -250,3 +250,100 @@ func TestCleanCanonicalScrubsQuotedAzureResourcePathAndResourceGroup(t *testing.
 		t.Fatalf("expected quoted resource-group placeholder, got=%q", got)
 	}
 }
+
+func TestCleanCanonicalScrubsGeneratedCosmosDatabaseAccount(t *testing.T) {
+	t.Parallel()
+
+	input := "collection [Fleet] not found under /dbs/arohcpci01-rp-j5016704/colls/Fleet"
+	got := cleanCanonical(input)
+
+	if strings.Contains(got, "arohcpci01-rp-j5016704") {
+		t.Fatalf("expected generated Cosmos account to be scrubbed, got=%q", got)
+	}
+	if !strings.Contains(got, "/dbs/<cosmos-account>/colls/Fleet") {
+		t.Fatalf("expected Cosmos account placeholder while preserving collection, got=%q", got)
+	}
+}
+
+func TestCleanCanonicalScrubsHumanTimestamp(t *testing.T) {
+	t.Parallel()
+
+	input := "deployment svc-kv-xehipxbjxawki was started at '9/3/2026 7:06:26 AM' and expires at '9/10/2026 7:06:26 AM'"
+	got := cleanCanonicalWithLimit(input, 0)
+
+	if strings.Contains(got, "9/3/2026") || strings.Contains(got, "9/10/2026") {
+		t.Fatalf("expected human-readable timestamps to be scrubbed, got=%q", got)
+	}
+	if !strings.Contains(got, "deployment svc-kv-xehipxbjxawki") {
+		t.Fatalf("expected deployment component identity to remain, got=%q", got)
+	}
+	if strings.Count(got, "<timestamp>") != 2 {
+		t.Fatalf("expected both timestamps to be normalized, got=%q", got)
+	}
+}
+
+func TestDeploymentActiveNormalizationPreservesComponentIdentity(t *testing.T) {
+	t.Parallel()
+
+	message := func(component, started, expires string) string {
+		return "The deployment with resource id '/subscriptions/<subscription>/resourcegroups/<resource-group>/providers/Microsoft.Resources/deployments/" +
+			component + "' cannot be saved, because this would overwrite an existing deployment which is still active. " +
+			"The previous deployment was started at '" + started + "' with correlationId '<uuid>', and will expire at '" + expires + "' if it does not complete before then."
+	}
+
+	first := summarizeAzureDetailMessage(message("svc-kv-xehipxbjxawki", "9/3/2026 7:06:26 AM", "9/10/2026 7:06:26 AM"))
+	second := summarizeAzureDetailMessage(message("svc-kv-xehipxbjxawki", "9/8/2026 6:48:37 AM", "9/15/2026 6:48:37 AM"))
+	otherComponent := summarizeAzureDetailMessage(message("rp-cosmos-account", "9/8/2026 6:15:02 AM", "9/15/2026 6:15:02 AM"))
+
+	if first != second {
+		t.Fatalf("expected timestamps not to fragment the same component:\nfirst=%q\nsecond=%q", first, second)
+	}
+	if first == otherComponent {
+		t.Fatalf("expected distinct deployment components to remain separate, got=%q", first)
+	}
+}
+
+func TestSummarizeAzureDetailMessageScrubsOperationalValues(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "retry delay",
+			input: "Number of 'read' requests exceeded. Please try again after '10' seconds after additional tokens are available.",
+			want:  "Please try again after '<seconds>' seconds",
+		},
+		{
+			name:  "quota counters",
+			input: "Insufficient vcpu quota requested 8, remaining 2 for family standardDSv3Family for region canadacentral.",
+			want:  "requested <count>, remaining <count>",
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := summarizeAzureDetailMessage(tc.input)
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("expected %q in summary, got=%q", tc.want, got)
+			}
+		})
+	}
+}
+
+func TestStripReleaseFailureWrapperRemovesStampWithOrWithoutColon(t *testing.T) {
+	t.Parallel()
+
+	for _, input := range []string{
+		"stamp 1: scheduling must have requested resources",
+		"stamp 2 scheduling must have requested resources",
+	} {
+		if got, want := stripReleaseFailureWrapper(input), "scheduling must have requested resources"; got != want {
+			t.Fatalf("stripReleaseFailureWrapper(%q): got=%q want=%q", input, got, want)
+		}
+	}
+}

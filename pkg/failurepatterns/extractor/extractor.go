@@ -21,6 +21,7 @@ var (
 	// The generated resource-group name is instance-specific; normalize so the
 	// same class of error merges across runs.
 	reCleanResourceGroupsPathSegment = regexp.MustCompile(`(?i)/resourcegroups/[a-z0-9-]+/`)
+	reCleanCosmosDBPathSegment       = regexp.MustCompile(`(?i)(/dbs/)arohcpci\d+-rp-j\d+(/colls/)`)
 	// "The vault name '<name>' is already in use." — the Key Vault name embeds a
 	// random suffix (and may contain hyphens), so it will not match the generic
 	// 20+ char alnum opaque-ID regex below. Normalize explicitly so repeated
@@ -90,6 +91,8 @@ var (
 	reDeserializationToken            = regexp.MustCompile(`(?i)deserializa(?:ti|i)on error`)
 	reCommandErrorLine                = regexp.MustCompile(`(?im)^Command Error:\s*[^\n]+$`)
 	reQuotaRequiredAvailable          = regexp.MustCompile(`(?i)\brequired\s+['"]?\d+['"]?\s*,\s*available\s+['"]?\d+['"]?\b`)
+	reQuotaRequestedRemaining         = regexp.MustCompile(`(?i)\brequested\s+['"]?\d+['"]?\s*,\s*remaining\s+['"]?\d+['"]?\b`)
+	reRetryAfterSeconds               = regexp.MustCompile(`(?i)\bplease try again after\s+['"]?\d+['"]?\s+seconds\b`)
 	reTimeoutMinutesExceeded          = regexp.MustCompile(`(?i)timeout\s+'\d+(?:\.\d+)?'\s+minutes exceeded`)
 	reOperationTimeout                = regexp.MustCompile(`(?i)timeout\s+'(?:\d+(?:\.\d+)?|<minutes>)'\s+minutes exceeded during ([A-Za-z0-9_]+)`)
 	reTemplateLineColumn              = regexp.MustCompile(`(?i)\bat line '\d+' and column '\d+'`)
@@ -103,7 +106,7 @@ var (
 	reDenyAssignmentAction            = regexp.MustCompile(`(?i)perform action '([^']+)'`)
 	reNetworkAssociationError         = regexp.MustCompile(`(?i)error message:\s*(.+)$`)
 	reUnavailableDeployment           = regexp.MustCompile(`(?i)^([a-z0-9-]+) deployment has \d+ unavailable replicas?$`)
-	reStampPrefix                     = regexp.MustCompile(`(?i)^stamp \d+:\s*`)
+	reStampPrefix                     = regexp.MustCompile(`(?i)^stamp \d+(?::\s*|\s+)`)
 	reServerPatchTimeout              = regexp.MustCompile(`(?i)the server was unable to return a response in the time allotted, but may still be processing the request \(patch configmaps ([^)]+)\)`)
 	reAlertResourceRef                = regexp.MustCompile(`(?i)\b(Pod|Deployment|StatefulSet|DaemonSet)\s+([a-z0-9-]+)/([a-z0-9-]+)`)
 	reAlertContainerPod               = regexp.MustCompile(`(?i)\bin pod ([a-z0-9-]+)/([a-z0-9-]+)`)
@@ -139,6 +142,7 @@ var (
 	reCleanIP             = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b`)
 	reCleanBracketedIPv6  = regexp.MustCompile(`\[[0-9a-fA-F]*:[0-9a-fA-F:]+\](?::\d+)?`)
 	reCleanISOTimestamp   = regexp.MustCompile(`\b20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z\b`)
+	reCleanHumanTimestamp = regexp.MustCompile(`\b\d{1,2}/\d{1,2}/20\d{2} \d{1,2}:\d{2}:\d{2} (?:AM|PM)\b`)
 	reCleanResolveWithin  = regexp.MustCompile(`(?i)\bdid not resolve within [0-9]+(?:h[0-9]+m)?(?:m[0-9]+s|s)\b`)
 	reCleanRouteHost      = regexp.MustCompile(`(?i)\bagnhost-e2e-sample-app-[a-z0-9]+\.apps\.[a-z0-9.-]+\b`)
 	reCleanBreakglassPath = regexp.MustCompile(`(?i)/hcpopenshiftclusters/[^/]+/breakglass/[^/]+/kubeconfig`)
@@ -565,6 +569,10 @@ func cleanCanonicalWithLimit(value string, limit int) string {
 	text = reCleanRedactedSubscription.ReplaceAllString(text, "/subscriptions/<subscription>")
 	text = reCleanSubscription.ReplaceAllString(text, "/subscriptions/<subscription>")
 	text = reCleanResourceGroupsPathSegment.ReplaceAllString(text, "/resourcegroups/<resource-group>/")
+	if (strings.Contains(text, "/dbs/") || strings.Contains(text, "/DBS/")) &&
+		(strings.Contains(text, "arohcpci") || strings.Contains(text, "AROHCPCI")) {
+		text = reCleanCosmosDBPathSegment.ReplaceAllString(text, "${1}<cosmos-account>${2}")
+	}
 	text = reCleanVaultNameAlreadyInUse.ReplaceAllString(text, "the vault name '<vault-name>' is already in use.")
 	text = reCleanUUID.ReplaceAllString(text, "<uuid>")
 	text = reCleanHexLong.ReplaceAllString(text, "<hex>")
@@ -604,6 +612,9 @@ func cleanCanonicalWithLimit(value string, limit int) string {
 	text = reCleanLogfmtTimestamp.ReplaceAllString(text, "")
 	text = reCleanJSONTimeField.ReplaceAllString(text, "")
 	text = reCleanISOTimestamp.ReplaceAllString(text, "<timestamp>")
+	if strings.Contains(text, "/20") && (strings.Contains(text, " AM") || strings.Contains(text, " PM")) {
+		text = reCleanHumanTimestamp.ReplaceAllString(text, "<timestamp>")
+	}
 	text = reCleanHCPApiHost.ReplaceAllString(text, "<hcp-api-host>")
 	text = reCleanOCPVersion.ReplaceAllString(text, "openshift-v<version>")
 	text = normalizeQuotedAzureResourcePath(text)
@@ -762,7 +773,9 @@ func contextualizeCanonicalWithTestName(canonical string, testName string) strin
 	if current == "" || name == "" {
 		return current
 	}
-	if !isGenericAssertionCanonical(current) && !isGenericTimedOutCanonical(current) {
+	if !isGenericAssertionCanonical(current) &&
+		!isGenericTimedOutCanonical(current) &&
+		!isGenericProvisioningCanonical(current) {
 		return current
 	}
 	return truncateText(collapseWS(name+": "+current), 220)
@@ -774,6 +787,10 @@ func isGenericAssertionCanonical(value string) bool {
 
 func isGenericTimedOutCanonical(value string) bool {
 	return strings.EqualFold(strings.TrimSpace(value), "Timed out after <duration>s.")
+}
+
+func isGenericProvisioningCanonical(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), "Cluster provisioning failed")
 }
 
 func stripTransportURLPrefixForTLSMismatch(value string) string {
@@ -1536,10 +1553,18 @@ func summarizeAzureDetailMessage(message string) string {
 
 	normalized := cleanCanonicalWithLimit(trimmed, 0)
 	normalized = reQuotaRequiredAvailable.ReplaceAllString(normalized, "required <count>, available <count>")
-	if idx := strings.Index(strings.ToLower(normalized), "allocation failed."); idx >= 0 {
-		normalized = strings.TrimSpace(normalized[idx:])
+	normalizedLower := strings.ToLower(normalized)
+	if strings.Contains(normalizedLower, "requested") && strings.Contains(normalizedLower, "remaining") {
+		normalized = reQuotaRequestedRemaining.ReplaceAllString(normalized, "requested <count>, remaining <count>")
+	}
+	if strings.Contains(normalizedLower, "please try again after") {
+		normalized = reRetryAfterSeconds.ReplaceAllString(normalized, "Please try again after '<seconds>' seconds")
 	}
 	lowered := strings.ToLower(normalized)
+	if idx := strings.Index(lowered, "allocation failed."); idx >= 0 {
+		normalized = strings.TrimSpace(normalized[idx:])
+		lowered = strings.ToLower(normalized)
+	}
 	for _, generic := range []string{
 		"at least one resource deployment operation failed",
 		"the resource write operation failed to complete successfully",

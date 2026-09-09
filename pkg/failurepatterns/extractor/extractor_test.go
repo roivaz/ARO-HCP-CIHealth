@@ -97,3 +97,19 @@ to be equivalent to
 		t.Fatalf("unexpected canonical phrase: got=%q want=%q", got, want)
 	}
 }
+
+func TestExtractContextualizesGenericClusterProvisioningFailure(t *testing.T) {
+	t.Parallel()
+
+	raw := "fail [github.com/Azure/ARO-HCP/test/e2e/admin_credential_lifecycle.go:158]: Cluster provisioning failed"
+	pattern := ExtractWithOptions(raw, ExtractOptions{
+		TestName: "admin credential lifecycle should provision a cluster",
+	})
+
+	if got, want := pattern.CanonicalEvidencePhrase, "admin credential lifecycle should provision a cluster: Cluster provisioning failed"; got != want {
+		t.Fatalf("unexpected contextualized canonical phrase: got=%q want=%q", got, want)
+	}
+	if !pattern.GenericPhrase {
+		t.Fatalf("expected contextualized provisioning fallback to remain marked generic")
+	}
+}

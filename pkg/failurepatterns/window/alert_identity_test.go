@@ -55,6 +55,20 @@ func TestAlertIdentityFromTestName(t *testing.T) {
 			wantKey:       "alert svc kubeapidown",
 		},
 		{
+			name:          "generated cosmos account",
+			testName:      "[aro-hcp-observability] [infra] alert Cosmos DB Normalized RU Consumption High - arohcpci01-rp-j5016704 does not fire",
+			wantOK:        true,
+			wantCanonical: "alert [infra] Cosmos DB Normalized RU Consumption High - <cosmos-account> fired",
+			wantKey:       "alert infra cosmos db normalized ru consumption high - <cosmos-account>",
+		},
+		{
+			name:          "different generated cosmos account same identity",
+			testName:      "[aro-hcp-observability] [infra] alert Cosmos DB Normalized RU Consumption High - arohcpci01-rp-j0055808 does not fire",
+			wantOK:        true,
+			wantCanonical: "alert [infra] Cosmos DB Normalized RU Consumption High - <cosmos-account> fired",
+			wantKey:       "alert infra cosmos db normalized ru consumption high - <cosmos-account>",
+		},
+		{
 			name:     "non-alert test name",
 			testName: "[sig-network] some unrelated e2e test",
 			wantOK:   false,

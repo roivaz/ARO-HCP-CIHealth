@@ -8,6 +8,45 @@ import (
 	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
+func TestIsArchivedProwRunURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		runURL   string
+		archived bool
+	}{
+		{
+			name:     "archived presubmit",
+			runURL:   "https://prow.ci.openshift.org/view/gs/test-platform-results/pr-logs/pull/Azure_ARO-HCP/6970/job/123",
+			archived: true,
+		},
+		{
+			name:     "archived periodic",
+			runURL:   "https://prow.ci.openshift.org/view/gs/test-platform-results/logs/job/123",
+			archived: true,
+		},
+		{
+			name:   "public bucket",
+			runURL: "https://prow.ci.openshift.org/view/gs/test-platform-results-public/pr-logs/pull/batch/job/123",
+		},
+		{
+			name:   "unrelated path",
+			runURL: "https://prow.ci.openshift.org/job/123",
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isArchivedProwRunURL(test.runURL); got != test.archived {
+				t.Fatalf("isArchivedProwRunURL(%q)=%t, want %t", test.runURL, got, test.archived)
+			}
+		})
+	}
+}
+
 func TestShouldWriteMissingArtifactMarkerWaitsForRetryWindow(t *testing.T) {
 	t.Parallel()
 

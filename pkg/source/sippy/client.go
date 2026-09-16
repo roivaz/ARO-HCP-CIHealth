@@ -209,11 +209,6 @@ func (c *HTTPClient) ListJobRuns(ctx context.Context, opts ListJobRunsOptions) (
 				continue
 			}
 
-			startedAt := time.Time{}
-			if row.Timestamp > 0 {
-				startedAt = time.UnixMilli(row.Timestamp).UTC()
-			}
-
 			failed := row.Failed || row.InfrastructureFailure
 			if !failed && !row.Succeeded && !strings.EqualFold(strings.TrimSpace(row.OverallResult), "S") {
 				failed = true
@@ -224,7 +219,7 @@ func (c *HTTPClient) ListJobRuns(ctx context.Context, opts ListJobRunsOptions) (
 				JobName:   strings.TrimSpace(row.Job),
 				PRNumber:  pullRequestNumberFromLink(row.PullRequestLink),
 				PRSHA:     strings.TrimSpace(row.PullRequestSHA),
-				StartedAt: startedAt,
+				StartedAt: row.Timestamp.Time,
 				Failed:    failed,
 			})
 		}
@@ -483,13 +478,44 @@ type jobRunsResponse struct {
 }
 
 type jobRunResponse struct {
-	URL                   string `json:"url"`
-	Job                   string `json:"job"`
-	Timestamp             int64  `json:"timestamp"`
-	PullRequestSHA        string `json:"pull_request_sha"`
-	PullRequestLink       string `json:"pull_request_link"`
-	Failed                bool   `json:"failed"`
-	InfrastructureFailure bool   `json:"infrastructure_failure"`
-	Succeeded             bool   `json:"succeeded"`
-	OverallResult         string `json:"overall_result"`
+	URL                   string          `json:"url"`
+	Job                   string          `json:"job"`
+	Timestamp             jobRunTimestamp `json:"timestamp"`
+	PullRequestSHA        string          `json:"pull_request_sha"`
+	PullRequestLink       string          `json:"pull_request_link"`
+	Failed                bool            `json:"failed"`
+	InfrastructureFailure bool            `json:"infrastructure_failure"`
+	Succeeded             bool            `json:"succeeded"`
+	OverallResult         string          `json:"overall_result"`
+}
+
+type jobRunTimestamp struct {
+	time.Time
+}
+
+func (t *jobRunTimestamp) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		t.Time = time.Time{}
+		return nil
+	}
+
+	var timestamp string
+	if len(data) > 0 && data[0] == '"' {
+		if err := json.Unmarshal(data, &timestamp); err != nil {
+			return fmt.Errorf("decode Sippy job run timestamp: %w", err)
+		}
+		if parsed, err := time.Parse(time.RFC3339Nano, timestamp); err == nil {
+			t.Time = parsed.UTC()
+			return nil
+		}
+	} else {
+		timestamp = string(data)
+	}
+
+	milliseconds, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil {
+		return fmt.Errorf("parse Sippy job run timestamp %q: expected RFC3339 or epoch milliseconds: %w", timestamp, err)
+	}
+	t.Time = time.UnixMilli(milliseconds).UTC()
+	return nil
 }

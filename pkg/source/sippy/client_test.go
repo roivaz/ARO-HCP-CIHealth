@@ -77,6 +77,44 @@ func TestBuildJobRunsFilterRejectsPartialPRFilter(t *testing.T) {
 	}
 }
 
+func TestJobRunTimestampUnmarshalJSON(t *testing.T) {
+	t.Parallel()
+
+	expected := time.Date(2026, time.September, 16, 4, 30, 50, 0, time.UTC)
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{name: "RFC3339 string", value: `"2026-09-16T04:30:50Z"`},
+		{name: "epoch milliseconds number", value: `1789533050000`},
+		{name: "epoch milliseconds string", value: `"1789533050000"`},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			var got jobRunTimestamp
+			if err := json.Unmarshal([]byte(test.value), &got); err != nil {
+				t.Fatalf("unmarshal timestamp: %v", err)
+			}
+			if !got.Equal(expected) {
+				t.Fatalf("unexpected timestamp: got=%s want=%s", got, expected)
+			}
+		})
+	}
+}
+
+func TestJobRunTimestampRejectsInvalidValue(t *testing.T) {
+	t.Parallel()
+
+	var got jobRunTimestamp
+	if err := json.Unmarshal([]byte(`"not-a-timestamp"`), &got); err == nil {
+		t.Fatal("expected invalid timestamp to fail")
+	}
+}
+
 func hasFilterField(items []filterItem, field string) bool {
 	return filterFieldValue(items, field) != ""
 }

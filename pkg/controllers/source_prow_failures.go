@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -234,6 +235,15 @@ func (c *sourceProwFailuresController) processKey(ctx context.Context, key strin
 		return nil
 	}
 
+	if isArchivedProwRunURL(runURL) {
+		marker := buildArtifactMissingMarkerRecord(environment, runURL)
+		if err := c.store.UpsertArtifactFailures(ctx, []contracts.ArtifactFailureRecord{marker}); err != nil {
+			return fmt.Errorf("upsert archived-artifact marker for key %q: %w", key, err)
+		}
+		c.logger.Info("Skipped artifacts in archived Prow results bucket.", "key", key)
+		return nil
+	}
+
 	listCtx := ctx
 	cancel := func() {}
 	if c.listFailuresTimeout > 0 {
@@ -271,6 +281,18 @@ func (c *sourceProwFailuresController) processKey(ctx context.Context, key strin
 
 	c.logger.Info("Synced prow failures for run.", "key", key, "rows", len(records))
 	return nil
+}
+
+func isArchivedProwRunURL(runURL string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(runURL))
+	if err != nil {
+		return false
+	}
+	segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	return len(segments) >= 3 &&
+		segments[0] == "view" &&
+		segments[1] == "gs" &&
+		segments[2] == "test-platform-results"
 }
 
 func shouldWriteMissingArtifactMarker(ctx context.Context, store contracts.CheckpointStore, retryWindow time.Duration, environment, runURL string, now time.Time) (bool, error) {

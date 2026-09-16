@@ -1517,6 +1517,25 @@ ERROR CODE: InternalServerError
 	}
 }
 
+func TestExtractEvidenceNormalizesClusterServiceDeletionResourceCounts(t *testing.T) {
+	t.Parallel()
+
+	base := `ERROR CODE: InternalServerError
+{"error":{"code":"InternalServerError","message":"cluster deletion did not complete before the deadline; [descendantResources] remaining resources: 1 microsoft.redhatopenshift/hcpopenshiftclusters/serviceProviderClusters; [resourceTeardown] tearing down namespaces (%d)"}}`
+
+	gotOne := extractEvidence(fmt.Sprintf(base, 1)).CanonicalEvidencePhrase
+	gotTwo := extractEvidence(fmt.Sprintf(base, 2)).CanonicalEvidencePhrase
+	if gotOne != gotTwo {
+		t.Fatalf("expected resource teardown counts to merge:\n  one=%q\n  two=%q", gotOne, gotTwo)
+	}
+	if strings.Contains(gotOne, "(1)") || strings.Contains(gotOne, "(2)") {
+		t.Fatalf("expected volatile resource counts to be removed, got=%q", gotOne)
+	}
+	if !strings.Contains(gotOne, "[resourceTeardown] tearing down namespaces") {
+		t.Fatalf("expected resource teardown stage to remain visible, got=%q", gotOne)
+	}
+}
+
 func TestExtractEvidenceNormalizesGeneratedRouteAndNetworkArtifacts(t *testing.T) {
 	t.Parallel()
 
@@ -1623,6 +1642,30 @@ func TestExtractEvidenceNormalizesHostedClusterComponentLists(t *testing.T) {
 	}
 	if strings.Contains(gotA, "deployment has") {
 		t.Fatalf("expected volatile replica counts to be removed, got=%q", gotA)
+	}
+}
+
+func TestExtractEvidenceNormalizesHostedClusterVersionAndElapsedTime(t *testing.T) {
+	t.Parallel()
+
+	rawA := `ERROR CODE: InternalServerError
+{"error":{"code":"InternalServerError","message":"[hypershiftHostedCluster] hosted cluster control plane version not yet completed: version 4.21.33 is Partial (want Completed), started 20m44s ago; hosted cluster degraded: UnavailableReplicas: [router]"}}`
+	rawB := `ERROR CODE: InternalServerError
+{"error":{"code":"InternalServerError","message":"[hypershiftHostedCluster] hosted cluster control plane version not yet completed: version 5.0.0-rc.2 is Partial (want Completed), started 1h2m3s ago; hosted cluster degraded: UnavailableReplicas: [router]"}}`
+
+	gotA := extractEvidence(rawA).CanonicalEvidencePhrase
+	gotB := extractEvidence(rawB).CanonicalEvidencePhrase
+	if gotA != gotB {
+		t.Fatalf("expected control-plane versions and elapsed times to merge:\n  A=%q\n  B=%q", gotA, gotB)
+	}
+	if !strings.Contains(gotA, "version <version>") || !strings.Contains(gotA, "started <duration> ago") {
+		t.Fatalf("expected normalized version and elapsed-time placeholders, got=%q", gotA)
+	}
+
+	differentReason := strings.Replace(rawB, "UnavailableReplicas: [router]", "KubeconfigWaitingForCreate: Waiting for kubeconfig", 1)
+	gotDifferentReason := extractEvidence(differentReason).CanonicalEvidencePhrase
+	if gotA == gotDifferentReason {
+		t.Fatalf("expected distinct hosted-cluster reasons to remain separate, got=%q", gotA)
 	}
 }
 

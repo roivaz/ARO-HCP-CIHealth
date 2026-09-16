@@ -118,6 +118,9 @@ var (
 	reAlertKustoCluster               = regexp.MustCompile(`(?i)(Kusto cluster )[a-z0-9-]+`)
 	reGetPodsName                     = regexp.MustCompile(`(?i)\bget pods [a-z0-9-]+`)
 	reNotReadyNodes                   = regexp.MustCompile(`(?i)(not ready nodes:\s*)\[[^\]]+\]`)
+	reHostedClusterVersion            = regexp.MustCompile(`(?i)(hosted cluster control plane version not yet completed:\s*version\s+)\S+(\s+is\s+)`)
+	reHostedClusterElapsed            = regexp.MustCompile(`(?i)(\bstarted\s+)\d+(?:h\d+m\d+s|h\d+m|h\d+s|h|m\d+s|m|s)(\s+ago\b)`)
+	reDeletionResourceCount           = regexp.MustCompile(`\s*\(\d+\)`)
 	rePodReplicaSuffix                = regexp.MustCompile(`(?i)^(.+)-[a-f0-9]{8,10}-[a-z0-9]{5}$`)
 	rePodShortSuffix                  = regexp.MustCompile(`(?i)^(.+)-[a-z0-9]{5}$`)
 	rePodOrdinalSuffix                = regexp.MustCompile(`(?i)^(.+)-\d+$`)
@@ -1609,6 +1612,8 @@ func summarizeHostedClusterMessage(message string) string {
 		return ""
 	}
 	normalized := cleanCanonicalWithLimit(message, 0)
+	normalized = reHostedClusterVersion.ReplaceAllString(normalized, `${1}<version>${2}`)
+	normalized = reHostedClusterElapsed.ReplaceAllString(normalized, `${1}<duration>${2}`)
 	hasUnavailableReplicas := strings.Contains(strings.ToLower(normalized), "unavailablereplicas:")
 	parts := strings.Split(normalized, ";")
 	for index, part := range parts {
@@ -1681,8 +1686,7 @@ func sortedUniqueCommaList(value string) []string {
 func summarizeClusterServiceDeletionMessage(message string) string {
 	normalized := collapseWS(message)
 	lowered := strings.ToLower(normalized)
-	if !strings.Contains(lowered, "cluster deletion did not complete before the deadline") ||
-		!strings.Contains(lowered, "[clusterservicedeletion] clusterservice cluster ") {
+	if !strings.Contains(lowered, "cluster deletion did not complete before the deadline") {
 		return ""
 	}
 
@@ -1714,6 +1718,9 @@ func summarizeClusterServiceDeletionMessage(message string) string {
 					}
 				}
 			}
+		case strings.Contains(partLower, "[resourceteardown]"):
+			part = reDeletionResourceCount.ReplaceAllString(part, "")
+			summary = append(summary, collapseWS(part))
 		case strings.Contains(partLower, "cluster deletion did not complete before the deadline"):
 			continue
 		default:

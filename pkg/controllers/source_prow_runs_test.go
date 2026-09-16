@@ -37,12 +37,12 @@ func TestMapProwJobToRunRecord(t *testing.T) {
 				},
 				Status: prowjobs.JobStatus{
 					State: "failure",
-					URL:   "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs/test-platform-results/pr-logs/pull/Azure_ARO-HCP/4313/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455488",
+					URL:   "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs/test-platform-results-public/pr-logs/pull/Azure_ARO-HCP/4313/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455488",
 				},
 			},
 			want: contracts.RunRecord{
 				Environment:    "dev",
-				RunURL:         "https://prow.ci.openshift.org/view/gs/test-platform-results/pr-logs/pull/Azure_ARO-HCP/4313/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455488",
+				RunURL:         "https://prow.ci.openshift.org/view/gs/test-platform-results-public/pr-logs/pull/Azure_ARO-HCP/4313/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455488",
 				JobName:        "pull-ci-Azure-ARO-HCP-main-e2e-parallel",
 				PRNumber:       4313,
 				PRSHA:          "abc123",
@@ -60,12 +60,12 @@ func TestMapProwJobToRunRecord(t *testing.T) {
 				},
 				Status: prowjobs.JobStatus{
 					State: "success",
-					URL:   "gs://test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499",
+					URL:   "gs://test-platform-results-public/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499",
 				},
 			},
 			want: contracts.RunRecord{
 				Environment:    "int",
-				RunURL:         "https://prow.ci.openshift.org/view/gs/test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499",
+				RunURL:         "https://prow.ci.openshift.org/view/gs/test-platform-results-public/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499",
 				JobName:        "periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel",
 				MergedPR:       true,
 				PostGoodCommit: true,
@@ -81,12 +81,12 @@ func TestMapProwJobToRunRecord(t *testing.T) {
 				},
 				Status: prowjobs.JobStatus{
 					State: "success",
-					URL:   "gs://test-platform-results/pr-logs/pull/batch/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455498",
+					URL:   "gs://test-platform-results-public/pr-logs/pull/batch/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455498",
 				},
 			},
 			want: contracts.RunRecord{
 				Environment:    "dev",
-				RunURL:         "https://prow.ci.openshift.org/view/gs/test-platform-results/pr-logs/pull/batch/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455498",
+				RunURL:         "https://prow.ci.openshift.org/view/gs/test-platform-results-public/pr-logs/pull/batch/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455498",
 				JobName:        "pull-ci-Azure-ARO-HCP-main-e2e-parallel",
 				MergedPR:       false,
 				PostGoodCommit: false,
@@ -216,7 +216,7 @@ func TestSyncOnceUsesSharedSnapshotForAllEnvironments(t *testing.T) {
 				},
 				Status: prowjobs.JobStatus{
 					State:     "failure",
-					URL:       "gs://test-platform-results/pr-logs/pull/batch/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455488",
+					URL:       "gs://test-platform-results-public/pr-logs/pull/batch/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455488",
 					StartTime: devStartedAt,
 				},
 			},
@@ -226,7 +226,7 @@ func TestSyncOnceUsesSharedSnapshotForAllEnvironments(t *testing.T) {
 				},
 				Status: prowjobs.JobStatus{
 					State:     "success",
-					URL:       "gs://test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499",
+					URL:       "gs://test-platform-results-public/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499",
 					StartTime: intPeriodicStartedAt,
 				},
 			},
@@ -236,7 +236,7 @@ func TestSyncOnceUsesSharedSnapshotForAllEnvironments(t *testing.T) {
 				},
 				Status: prowjobs.JobStatus{
 					State:     "failure",
-					URL:       "gs://test-platform-results/logs/branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel/2029578186907455500",
+					URL:       "gs://test-platform-results-public/logs/branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel/2029578186907455500",
 					StartTime: intBranchStartedAt,
 				},
 			},
@@ -274,15 +274,15 @@ func TestSyncOnceUsesSharedSnapshotForAllEnvironments(t *testing.T) {
 		t.Fatalf("expected one run upsert per environment, got=%d", store.upsertRunsCalls)
 	}
 
-	devRunURL := "https://prow.ci.openshift.org/view/gs/test-platform-results/pr-logs/pull/batch/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455488"
-	intRunURL := "https://prow.ci.openshift.org/view/gs/test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499"
+	devRunURL := "https://prow.ci.openshift.org/view/gs/test-platform-results-public/pr-logs/pull/batch/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2029578186907455488"
+	intRunURL := "https://prow.ci.openshift.org/view/gs/test-platform-results-public/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499"
 	if _, found := store.GetStoredRun("dev", devRunURL); !found {
 		t.Fatalf("expected dev batch run to be stored")
 	}
 	if _, found := store.GetStoredRun("int", intRunURL); !found {
 		t.Fatalf("expected int periodic run to be stored")
 	}
-	intBranchRunURL := "https://prow.ci.openshift.org/view/gs/test-platform-results/logs/branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel/2029578186907455500"
+	intBranchRunURL := "https://prow.ci.openshift.org/view/gs/test-platform-results-public/logs/branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel/2029578186907455500"
 	if _, found := store.GetStoredRun("int", intBranchRunURL); !found {
 		t.Fatalf("expected int branch-ci run to be stored")
 	}

@@ -26,7 +26,7 @@ func TestSyncEnvironmentFetchesAllConfiguredSippyJobs(t *testing.T) {
 		runsByJobName: map[string][]sippysource.JobRun{
 			periodicJobName: {
 				{
-					RunURL:    "gs://test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499",
+					RunURL:    "gs://test-platform-results-public/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499",
 					JobName:   periodicJobName,
 					StartedAt: periodicStartedAt,
 					Failed:    true,
@@ -34,7 +34,7 @@ func TestSyncEnvironmentFetchesAllConfiguredSippyJobs(t *testing.T) {
 			},
 			branchJobName: {
 				{
-					RunURL:    "gs://test-platform-results/logs/branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel/2029578186907455500",
+					RunURL:    "gs://test-platform-results-public/logs/branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel/2029578186907455500",
 					JobName:   branchJobName,
 					StartedAt: branchStartedAt,
 					Failed:    false,
@@ -63,14 +63,14 @@ func TestSyncEnvironmentFetchesAllConfiguredSippyJobs(t *testing.T) {
 		t.Fatalf("unexpected job names queried: got=%v", got)
 	}
 
-	periodicRunURL := "https://prow.ci.openshift.org/view/gs/test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499"
+	periodicRunURL := "https://prow.ci.openshift.org/view/gs/test-platform-results-public/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499"
 	if row, found := store.GetStoredRun("int", periodicRunURL); !found {
 		t.Fatalf("expected periodic int run to be stored")
 	} else if row.JobName != periodicJobName {
 		t.Fatalf("unexpected periodic job name: got=%q want=%q", row.JobName, periodicJobName)
 	}
 
-	branchRunURL := "https://prow.ci.openshift.org/view/gs/test-platform-results/logs/branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel/2029578186907455500"
+	branchRunURL := "https://prow.ci.openshift.org/view/gs/test-platform-results-public/logs/branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel/2029578186907455500"
 	if row, found := store.GetStoredRun("int", branchRunURL); !found {
 		t.Fatalf("expected branch int run to be stored")
 	} else if row.JobName != branchJobName {
@@ -91,7 +91,7 @@ func TestSyncSingleRunByKeySearchesAllConfiguredSippyJobs(t *testing.T) {
 
 	opts := testSourceOptions(t, []string{"int"})
 	branchJobName := "branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel"
-	runURL := "https://prow.ci.openshift.org/view/gs/test-platform-results/logs/branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel/2029578186907455500"
+	runURL := "https://prow.ci.openshift.org/view/gs/test-platform-results-public/logs/branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel/2029578186907455500"
 
 	client := &fakeSippyRunsClient{
 		runsByJobName: map[string][]sippysource.JobRun{
@@ -159,7 +159,7 @@ func TestComputeNextCheckpointIgnoresRunsWithoutStartedAt(t *testing.T) {
 	previous := mustParseRFC3339(t, "2026-04-22T18:00:00Z")
 	runs := []sippysource.JobRun{
 		{
-			RunURL:  "https://prow.ci.openshift.org/view/gs/test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499",
+			RunURL:  "https://prow.ci.openshift.org/view/gs/test-platform-results-public/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499",
 			JobName: "periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel",
 			Failed:  true,
 		},
@@ -208,14 +208,14 @@ func TestSyncEnvironmentDoesNotCreateCheckpointWhenRunsLackStartedAt(t *testing.
 		runsByJobName: map[string][]sippysource.JobRun{
 			periodicJobName: {
 				{
-					RunURL:  "gs://test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499",
+					RunURL:  "gs://test-platform-results-public/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499",
 					JobName: periodicJobName,
 					Failed:  true,
 				},
 			},
 			branchJobName: {
 				{
-					RunURL:  "gs://test-platform-results/logs/branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel/2029578186907455500",
+					RunURL:  "gs://test-platform-results-public/logs/branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel/2029578186907455500",
 					JobName: branchJobName,
 					Failed:  false,
 				},
@@ -242,7 +242,7 @@ func TestSyncEnvironmentDoesNotCreateCheckpointWhenRunsLackStartedAt(t *testing.
 		t.Fatalf("expected no checkpoint to be written when matched runs lack started_at")
 	}
 
-	periodicRunURL := "https://prow.ci.openshift.org/view/gs/test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499"
+	periodicRunURL := "https://prow.ci.openshift.org/view/gs/test-platform-results-public/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499"
 	if row, found := store.GetStoredRun("int", periodicRunURL); !found {
 		t.Fatalf("expected run without started_at to still be stored")
 	} else if row.OccurredAt != "" {

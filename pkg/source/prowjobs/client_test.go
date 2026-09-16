@@ -2,6 +2,7 @@ package prowjobs
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -88,26 +89,27 @@ func TestStateHelpers(t *testing.T) {
 func TestHTTPClientGetJobHistoryPageParsesBuildsAndOlderLink(t *testing.T) {
 	t.Parallel()
 
+	jobPath := "logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/job-history/gs/test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel" {
+		if r.URL.Path != "/job-history/gs/"+DefaultJobHistoryBucket+"/"+jobPath {
 			t.Fatalf("unexpected path %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(`<!DOCTYPE html>
+		_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
 <html>
   <body>
     <script>
       var allBuilds = [
         {
           "ID": "2029578186907455499",
-          "SpyglassLink": "/view/gs/test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499",
+          "SpyglassLink": "/view/gs/%[1]s/%[2]s/2029578186907455499",
           "Started": "2026-04-20T10:00:00Z",
           "Duration": 2700000000000,
           "Result": "SUCCESS"
         },
         {
           "ID": "2029578186907455500",
-          "SpyglassLink": "/view/gs/test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455500",
+          "SpyglassLink": "/view/gs/%[1]s/%[2]s/2029578186907455500",
           "Started": "2026-04-20T11:00:00Z",
           "Duration": 300000000000,
           "Result": "FAILURE",
@@ -122,21 +124,21 @@ func TestHTTPClientGetJobHistoryPageParsesBuildsAndOlderLink(t *testing.T) {
         }
       ];
     </script>
-    <a href="/job-history/gs/test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel?buildId=2029578186907455499">&lt;- Older Runs</a>
+    <a href="/job-history/gs/%[1]s/%[2]s?buildId=2029578186907455499">&lt;- Older Runs</a>
   </body>
-</html>`))
+</html>`, DefaultJobHistoryBucket, jobPath)
 	}))
 	t.Cleanup(server.Close)
 
 	client := NewHTTPClient(server.URL)
-	page, err := client.GetJobHistoryPage(context.Background(), "logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel")
+	page, err := client.GetJobHistoryPage(context.Background(), jobPath)
 	if err != nil {
 		t.Fatalf("GetJobHistoryPage returned error: %v", err)
 	}
 	if len(page.Builds) != 2 {
 		t.Fatalf("unexpected build count: got=%d want=2", len(page.Builds))
 	}
-	if page.OlderLink != server.URL+"/job-history/gs/test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel?buildId=2029578186907455499" {
+	if page.OlderLink != server.URL+"/job-history/gs/"+DefaultJobHistoryBucket+"/"+jobPath+"?buildId=2029578186907455499" {
 		t.Fatalf("unexpected older link: got=%q", page.OlderLink)
 	}
 
@@ -144,7 +146,7 @@ func TestHTTPClientGetJobHistoryPageParsesBuildsAndOlderLink(t *testing.T) {
 	if len(jobs) != 2 {
 		t.Fatalf("unexpected job count after conversion: got=%d want=2", len(jobs))
 	}
-	if jobs[0].Status.URL != server.URL+"/view/gs/test-platform-results/logs/periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel/2029578186907455499" {
+	if jobs[0].Status.URL != server.URL+"/view/gs/"+DefaultJobHistoryBucket+"/"+jobPath+"/2029578186907455499" {
 		t.Fatalf("unexpected resolved run URL: got=%q", jobs[0].Status.URL)
 	}
 	if jobs[0].Status.State != "success" {

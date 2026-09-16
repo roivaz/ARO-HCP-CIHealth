@@ -36,6 +36,9 @@ func TestBuildJobRunsFilterWithPRAndJobFilters(t *testing.T) {
 	if !hasFilterField(parsed.Items, "timestamp") {
 		t.Fatalf("expected timestamp filter in %v", parsed.Items)
 	}
+	if got := filterFieldValue(parsed.Items, "timestamp"); got != "2023-11-14T22:13:20Z" {
+		t.Fatalf("unexpected timestamp filter value: got=%q", got)
+	}
 }
 
 func TestBuildJobRunsFilterPeriodicWithoutPRFilters(t *testing.T) {
@@ -75,12 +78,16 @@ func TestBuildJobRunsFilterRejectsPartialPRFilter(t *testing.T) {
 }
 
 func hasFilterField(items []filterItem, field string) bool {
+	return filterFieldValue(items, field) != ""
+}
+
+func filterFieldValue(items []filterItem, field string) string {
 	for _, item := range items {
 		if item.ColumnField == field {
-			return true
+			return item.Value
 		}
 	}
-	return false
+	return ""
 }
 
 func TestHTTPClientListTests(t *testing.T) {

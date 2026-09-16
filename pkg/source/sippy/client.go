@@ -395,7 +395,7 @@ func buildJobRunsFilter(org, repo, jobName string, since time.Time) (string, err
 		items = append(items, filterItem{
 			ColumnField:   "timestamp",
 			OperatorValue: ">",
-			Value:         strconv.FormatInt(since.UTC().UnixMilli(), 10),
+			Value:         since.UTC().Format(time.RFC3339),
 		})
 	}
 

@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	defaultHTTPTimeout         = 90 * time.Second
-	defaultJobHistoryBucket    = "test-platform-results"
+	defaultHTTPTimeout = 90 * time.Second
+	// DefaultJobHistoryBucket is the GCS bucket used for current Prow job history.
+	DefaultJobHistoryBucket    = "test-platform-results-public"
 	defaultJobHistoryPageLimit = 20
 )
 
@@ -302,7 +303,7 @@ func (c *HTTPClient) jobHistoryEndpoint(historyPathOrURL string) (string, error)
 	case strings.HasPrefix(ref.Path, "job-history/"):
 		ref.Path = "/" + ref.Path
 	default:
-		ref.Path = path.Join("/job-history/gs", defaultJobHistoryBucket, ref.Path)
+		ref.Path = path.Join("/job-history/gs", DefaultJobHistoryBucket, ref.Path)
 	}
 	return base.ResolveReference(ref).String(), nil
 }

@@ -137,18 +137,51 @@ func TestValidateRejectsNegativeArtifactRetryWindow(t *testing.T) {
 	}
 }
 
-func TestRunRegionArtifactPathForEnvironment(t *testing.T) {
+func TestRunRegionArtifactPathForJob(t *testing.T) {
 	t.Parallel()
 
-	path, ok := RunRegionArtifactPathForEnvironment("DEV")
-	if !ok {
-		t.Fatalf("expected DEV region artifact path")
+	tests := []struct {
+		environment string
+		jobName     string
+		wantPath    string
+	}{
+		{
+			environment: "DEV",
+			jobName:     "pull-ci-Azure-ARO-HCP-main-e2e-parallel",
+			wantPath:    "artifacts/e2e-parallel/aro-hcp-lease-acquire/build-log.txt",
+		},
+		{
+			environment: "int",
+			jobName:     "branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel",
+			wantPath:    "artifacts/integration-e2e-parallel/aro-hcp-lease-acquire/build-log.txt",
+		},
+		{
+			environment: "stg",
+			jobName:     "periodic-ci-Azure-ARO-HCP-main-periodic-stage-e2e-parallel-ocp-nightly",
+			wantPath:    "artifacts/stage-e2e-parallel-ocp-nightly/aro-hcp-lease-acquire/build-log.txt",
+		},
+		{
+			environment: "prod",
+			jobName:     "periodic-ci-Azure-ARO-HCP-main-periodic-prod-e2e-parallel",
+			wantPath:    "artifacts/prod-e2e-parallel/aro-hcp-lease-acquire/build-log.txt",
+		},
 	}
-	if path != "artifacts/e2e-parallel/aro-hcp-lease-acquire/build-log.txt" {
-		t.Fatalf("unexpected DEV region artifact path: %q", path)
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.environment+"/"+tt.jobName, func(t *testing.T) {
+			t.Parallel()
+			path, ok := RunRegionArtifactPathForJob(tt.environment, tt.jobName)
+			if !ok {
+				t.Fatalf("expected region artifact path for %s/%s", tt.environment, tt.jobName)
+			}
+			if path != tt.wantPath {
+				t.Fatalf("unexpected region artifact path: got=%q want=%q", path, tt.wantPath)
+			}
+		})
 	}
-	if _, ok := RunRegionArtifactPathForEnvironment("int"); ok {
-		t.Fatalf("did not expect an INT region artifact path")
+
+	if _, ok := RunRegionArtifactPathForJob("dev", "periodic-ci-unsupported"); ok {
+		t.Fatalf("did not expect a region artifact path for an unsupported job")
 	}
 }
 

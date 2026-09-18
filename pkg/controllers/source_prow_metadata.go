@@ -72,7 +72,7 @@ func newSourceProwMetadataController(logger logr.Logger, deps Dependencies, clie
 			continue
 		}
 		envSet[normalized] = struct{}{}
-		if _, ok := sourceoptions.RunRegionArtifactPathForEnvironment(normalized); ok {
+		if sourceoptions.SupportsRunRegionMetadataForEnvironment(normalized) {
 			regionEnvSet[normalized] = struct{}{}
 		}
 	}
@@ -341,7 +341,7 @@ func (c *sourceProwMetadataController) persistTimingMetadata(ctx context.Context
 }
 
 func (c *sourceProwMetadataController) fetchRegionMetadata(ctx context.Context, run contracts.RunRecord) (prowartifacts.RegionResult, error) {
-	artifactPath, ok := sourceoptions.RunRegionArtifactPathForEnvironment(run.Environment)
+	artifactPath, ok := sourceoptions.RunRegionArtifactPathForJob(run.Environment, run.JobName)
 	if !ok {
 		return prowartifacts.RegionResult{}, nil
 	}
@@ -417,8 +417,8 @@ func (c *sourceProwMetadataController) runSupportsRegionMetadata(run contracts.R
 }
 
 func runSupportsRegionMetadata(run contracts.RunRecord) bool {
-	jobNames, ok := sourceoptions.ProwJobNamesForEnvironment(run.Environment)
-	return ok && jobNames.Has(strings.TrimSpace(run.JobName))
+	_, ok := sourceoptions.RunRegionArtifactPathForJob(run.Environment, run.JobName)
+	return ok
 }
 
 func runTimingMetadataTerminal(run contracts.RunRecord) bool {

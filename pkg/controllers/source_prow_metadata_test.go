@@ -322,6 +322,47 @@ func TestSourceProwMetadataStoresTimingForRunWithoutRegionSupport(t *testing.T) 
 	}
 }
 
+func TestSourceProwMetadataUsesJobSpecificRegionArtifactPath(t *testing.T) {
+	t.Parallel()
+
+	runURL := "https://prow.ci.openshift.org/view/gs/test-platform-results-public/logs/periodic-ci-Azure-ARO-HCP-main-periodic-stage-e2e-parallel-ocp-nightly/2100721533742747648"
+	store := newFakeRunStore(contracts.RunRecord{
+		Environment: "stg",
+		RunURL:      runURL,
+		JobName:     "periodic-ci-Azure-ARO-HCP-main-periodic-stage-e2e-parallel-ocp-nightly",
+		OccurredAt:  time.Now().UTC().Format(time.RFC3339Nano),
+	})
+	client := &fakeProwMetadataClient{
+		timingResult: prowartifacts.TimingResult{
+			Outcome:     prowartifacts.ArtifactOutcomeFound,
+			StartedAt:   "2026-09-18T10:19:12Z",
+			CompletedAt: "2026-09-18T12:27:55Z",
+		},
+		regionResult: prowartifacts.RegionResult{
+			Outcome: prowartifacts.ArtifactOutcomeFound,
+			Region:  "uksouth",
+		},
+	}
+	controller, err := newSourceProwMetadataController(logr.Discard(), Dependencies{
+		Store:  store,
+		Source: testSourceOptions(t, []string{"stg"}),
+	}, client)
+	if err != nil {
+		t.Fatalf("new source prow metadata controller: %v", err)
+	}
+
+	if err := controller.processKey(context.Background(), "stg|"+runURL); err != nil {
+		t.Fatalf("processKey returned error: %v", err)
+	}
+	if got, want := client.regionPath, "artifacts/stage-e2e-parallel-ocp-nightly/aro-hcp-lease-acquire/build-log.txt"; got != want {
+		t.Fatalf("unexpected region artifact path: got=%q want=%q", got, want)
+	}
+	run, _ := store.GetStoredRun("stg", runURL)
+	if run.Region != "uksouth" {
+		t.Fatalf("unexpected stored region: %+v", run)
+	}
+}
+
 func TestSourceProwMetadataKeepsIncompleteTimingPendingDuringRetryWindow(t *testing.T) {
 	t.Parallel()
 
@@ -373,6 +414,7 @@ type fakeProwMetadataClient struct {
 	regionErr    error
 	timingCalls  int
 	regionCalls  int
+	regionPath   string
 }
 
 type blockingProwMetadataClient struct {
@@ -405,7 +447,8 @@ func (f *fakeProwMetadataClient) GetRunTiming(_ context.Context, _ string) (prow
 	return f.timingResult, f.timingErr
 }
 
-func (f *fakeProwMetadataClient) GetRunRegion(_ context.Context, _ string, _ string) (prowartifacts.RegionResult, error) {
+func (f *fakeProwMetadataClient) GetRunRegion(_ context.Context, _ string, artifactPath string) (prowartifacts.RegionResult, error) {
 	f.regionCalls++
+	f.regionPath = artifactPath
 	return f.regionResult, f.regionErr
 }

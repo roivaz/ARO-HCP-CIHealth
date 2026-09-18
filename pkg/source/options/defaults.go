@@ -8,11 +8,11 @@ import (
 )
 
 type EnvironmentDefaults struct {
-	SippyRelease            string
-	SippyJobNames           []string
-	DeterministicJUnitPaths []string
-	RunRegionArtifactPath   string
-	SupportsPRLookup        bool
+	SippyRelease                    string
+	SippyJobNames                   []string
+	DeterministicJUnitPaths         []string
+	RunRegionArtifactPathsByJobName map[string]string
+	SupportsPRLookup                bool
 }
 
 type RuntimeDefaults struct {
@@ -60,8 +60,10 @@ var defaultRuntimeDefaults = RuntimeDefaults{
 				"artifacts/e2e-parallel/aro-hcp-gather-observability/artifacts/junit_alerts.xml",
 				"prowjob_junit.xml",
 			},
-			RunRegionArtifactPath: "artifacts/e2e-parallel/aro-hcp-lease-acquire/build-log.txt",
-			SupportsPRLookup:      true,
+			RunRegionArtifactPathsByJobName: map[string]string{
+				"pull-ci-Azure-ARO-HCP-main-e2e-parallel": "artifacts/e2e-parallel/aro-hcp-lease-acquire/build-log.txt",
+			},
+			SupportsPRLookup: true,
 		},
 		"int": {
 			SippyRelease: "aro-integration",
@@ -72,6 +74,10 @@ var defaultRuntimeDefaults = RuntimeDefaults{
 			DeterministicJUnitPaths: []string{
 				"artifacts/integration-e2e-parallel/aro-hcp-test-persistent/artifacts/junit.xml",
 				"prowjob_junit.xml",
+			},
+			RunRegionArtifactPathsByJobName: map[string]string{
+				"periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel": "artifacts/integration-e2e-parallel/aro-hcp-lease-acquire/build-log.txt",
+				"branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel":        "artifacts/integration-e2e-parallel/aro-hcp-lease-acquire/build-log.txt",
 			},
 		},
 		"stg": {
@@ -86,6 +92,11 @@ var defaultRuntimeDefaults = RuntimeDefaults{
 				"artifacts/stage-e2e-parallel-ocp-nightly/aro-hcp-test-persistent/artifacts/junit.xml",
 				"prowjob_junit.xml",
 			},
+			RunRegionArtifactPathsByJobName: map[string]string{
+				"periodic-ci-Azure-ARO-HCP-main-periodic-stage-e2e-parallel":             "artifacts/stage-e2e-parallel/aro-hcp-lease-acquire/build-log.txt",
+				"periodic-ci-Azure-ARO-HCP-main-periodic-stage-e2e-parallel-ocp-nightly": "artifacts/stage-e2e-parallel-ocp-nightly/aro-hcp-lease-acquire/build-log.txt",
+				"branch-ci-Azure-ARO-HCP-main-e2e-stage-e2e-parallel":                    "artifacts/stage-e2e-parallel/aro-hcp-lease-acquire/build-log.txt",
+			},
 		},
 		"prod": {
 			SippyRelease: "aro-production",
@@ -98,6 +109,11 @@ var defaultRuntimeDefaults = RuntimeDefaults{
 				"artifacts/prod-e2e-parallel/aro-hcp-test-persistent/artifacts/junit.xml",
 				"artifacts/prod-e2e-parallel-ocp-nightly/aro-hcp-test-persistent/artifacts/junit.xml",
 				"prowjob_junit.xml",
+			},
+			RunRegionArtifactPathsByJobName: map[string]string{
+				"periodic-ci-Azure-ARO-HCP-main-periodic-prod-e2e-parallel":             "artifacts/prod-e2e-parallel/aro-hcp-lease-acquire/build-log.txt",
+				"periodic-ci-Azure-ARO-HCP-main-periodic-prod-e2e-parallel-ocp-nightly": "artifacts/prod-e2e-parallel-ocp-nightly/aro-hcp-lease-acquire/build-log.txt",
+				"branch-ci-Azure-ARO-HCP-main-e2e-prod-e2e-parallel":                    "artifacts/prod-e2e-parallel/aro-hcp-lease-acquire/build-log.txt",
 			},
 		},
 	},
@@ -156,13 +172,18 @@ func DeterministicJUnitPathsByEnvironment() map[string][]string {
 	return out
 }
 
-func RunRegionArtifactPathForEnvironment(environment string) (string, bool) {
+func RunRegionArtifactPathForJob(environment string, jobName string) (string, bool) {
 	defaults, ok := EnvironmentDefaultsFor(environment)
 	if !ok {
 		return "", false
 	}
-	artifactPath := strings.Trim(strings.TrimSpace(defaults.RunRegionArtifactPath), "/")
+	artifactPath := strings.Trim(strings.TrimSpace(defaults.RunRegionArtifactPathsByJobName[strings.TrimSpace(jobName)]), "/")
 	return artifactPath, artifactPath != ""
+}
+
+func SupportsRunRegionMetadataForEnvironment(environment string) bool {
+	defaults, ok := EnvironmentDefaultsFor(environment)
+	return ok && len(defaults.RunRegionArtifactPathsByJobName) > 0
 }
 
 func DefaultGitHubRepoOwner() string {
@@ -192,6 +213,10 @@ func cloneEnvironmentDefaults(in EnvironmentDefaults) EnvironmentDefaults {
 	out := in
 	out.SippyJobNames = append([]string(nil), in.SippyJobNames...)
 	out.DeterministicJUnitPaths = append([]string(nil), in.DeterministicJUnitPaths...)
+	out.RunRegionArtifactPathsByJobName = make(map[string]string, len(in.RunRegionArtifactPathsByJobName))
+	for jobName, artifactPath := range in.RunRegionArtifactPathsByJobName {
+		out.RunRegionArtifactPathsByJobName[jobName] = artifactPath
+	}
 	return out
 }
 

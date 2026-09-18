@@ -9,25 +9,48 @@ import (
 // windowed/day run history views, and failure-pattern reference joins.
 //
 // Today it intentionally remains small: run URL, job identity, basic PR
-// metadata, pass/fail state, and occurred-at timestamp.
+// metadata, pass/fail state, timing, and selected region.
 //
 // It is not yet a full Prow-style run history record. In particular it does not
-// currently carry duration/build identifiers or richer terminal run-state
-// details, and some raw-failure rows may still reference runs whose RunRecord
-// needs backfill/lookup.
+// currently carry richer build identifiers or terminal run-state details, and
+// some raw-failure rows may still reference runs whose RunRecord needs
+// backfill/lookup.
 type RunRecord struct {
-	Environment    string `json:"environment"`
-	RunURL         string `json:"run_url"`
-	JobName        string `json:"job_name"`
-	PRNumber       int    `json:"pr_number"`
-	PRState        string `json:"pr_state"`
-	PRSHA          string `json:"pr_sha"`
-	FinalMergedSHA string `json:"final_merged_sha"`
-	MergedPR       bool   `json:"merged_pr"`
-	PostGoodCommit bool   `json:"post_good_commit"`
-	Failed         bool   `json:"failed"`
-	OccurredAt     string `json:"occurred_at"`
+	Environment                  string `json:"environment"`
+	RunURL                       string `json:"run_url"`
+	JobName                      string `json:"job_name"`
+	PRNumber                     int    `json:"pr_number"`
+	PRState                      string `json:"pr_state"`
+	PRSHA                        string `json:"pr_sha"`
+	FinalMergedSHA               string `json:"final_merged_sha"`
+	MergedPR                     bool   `json:"merged_pr"`
+	PostGoodCommit               bool   `json:"post_good_commit"`
+	Failed                       bool   `json:"failed"`
+	OccurredAt                   string `json:"occurred_at"`
+	StartedAt                    string `json:"started_at,omitempty"`
+	CompletedAt                  string `json:"completed_at,omitempty"`
+	TimingMetadataState          string `json:"timing_metadata_state,omitempty"`
+	TimingMetadataFirstCheckedAt string `json:"timing_metadata_first_checked_at,omitempty"`
+	TimingMetadataCheckedAt      string `json:"timing_metadata_checked_at,omitempty"`
+	Region                       string `json:"region,omitempty"`
+	RegionMetadataState          string `json:"region_metadata_state,omitempty"`
+	RegionMetadataFirstCheckedAt string `json:"region_metadata_first_checked_at,omitempty"`
+	RegionMetadataCheckedAt      string `json:"region_metadata_checked_at,omitempty"`
 }
+
+const (
+	RunTimingMetadataStatePending   = "pending"
+	RunTimingMetadataStateFound     = "found"
+	RunTimingMetadataStateForbidden = "forbidden"
+	RunTimingMetadataStateMissing   = "missing"
+	RunTimingMetadataStateInvalid   = "invalid"
+
+	RunRegionMetadataStatePending   = "pending"
+	RunRegionMetadataStateFound     = "found"
+	RunRegionMetadataStateForbidden = "forbidden"
+	RunRegionMetadataStateMissing   = "missing"
+	RunRegionMetadataStateInvalid   = "invalid"
+)
 
 type PullRequestRecord struct {
 	PRNumber       int    `json:"pr_number"`
@@ -120,7 +143,11 @@ type RunStore interface {
 	ListRunKeys(ctx context.Context) ([]string, error)
 	ListRunDates(ctx context.Context) ([]string, error)
 	ListRunsByDateRange(ctx context.Context, environment string, startTime time.Time, endTime time.Time) ([]RunRecord, error)
+	ListRunsNeedingTimingMetadata(ctx context.Context, environments []string, startTime time.Time) ([]RunRecord, error)
+	ListRunsNeedingRegionMetadata(ctx context.Context, environments []string, startTime time.Time) ([]RunRecord, error)
 	GetRun(ctx context.Context, environment string, runURL string) (RunRecord, bool, error)
+	UpdateRunTimingMetadata(ctx context.Context, run RunRecord) error
+	UpdateRunRegionMetadata(ctx context.Context, run RunRecord) error
 }
 
 type PullRequestStore interface {

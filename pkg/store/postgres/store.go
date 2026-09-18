@@ -68,11 +68,39 @@ func (s *Store) ListRunsByDateRange(
 	return s.listRunsByDateRangeImpl(ctx, environment, startTime, endTime)
 }
 
+func (s *Store) ListRunsNeedingRegionMetadata(ctx context.Context, environments []string, startTime time.Time) ([]storecontracts.RunRecord, error) {
+	if err := requireContext(ctx); err != nil {
+		return nil, err
+	}
+	return s.listRunsNeedingRegionMetadataImpl(ctx, environments, startTime)
+}
+
+func (s *Store) ListRunsNeedingTimingMetadata(ctx context.Context, environments []string, startTime time.Time) ([]storecontracts.RunRecord, error) {
+	if err := requireContext(ctx); err != nil {
+		return nil, err
+	}
+	return s.listRunsNeedingTimingMetadataImpl(ctx, environments, startTime)
+}
+
 func (s *Store) GetRun(ctx context.Context, environment string, runURL string) (storecontracts.RunRecord, bool, error) {
 	if err := requireContext(ctx); err != nil {
 		return storecontracts.RunRecord{}, false, err
 	}
 	return s.getRunImpl(ctx, environment, runURL)
+}
+
+func (s *Store) UpdateRunRegionMetadata(ctx context.Context, run storecontracts.RunRecord) error {
+	if err := requireContext(ctx); err != nil {
+		return err
+	}
+	return s.updateRunRegionMetadataImpl(ctx, run)
+}
+
+func (s *Store) UpdateRunTimingMetadata(ctx context.Context, run storecontracts.RunRecord) error {
+	if err := requireContext(ctx); err != nil {
+		return err
+	}
+	return s.updateRunTimingMetadataImpl(ctx, run)
 }
 
 func (s *Store) UpsertPullRequests(ctx context.Context, rows []storecontracts.PullRequestRecord) error {

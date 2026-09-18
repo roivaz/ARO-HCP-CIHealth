@@ -10,6 +10,7 @@ import (
 
 	"github.com/roivaz/ARO-HCP-CIHealth/pkg/controllers"
 	sourceoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/options"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/source/prowartifacts"
 	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 	postgresstore "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/postgres"
 	postgresoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/store/postgres/options"
@@ -25,6 +26,7 @@ func DefaultOptions() *RawOptions {
 		SourceSippyTestsDailyControllerThreads: 1,
 		SourceGitHubPullRequestsThreads:        1,
 		SourceProwFailuresControllerThreads:    1,
+		SourceProwMetadataControllerThreads:    1,
 		FactsRunsControllerThreads:             1,
 		FactsRawFailuresControllerThreads:      1,
 		MetricsRollupDailyControllerThreads:    1,
@@ -51,6 +53,7 @@ func BindOptions(opts *RawOptions, cmd *cobra.Command) error {
 	cmd.Flags().IntVar(&opts.SourceSippyTestsDailyControllerThreads, "controllers.source.sippy.tests-daily.threads", opts.SourceSippyTestsDailyControllerThreads, "Number of threads for controller source.sippy.tests-daily.")
 	cmd.Flags().IntVar(&opts.SourceGitHubPullRequestsThreads, "controllers.source.github.pull-requests.threads", opts.SourceGitHubPullRequestsThreads, "Number of threads for controller source.github.pull-requests.")
 	cmd.Flags().IntVar(&opts.SourceProwFailuresControllerThreads, "controllers.source.prow.failures.threads", opts.SourceProwFailuresControllerThreads, "Number of threads for controller source.prow.failures.")
+	cmd.Flags().IntVar(&opts.SourceProwMetadataControllerThreads, "controllers.source.prow.metadata.threads", opts.SourceProwMetadataControllerThreads, "Number of threads for controller source.prow.metadata.")
 	cmd.Flags().IntVar(&opts.FactsRunsControllerThreads, "controllers.facts.runs.threads", opts.FactsRunsControllerThreads, "Number of threads for controller facts.runs.")
 	cmd.Flags().IntVar(&opts.FactsRawFailuresControllerThreads, "controllers.facts.raw-failures.threads", opts.FactsRawFailuresControllerThreads, "Number of threads for controller facts.raw-failures.")
 	cmd.Flags().IntVar(&opts.MetricsRollupDailyControllerThreads, "controllers.metrics.rollup.daily.threads", opts.MetricsRollupDailyControllerThreads, "Number of threads for controller metrics.rollup.daily.")
@@ -66,6 +69,7 @@ type RawOptions struct {
 	SourceSippyTestsDailyControllerThreads int
 	SourceGitHubPullRequestsThreads        int
 	SourceProwFailuresControllerThreads    int
+	SourceProwMetadataControllerThreads    int
 	FactsRunsControllerThreads             int
 	FactsRawFailuresControllerThreads      int
 	MetricsRollupDailyControllerThreads    int
@@ -81,6 +85,7 @@ type validatedOptions struct {
 	SourceSippyTestsDailyControllerThreads int
 	SourceGitHubPullRequestsThreads        int
 	SourceProwFailuresControllerThreads    int
+	SourceProwMetadataControllerThreads    int
 	FactsRunsControllerThreads             int
 	FactsRawFailuresControllerThreads      int
 	MetricsRollupDailyControllerThreads    int
@@ -101,6 +106,7 @@ type completedOptions struct {
 	SourceSippyTestsDailyControllerThreads int
 	SourceGitHubPullRequestsThreads        int
 	SourceProwFailuresControllerThreads    int
+	SourceProwMetadataControllerThreads    int
 	FactsRunsControllerThreads             int
 	FactsRawFailuresControllerThreads      int
 	MetricsRollupDailyControllerThreads    int
@@ -146,6 +152,9 @@ func (o *RawOptions) Validate() (*ValidatedOptions, error) {
 	if o.SourceProwFailuresControllerThreads <= 0 {
 		o.SourceProwFailuresControllerThreads = 1
 	}
+	if o.SourceProwMetadataControllerThreads <= 0 {
+		o.SourceProwMetadataControllerThreads = 1
+	}
 	if o.FactsRunsControllerThreads <= 0 {
 		o.FactsRunsControllerThreads = 1
 	}
@@ -166,6 +175,7 @@ func (o *RawOptions) Validate() (*ValidatedOptions, error) {
 			SourceSippyTestsDailyControllerThreads: o.SourceSippyTestsDailyControllerThreads,
 			SourceGitHubPullRequestsThreads:        o.SourceGitHubPullRequestsThreads,
 			SourceProwFailuresControllerThreads:    o.SourceProwFailuresControllerThreads,
+			SourceProwMetadataControllerThreads:    o.SourceProwMetadataControllerThreads,
 			FactsRunsControllerThreads:             o.FactsRunsControllerThreads,
 			FactsRawFailuresControllerThreads:      o.FactsRawFailuresControllerThreads,
 			MetricsRollupDailyControllerThreads:    o.MetricsRollupDailyControllerThreads,
@@ -203,6 +213,7 @@ func (o *ValidatedOptions) Complete(ctx context.Context) (*Options, error) {
 			SourceSippyTestsDailyControllerThreads: o.SourceSippyTestsDailyControllerThreads,
 			SourceGitHubPullRequestsThreads:        o.SourceGitHubPullRequestsThreads,
 			SourceProwFailuresControllerThreads:    o.SourceProwFailuresControllerThreads,
+			SourceProwMetadataControllerThreads:    o.SourceProwMetadataControllerThreads,
 			FactsRunsControllerThreads:             o.FactsRunsControllerThreads,
 			FactsRawFailuresControllerThreads:      o.FactsRawFailuresControllerThreads,
 			MetricsRollupDailyControllerThreads:    o.MetricsRollupDailyControllerThreads,
@@ -231,6 +242,11 @@ func (opts *Options) Run(ctx context.Context) error {
 	deps := controllers.Dependencies{
 		Store:  opts.Store,
 		Source: opts.Source,
+		ProwArtifacts: prowartifacts.NewHTTPClient(prowartifacts.ClientOptions{
+			ArtifactsBaseURL:       opts.Source.ProwArtifactsBaseURL,
+			JUnitPathsByEnvMapping: sourceoptions.DeterministicJUnitPathsByEnvironment(),
+			DefaultJUnitPaths:      sourceoptions.DefaultJUnitPaths(),
+		}),
 	}
 	sourceSippyRunsController, err := controllers.NewSourceSippyRuns(logger, deps)
 	if err != nil {
@@ -254,6 +270,10 @@ func (opts *Options) Run(ctx context.Context) error {
 		return err
 	}
 	sourceProwFailuresController, err := controllers.NewSourceProwFailures(logger, deps)
+	if err != nil {
+		return err
+	}
+	sourceProwMetadataController, err := controllers.NewSourceProwMetadata(logger, deps)
 	if err != nil {
 		return err
 	}
@@ -289,6 +309,10 @@ func (opts *Options) Run(ctx context.Context) error {
 		{
 			controller: sourceProwFailuresController,
 			threads:    opts.SourceProwFailuresControllerThreads,
+		},
+		{
+			controller: sourceProwMetadataController,
+			threads:    opts.SourceProwMetadataControllerThreads,
 		},
 		{
 			controller: factsRunsController,

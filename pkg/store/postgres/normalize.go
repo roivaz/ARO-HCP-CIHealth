@@ -97,6 +97,19 @@ func normalizeRunRecord(row storecontracts.RunRecord) storecontracts.RunRecord {
 		PostGoodCommit: row.PostGoodCommit,
 		Failed:         row.Failed,
 		OccurredAt:     strings.TrimSpace(row.OccurredAt),
+		StartedAt:      strings.TrimSpace(row.StartedAt),
+		CompletedAt:    strings.TrimSpace(row.CompletedAt),
+		TimingMetadataState: strings.ToLower(
+			strings.TrimSpace(row.TimingMetadataState),
+		),
+		TimingMetadataFirstCheckedAt: strings.TrimSpace(row.TimingMetadataFirstCheckedAt),
+		TimingMetadataCheckedAt:      strings.TrimSpace(row.TimingMetadataCheckedAt),
+		Region:                       strings.ToLower(strings.TrimSpace(row.Region)),
+		RegionMetadataState: strings.ToLower(
+			strings.TrimSpace(row.RegionMetadataState),
+		),
+		RegionMetadataFirstCheckedAt: strings.TrimSpace(row.RegionMetadataFirstCheckedAt),
+		RegionMetadataCheckedAt:      strings.TrimSpace(row.RegionMetadataCheckedAt),
 	}
 }
 

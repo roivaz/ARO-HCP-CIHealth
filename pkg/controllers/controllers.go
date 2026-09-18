@@ -6,6 +6,7 @@ import (
 	"github.com/go-logr/logr"
 
 	sourceoptions "github.com/roivaz/ARO-HCP-CIHealth/pkg/source/options"
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/source/prowartifacts"
 	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
@@ -15,14 +16,16 @@ const (
 	SourceSippyTestsDailyControllerName    = "source.sippy.tests-daily"
 	SourceGitHubPullRequestsControllerName = "source.github.pull-requests"
 	SourceProwFailuresControllerName       = "source.prow.failures"
+	SourceProwMetadataControllerName       = "source.prow.metadata"
 	FactsRunsControllerName                = "facts.runs"
 	FactsRawFailuresControllerName         = "facts.raw-failures"
 	MetricsRollupDailyControllerName       = "metrics.rollup.daily"
 )
 
 type Dependencies struct {
-	Store  contracts.Store
-	Source *sourceoptions.Options
+	Store         contracts.Store
+	Source        *sourceoptions.Options
+	ProwArtifacts prowartifacts.Client
 }
 
 func NewByName(name string, logger logr.Logger, deps Dependencies) (Controller, error) {
@@ -37,6 +40,8 @@ func NewByName(name string, logger logr.Logger, deps Dependencies) (Controller, 
 		return NewSourceGitHubPullRequests(logger, deps)
 	case SourceProwFailuresControllerName:
 		return NewSourceProwFailures(logger, deps)
+	case SourceProwMetadataControllerName:
+		return NewSourceProwMetadata(logger, deps)
 	case FactsRunsControllerName:
 		return NewFactsRuns(logger, deps)
 	case FactsRawFailuresControllerName:

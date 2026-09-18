@@ -50,6 +50,54 @@ func TestDayRunHistoryRunRowCarriesSearchClass(t *testing.T) {
 	}
 }
 
+func TestDayRunHistoryRunRowRendersRegion(t *testing.T) {
+	t.Parallel()
+
+	rendered := runLogDayRunRowHTML(readmodelrunlog.JobHistoryRunRow{
+		Run: storecontracts.RunRecord{
+			Environment: "dev",
+			JobName:     "pull-ci-Azure-ARO-HCP-main-e2e-parallel",
+			Region:      "westus3",
+			OccurredAt:  "2026-09-18T08:00:00Z",
+		},
+	})
+	if !strings.Contains(rendered, `<td class="region-col">westus3</td>`) {
+		t.Fatalf("expected run region in row, got %q", rendered)
+	}
+}
+
+func TestDayRunHistoryRunRowRendersRuntime(t *testing.T) {
+	t.Parallel()
+
+	rendered := runLogDayRunRowHTML(readmodelrunlog.JobHistoryRunRow{
+		Run: storecontracts.RunRecord{
+			Environment: "dev",
+			JobName:     "pull-ci-Azure-ARO-HCP-main-e2e-parallel",
+			OccurredAt:  "2026-09-18T10:19:12Z",
+			StartedAt:   "2026-09-18T10:19:12Z",
+			CompletedAt: "2026-09-18T12:27:55Z",
+		},
+	})
+	if !strings.Contains(rendered, `<td class="runtime-col">2h 8m 43s</td>`) {
+		t.Fatalf("expected total runtime in row, got %q", rendered)
+	}
+}
+
+func TestDayRunHistoryRunRowRendersMissingRuntime(t *testing.T) {
+	t.Parallel()
+
+	rendered := runLogDayRunRowHTML(readmodelrunlog.JobHistoryRunRow{
+		Run: storecontracts.RunRecord{
+			Environment: "dev",
+			JobName:     "periodic-ci",
+			OccurredAt:  "2026-09-18T10:19:12Z",
+		},
+	})
+	if !strings.Contains(rendered, `<td class="runtime-col">n/a</td>`) {
+		t.Fatalf("expected unavailable runtime in row, got %q", rendered)
+	}
+}
+
 func TestDayRunHistoryFailureDetailsHTMLSkipsNonArtifactBackedFailures(t *testing.T) {
 	t.Parallel()
 

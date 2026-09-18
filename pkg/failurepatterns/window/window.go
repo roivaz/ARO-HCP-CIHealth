@@ -1246,17 +1246,26 @@ func fillMissingRuns(
 
 func normalizeRunRecord(run storecontracts.RunRecord) storecontracts.RunRecord {
 	return storecontracts.RunRecord{
-		Environment:    normalizeEnvironment(run.Environment),
-		RunURL:         strings.TrimSpace(run.RunURL),
-		JobName:        strings.TrimSpace(run.JobName),
-		PRNumber:       run.PRNumber,
-		PRState:        strings.TrimSpace(run.PRState),
-		PRSHA:          strings.TrimSpace(run.PRSHA),
-		FinalMergedSHA: strings.TrimSpace(run.FinalMergedSHA),
-		MergedPR:       run.MergedPR,
-		PostGoodCommit: run.PostGoodCommit,
-		Failed:         run.Failed,
-		OccurredAt:     strings.TrimSpace(run.OccurredAt),
+		Environment:                  normalizeEnvironment(run.Environment),
+		RunURL:                       strings.TrimSpace(run.RunURL),
+		JobName:                      strings.TrimSpace(run.JobName),
+		PRNumber:                     run.PRNumber,
+		PRState:                      strings.TrimSpace(run.PRState),
+		PRSHA:                        strings.TrimSpace(run.PRSHA),
+		FinalMergedSHA:               strings.TrimSpace(run.FinalMergedSHA),
+		MergedPR:                     run.MergedPR,
+		PostGoodCommit:               run.PostGoodCommit,
+		Failed:                       run.Failed,
+		OccurredAt:                   strings.TrimSpace(run.OccurredAt),
+		StartedAt:                    strings.TrimSpace(run.StartedAt),
+		CompletedAt:                  strings.TrimSpace(run.CompletedAt),
+		TimingMetadataState:          strings.ToLower(strings.TrimSpace(run.TimingMetadataState)),
+		TimingMetadataFirstCheckedAt: strings.TrimSpace(run.TimingMetadataFirstCheckedAt),
+		TimingMetadataCheckedAt:      strings.TrimSpace(run.TimingMetadataCheckedAt),
+		Region:                       strings.ToLower(strings.TrimSpace(run.Region)),
+		RegionMetadataState:          strings.ToLower(strings.TrimSpace(run.RegionMetadataState)),
+		RegionMetadataFirstCheckedAt: strings.TrimSpace(run.RegionMetadataFirstCheckedAt),
+		RegionMetadataCheckedAt:      strings.TrimSpace(run.RegionMetadataCheckedAt),
 	}
 }
 

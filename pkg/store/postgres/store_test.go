@@ -179,6 +179,200 @@ func TestListRunsByDateRangeUsesTimestampWindow(t *testing.T) {
 	}
 }
 
+func TestUpsertRunsPreservesEnrichedProwMetadata(t *testing.T) {
+	t.Parallel()
+
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	runURL := "https://prow.example.com/run/region"
+
+	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
+		{
+			Environment:                  "dev",
+			RunURL:                       runURL,
+			JobName:                      "pull-ci-Azure-ARO-HCP-main-e2e-parallel",
+			OccurredAt:                   "2026-09-18T08:00:00Z",
+			StartedAt:                    "2026-09-18T08:00:12Z",
+			CompletedAt:                  "2026-09-18T10:08:55Z",
+			TimingMetadataState:          storecontracts.RunTimingMetadataStateFound,
+			TimingMetadataFirstCheckedAt: "2026-09-18T10:09:00Z",
+			TimingMetadataCheckedAt:      "2026-09-18T10:09:01Z",
+			Region:                       "westus3",
+			RegionMetadataState:          storecontracts.RunRegionMetadataStateFound,
+			RegionMetadataFirstCheckedAt: "2026-09-18T08:30:00Z",
+			RegionMetadataCheckedAt:      "2026-09-18T09:00:00Z",
+		},
+	}); err != nil {
+		t.Fatalf("upsert enriched run: %v", err)
+	}
+
+	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
+		{
+			Environment: "dev",
+			RunURL:      runURL,
+			JobName:     "pull-ci-Azure-ARO-HCP-main-e2e-parallel",
+			OccurredAt:  "2026-09-18T08:00:00Z",
+			Failed:      true,
+		},
+	}); err != nil {
+		t.Fatalf("upsert ordinary run metadata: %v", err)
+	}
+
+	run, found, err := store.GetRun(ctx, "dev", runURL)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if !found {
+		t.Fatalf("expected run to be found")
+	}
+	if run.StartedAt != "2026-09-18T08:00:12Z" || run.CompletedAt != "2026-09-18T10:08:55Z" {
+		t.Fatalf("unexpected preserved timing: started=%q completed=%q", run.StartedAt, run.CompletedAt)
+	}
+	if run.TimingMetadataState != storecontracts.RunTimingMetadataStateFound {
+		t.Fatalf("unexpected preserved timing state: got=%q", run.TimingMetadataState)
+	}
+	if run.TimingMetadataFirstCheckedAt != "2026-09-18T10:09:00Z" || run.TimingMetadataCheckedAt != "2026-09-18T10:09:01Z" {
+		t.Fatalf("unexpected preserved timing check timestamps: %+v", run)
+	}
+	if run.Region != "westus3" {
+		t.Fatalf("unexpected preserved region: got=%q want=%q", run.Region, "westus3")
+	}
+	if run.RegionMetadataState != storecontracts.RunRegionMetadataStateFound {
+		t.Fatalf("unexpected preserved metadata state: got=%q want=%q", run.RegionMetadataState, storecontracts.RunRegionMetadataStateFound)
+	}
+	if run.RegionMetadataFirstCheckedAt != "2026-09-18T08:30:00Z" {
+		t.Fatalf("unexpected preserved first-check timestamp: got=%q", run.RegionMetadataFirstCheckedAt)
+	}
+	if run.RegionMetadataCheckedAt != "2026-09-18T09:00:00Z" {
+		t.Fatalf("unexpected preserved metadata timestamp: got=%q", run.RegionMetadataCheckedAt)
+	}
+}
+
+func TestRunTimingMetadataQueriesAndNarrowUpdate(t *testing.T) {
+	t.Parallel()
+
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	runURL := "https://prow.example.com/run/timing-update"
+
+	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
+		{
+			Environment: "dev",
+			RunURL:      runURL,
+			JobName:     "pull-ci-Azure-ARO-HCP-main-e2e-parallel",
+			PRState:     "open",
+			Failed:      true,
+			OccurredAt:  "2026-09-18T08:00:00Z",
+		},
+		{
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/run/old-timing",
+			JobName:     "pull-ci-Azure-ARO-HCP-main-e2e-parallel",
+			OccurredAt:  "2026-09-01T08:00:00Z",
+		},
+	}); err != nil {
+		t.Fatalf("upsert runs: %v", err)
+	}
+
+	rows, err := store.ListRunsNeedingTimingMetadata(
+		ctx,
+		[]string{"dev"},
+		time.Date(2026, time.September, 11, 0, 0, 0, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatalf("list runs needing timing metadata: %v", err)
+	}
+	if len(rows) != 1 || rows[0].RunURL != runURL {
+		t.Fatalf("unexpected timing metadata candidates: %+v", rows)
+	}
+
+	update := rows[0]
+	update.StartedAt = "2026-09-18T08:00:12Z"
+	update.CompletedAt = "2026-09-18T10:08:55Z"
+	update.TimingMetadataState = storecontracts.RunTimingMetadataStateFound
+	update.TimingMetadataFirstCheckedAt = "2026-09-18T10:09:00Z"
+	update.TimingMetadataCheckedAt = "2026-09-18T10:09:01Z"
+	if err := store.UpdateRunTimingMetadata(ctx, update); err != nil {
+		t.Fatalf("update run timing metadata: %v", err)
+	}
+
+	run, found, err := store.GetRun(ctx, "dev", runURL)
+	if err != nil {
+		t.Fatalf("get updated run: %v", err)
+	}
+	if !found {
+		t.Fatalf("expected updated run")
+	}
+	if run.StartedAt != update.StartedAt || run.CompletedAt != update.CompletedAt || run.TimingMetadataState != storecontracts.RunTimingMetadataStateFound {
+		t.Fatalf("unexpected updated timing metadata: %+v", run)
+	}
+	if run.PRState != "open" || !run.Failed {
+		t.Fatalf("narrow timing update changed unrelated run metadata: %+v", run)
+	}
+}
+
+func TestRunRegionMetadataQueriesAndNarrowUpdate(t *testing.T) {
+	t.Parallel()
+
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	runURL := "https://prow.example.com/run/region-update"
+
+	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
+		{
+			Environment: "dev",
+			RunURL:      runURL,
+			JobName:     "pull-ci-Azure-ARO-HCP-main-e2e-parallel",
+			PRState:     "open",
+			Failed:      true,
+			OccurredAt:  "2026-09-18T08:00:00Z",
+		},
+		{
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/run/old",
+			JobName:     "pull-ci-Azure-ARO-HCP-main-e2e-parallel",
+			OccurredAt:  "2026-09-01T08:00:00Z",
+		},
+	}); err != nil {
+		t.Fatalf("upsert runs: %v", err)
+	}
+
+	rows, err := store.ListRunsNeedingRegionMetadata(
+		ctx,
+		[]string{"dev"},
+		time.Date(2026, time.September, 11, 0, 0, 0, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatalf("list runs needing region metadata: %v", err)
+	}
+	if len(rows) != 1 || rows[0].RunURL != runURL {
+		t.Fatalf("unexpected region metadata candidates: %+v", rows)
+	}
+
+	update := rows[0]
+	update.Region = "centralus"
+	update.RegionMetadataState = storecontracts.RunRegionMetadataStateFound
+	update.RegionMetadataFirstCheckedAt = "2026-09-18T09:00:00Z"
+	update.RegionMetadataCheckedAt = "2026-09-18T09:01:00Z"
+	if err := store.UpdateRunRegionMetadata(ctx, update); err != nil {
+		t.Fatalf("update run region metadata: %v", err)
+	}
+
+	run, found, err := store.GetRun(ctx, "dev", runURL)
+	if err != nil {
+		t.Fatalf("get updated run: %v", err)
+	}
+	if !found {
+		t.Fatalf("expected updated run")
+	}
+	if run.Region != "centralus" || run.RegionMetadataState != storecontracts.RunRegionMetadataStateFound {
+		t.Fatalf("unexpected updated region metadata: %+v", run)
+	}
+	if run.PRState != "open" || !run.Failed {
+		t.Fatalf("narrow region update changed unrelated run metadata: %+v", run)
+	}
+}
+
 func TestListRawFailuresByDateRangeUsesUTCDateProjection(t *testing.T) {
 	t.Parallel()
 

@@ -30,10 +30,14 @@ func (s *Store) upsertRunsImpl(ctx context.Context, rows []storecontracts.RunRec
 			_, err := tx.Exec(ctx, `
 INSERT INTO cfa_runs (
   environment, run_url, job_name, pr_number, pr_state, pr_sha,
-  final_merged_sha, merged_pr, post_good_commit, failed, occurred_at
+  final_merged_sha, merged_pr, post_good_commit, failed, occurred_at,
+  started_at, completed_at, timing_metadata_state, timing_metadata_first_checked_at, timing_metadata_checked_at,
+  region, region_metadata_state, region_metadata_first_checked_at, region_metadata_checked_at
 ) VALUES (
   $1, $2, $3, $4, $5, $6,
-  $7, $8, $9, $10, $11
+  $7, $8, $9, $10, $11,
+  $12, $13, $14, $15, $16,
+  $17, $18, $19, $20
 )
 ON CONFLICT (environment, run_url)
 DO UPDATE SET
@@ -45,8 +49,44 @@ DO UPDATE SET
   merged_pr = EXCLUDED.merged_pr,
   post_good_commit = EXCLUDED.post_good_commit,
   failed = EXCLUDED.failed,
-  occurred_at = EXCLUDED.occurred_at
-`, row.Environment, row.RunURL, row.JobName, row.PRNumber, row.PRState, row.PRSHA, row.FinalMergedSHA, row.MergedPR, row.PostGoodCommit, row.Failed, row.OccurredAt)
+  occurred_at = EXCLUDED.occurred_at,
+  started_at = CASE
+    WHEN EXCLUDED.timing_metadata_state = '' THEN cfa_runs.started_at
+    ELSE EXCLUDED.started_at
+  END,
+  completed_at = CASE
+    WHEN EXCLUDED.timing_metadata_state = '' THEN cfa_runs.completed_at
+    ELSE EXCLUDED.completed_at
+  END,
+  timing_metadata_state = CASE
+    WHEN EXCLUDED.timing_metadata_state = '' THEN cfa_runs.timing_metadata_state
+    ELSE EXCLUDED.timing_metadata_state
+  END,
+  timing_metadata_first_checked_at = CASE
+    WHEN EXCLUDED.timing_metadata_state = '' THEN cfa_runs.timing_metadata_first_checked_at
+    ELSE EXCLUDED.timing_metadata_first_checked_at
+  END,
+  timing_metadata_checked_at = CASE
+    WHEN EXCLUDED.timing_metadata_state = '' THEN cfa_runs.timing_metadata_checked_at
+    ELSE EXCLUDED.timing_metadata_checked_at
+  END,
+  region = CASE
+    WHEN EXCLUDED.region_metadata_state = '' THEN cfa_runs.region
+    ELSE EXCLUDED.region
+  END,
+  region_metadata_state = CASE
+    WHEN EXCLUDED.region_metadata_state = '' THEN cfa_runs.region_metadata_state
+    ELSE EXCLUDED.region_metadata_state
+  END,
+  region_metadata_first_checked_at = CASE
+    WHEN EXCLUDED.region_metadata_state = '' THEN cfa_runs.region_metadata_first_checked_at
+    ELSE EXCLUDED.region_metadata_first_checked_at
+  END,
+  region_metadata_checked_at = CASE
+    WHEN EXCLUDED.region_metadata_state = '' THEN cfa_runs.region_metadata_checked_at
+    ELSE EXCLUDED.region_metadata_checked_at
+  END
+`, row.Environment, row.RunURL, row.JobName, row.PRNumber, row.PRState, row.PRSHA, row.FinalMergedSHA, row.MergedPR, row.PostGoodCommit, row.Failed, row.OccurredAt, row.StartedAt, row.CompletedAt, row.TimingMetadataState, row.TimingMetadataFirstCheckedAt, row.TimingMetadataCheckedAt, row.Region, row.RegionMetadataState, row.RegionMetadataFirstCheckedAt, row.RegionMetadataCheckedAt)
 			if err != nil {
 				return fmt.Errorf("upsert run row (%s,%s): %w", row.Environment, row.RunURL, err)
 			}
@@ -135,7 +175,7 @@ func (s *Store) listRunsByDateRangeImpl(
 	}
 
 	rows, err := s.pool.Query(ctx, `
-SELECT environment, run_url, job_name, pr_number, pr_state, pr_sha, final_merged_sha, merged_pr, post_good_commit, failed, occurred_at
+SELECT environment, run_url, job_name, pr_number, pr_state, pr_sha, final_merged_sha, merged_pr, post_good_commit, failed, occurred_at, started_at, completed_at, timing_metadata_state, timing_metadata_first_checked_at, timing_metadata_checked_at, region, region_metadata_state, region_metadata_first_checked_at, region_metadata_checked_at
 FROM (
   SELECT
     environment,
@@ -149,6 +189,15 @@ FROM (
     post_good_commit,
     failed,
     occurred_at,
+    started_at,
+    completed_at,
+    timing_metadata_state,
+    timing_metadata_first_checked_at,
+    timing_metadata_checked_at,
+    region,
+    region_metadata_state,
+    region_metadata_first_checked_at,
+    region_metadata_checked_at,
     cfa_parse_rfc3339_utc_timestamp(occurred_at) AS occurred_ts
   FROM cfa_runs
   WHERE environment = $1
@@ -177,6 +226,15 @@ ORDER BY occurred_ts, occurred_at, run_url
 			&row.PostGoodCommit,
 			&row.Failed,
 			&row.OccurredAt,
+			&row.StartedAt,
+			&row.CompletedAt,
+			&row.TimingMetadataState,
+			&row.TimingMetadataFirstCheckedAt,
+			&row.TimingMetadataCheckedAt,
+			&row.Region,
+			&row.RegionMetadataState,
+			&row.RegionMetadataFirstCheckedAt,
+			&row.RegionMetadataCheckedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan run row by date range: %w", err)
 		}
@@ -192,6 +250,177 @@ ORDER BY occurred_ts, occurred_at, run_url
 	return out, nil
 }
 
+func (s *Store) listRunsNeedingTimingMetadataImpl(
+	ctx context.Context,
+	environments []string,
+	startTime time.Time,
+) ([]storecontracts.RunRecord, error) {
+	normalizedEnvironments := normalizeEnvironmentSlice(environments)
+	if len(normalizedEnvironments) == 0 {
+		return []storecontracts.RunRecord{}, nil
+	}
+	if startTime.IsZero() {
+		return nil, fmt.Errorf("timing metadata lookup requires a start time")
+	}
+
+	rows, err := s.pool.Query(ctx, `
+SELECT environment, run_url, job_name, pr_number, pr_state, pr_sha, final_merged_sha, merged_pr, post_good_commit, failed, occurred_at, started_at, completed_at, timing_metadata_state, timing_metadata_first_checked_at, timing_metadata_checked_at, region, region_metadata_state, region_metadata_first_checked_at, region_metadata_checked_at
+FROM (
+  SELECT
+    environment,
+    run_url,
+    job_name,
+    pr_number,
+    pr_state,
+    pr_sha,
+    final_merged_sha,
+    merged_pr,
+    post_good_commit,
+    failed,
+    occurred_at,
+    started_at,
+    completed_at,
+    timing_metadata_state,
+    timing_metadata_first_checked_at,
+    timing_metadata_checked_at,
+    region,
+    region_metadata_state,
+    region_metadata_first_checked_at,
+    region_metadata_checked_at,
+    cfa_parse_rfc3339_utc_timestamp(occurred_at) AS occurred_ts
+  FROM cfa_runs
+  WHERE environment = ANY($1)
+    AND timing_metadata_state IN ('', 'pending')
+) runs
+WHERE occurred_ts >= $2::TIMESTAMPTZ
+ORDER BY occurred_ts, environment, run_url
+`, normalizedEnvironments, startTime.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("query runs needing timing metadata: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]storecontracts.RunRecord, 0)
+	for rows.Next() {
+		var row storecontracts.RunRecord
+		if err := rows.Scan(
+			&row.Environment,
+			&row.RunURL,
+			&row.JobName,
+			&row.PRNumber,
+			&row.PRState,
+			&row.PRSHA,
+			&row.FinalMergedSHA,
+			&row.MergedPR,
+			&row.PostGoodCommit,
+			&row.Failed,
+			&row.OccurredAt,
+			&row.StartedAt,
+			&row.CompletedAt,
+			&row.TimingMetadataState,
+			&row.TimingMetadataFirstCheckedAt,
+			&row.TimingMetadataCheckedAt,
+			&row.Region,
+			&row.RegionMetadataState,
+			&row.RegionMetadataFirstCheckedAt,
+			&row.RegionMetadataCheckedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan run needing timing metadata: %w", err)
+		}
+		out = append(out, normalizeRunRecord(row))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate runs needing timing metadata: %w", err)
+	}
+	return out, nil
+}
+
+func (s *Store) listRunsNeedingRegionMetadataImpl(
+	ctx context.Context,
+	environments []string,
+	startTime time.Time,
+) ([]storecontracts.RunRecord, error) {
+	normalizedEnvironments := normalizeEnvironmentSlice(environments)
+	if len(normalizedEnvironments) == 0 {
+		return []storecontracts.RunRecord{}, nil
+	}
+	if startTime.IsZero() {
+		return nil, fmt.Errorf("region metadata lookup requires a start time")
+	}
+
+	rows, err := s.pool.Query(ctx, `
+SELECT environment, run_url, job_name, pr_number, pr_state, pr_sha, final_merged_sha, merged_pr, post_good_commit, failed, occurred_at, started_at, completed_at, timing_metadata_state, timing_metadata_first_checked_at, timing_metadata_checked_at, region, region_metadata_state, region_metadata_first_checked_at, region_metadata_checked_at
+FROM (
+  SELECT
+    environment,
+    run_url,
+    job_name,
+    pr_number,
+    pr_state,
+    pr_sha,
+    final_merged_sha,
+    merged_pr,
+    post_good_commit,
+    failed,
+    occurred_at,
+    started_at,
+    completed_at,
+    timing_metadata_state,
+    timing_metadata_first_checked_at,
+    timing_metadata_checked_at,
+    region,
+    region_metadata_state,
+    region_metadata_first_checked_at,
+    region_metadata_checked_at,
+    cfa_parse_rfc3339_utc_timestamp(occurred_at) AS occurred_ts
+  FROM cfa_runs
+  WHERE environment = ANY($1)
+    AND region = ''
+    AND region_metadata_state IN ('', 'pending')
+) runs
+WHERE occurred_ts >= $2::TIMESTAMPTZ
+ORDER BY occurred_ts, environment, run_url
+`, normalizedEnvironments, startTime.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("query runs needing region metadata: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]storecontracts.RunRecord, 0)
+	for rows.Next() {
+		var row storecontracts.RunRecord
+		if err := rows.Scan(
+			&row.Environment,
+			&row.RunURL,
+			&row.JobName,
+			&row.PRNumber,
+			&row.PRState,
+			&row.PRSHA,
+			&row.FinalMergedSHA,
+			&row.MergedPR,
+			&row.PostGoodCommit,
+			&row.Failed,
+			&row.OccurredAt,
+			&row.StartedAt,
+			&row.CompletedAt,
+			&row.TimingMetadataState,
+			&row.TimingMetadataFirstCheckedAt,
+			&row.TimingMetadataCheckedAt,
+			&row.Region,
+			&row.RegionMetadataState,
+			&row.RegionMetadataFirstCheckedAt,
+			&row.RegionMetadataCheckedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan run needing region metadata: %w", err)
+		}
+		out = append(out, normalizeRunRecord(row))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate runs needing region metadata: %w", err)
+	}
+	return out, nil
+}
+
 func (s *Store) getRunImpl(ctx context.Context, environment string, runURL string) (storecontracts.RunRecord, bool, error) {
 	lookup := normalizeRunRecord(storecontracts.RunRecord{
 		Environment: environment,
@@ -203,7 +432,7 @@ func (s *Store) getRunImpl(ctx context.Context, environment string, runURL strin
 
 	var row storecontracts.RunRecord
 	if err := s.pool.QueryRow(ctx, `
-SELECT environment, run_url, job_name, pr_number, pr_state, pr_sha, final_merged_sha, merged_pr, post_good_commit, failed, occurred_at
+SELECT environment, run_url, job_name, pr_number, pr_state, pr_sha, final_merged_sha, merged_pr, post_good_commit, failed, occurred_at, started_at, completed_at, timing_metadata_state, timing_metadata_first_checked_at, timing_metadata_checked_at, region, region_metadata_state, region_metadata_first_checked_at, region_metadata_checked_at
 FROM cfa_runs
 WHERE environment = $1 AND run_url = $2
 `, lookup.Environment, lookup.RunURL).Scan(
@@ -218,6 +447,15 @@ WHERE environment = $1 AND run_url = $2
 		&row.PostGoodCommit,
 		&row.Failed,
 		&row.OccurredAt,
+		&row.StartedAt,
+		&row.CompletedAt,
+		&row.TimingMetadataState,
+		&row.TimingMetadataFirstCheckedAt,
+		&row.TimingMetadataCheckedAt,
+		&row.Region,
+		&row.RegionMetadataState,
+		&row.RegionMetadataFirstCheckedAt,
+		&row.RegionMetadataCheckedAt,
 	); err != nil {
 		if err == pgx.ErrNoRows {
 			return storecontracts.RunRecord{}, false, nil
@@ -225,6 +463,84 @@ WHERE environment = $1 AND run_url = $2
 		return storecontracts.RunRecord{}, false, fmt.Errorf("query run: %w", err)
 	}
 	return normalizeRunRecord(row), true, nil
+}
+
+func (s *Store) updateRunTimingMetadataImpl(ctx context.Context, run storecontracts.RunRecord) error {
+	normalized := normalizeRunRecord(run)
+	if normalized.Environment == "" || normalized.RunURL == "" {
+		return fmt.Errorf("run timing metadata update requires environment and run_url")
+	}
+	switch normalized.TimingMetadataState {
+	case storecontracts.RunTimingMetadataStatePending,
+		storecontracts.RunTimingMetadataStateFound,
+		storecontracts.RunTimingMetadataStateForbidden,
+		storecontracts.RunTimingMetadataStateMissing,
+		storecontracts.RunTimingMetadataStateInvalid:
+	default:
+		return fmt.Errorf("run timing metadata update requires a valid state")
+	}
+	if normalized.TimingMetadataState == storecontracts.RunTimingMetadataStateFound {
+		startedAt, err := time.Parse(time.RFC3339Nano, normalized.StartedAt)
+		if err != nil {
+			return fmt.Errorf("run timing metadata update requires a valid started_at: %w", err)
+		}
+		completedAt, err := time.Parse(time.RFC3339Nano, normalized.CompletedAt)
+		if err != nil {
+			return fmt.Errorf("run timing metadata update requires a valid completed_at: %w", err)
+		}
+		if completedAt.Before(startedAt) {
+			return fmt.Errorf("run timing metadata update requires completed_at at or after started_at")
+		}
+	}
+
+	commandTag, err := s.pool.Exec(ctx, `
+UPDATE cfa_runs
+SET started_at = $3,
+    completed_at = $4,
+    timing_metadata_state = $5,
+    timing_metadata_first_checked_at = $6,
+    timing_metadata_checked_at = $7
+WHERE environment = $1 AND run_url = $2
+`, normalized.Environment, normalized.RunURL, normalized.StartedAt, normalized.CompletedAt, normalized.TimingMetadataState, normalized.TimingMetadataFirstCheckedAt, normalized.TimingMetadataCheckedAt)
+	if err != nil {
+		return fmt.Errorf("update run timing metadata (%s,%s): %w", normalized.Environment, normalized.RunURL, err)
+	}
+	if commandTag.RowsAffected() == 0 {
+		return fmt.Errorf("update run timing metadata (%s,%s): run not found", normalized.Environment, normalized.RunURL)
+	}
+	return nil
+}
+
+func (s *Store) updateRunRegionMetadataImpl(ctx context.Context, run storecontracts.RunRecord) error {
+	normalized := normalizeRunRecord(run)
+	if normalized.Environment == "" || normalized.RunURL == "" {
+		return fmt.Errorf("run region metadata update requires environment and run_url")
+	}
+	switch normalized.RegionMetadataState {
+	case storecontracts.RunRegionMetadataStatePending,
+		storecontracts.RunRegionMetadataStateFound,
+		storecontracts.RunRegionMetadataStateForbidden,
+		storecontracts.RunRegionMetadataStateMissing,
+		storecontracts.RunRegionMetadataStateInvalid:
+	default:
+		return fmt.Errorf("run region metadata update requires a valid state")
+	}
+
+	commandTag, err := s.pool.Exec(ctx, `
+UPDATE cfa_runs
+SET region = $3,
+    region_metadata_state = $4,
+    region_metadata_first_checked_at = $5,
+    region_metadata_checked_at = $6
+WHERE environment = $1 AND run_url = $2
+`, normalized.Environment, normalized.RunURL, normalized.Region, normalized.RegionMetadataState, normalized.RegionMetadataFirstCheckedAt, normalized.RegionMetadataCheckedAt)
+	if err != nil {
+		return fmt.Errorf("update run region metadata (%s,%s): %w", normalized.Environment, normalized.RunURL, err)
+	}
+	if commandTag.RowsAffected() == 0 {
+		return fmt.Errorf("update run region metadata (%s,%s): run not found", normalized.Environment, normalized.RunURL)
+	}
+	return nil
 }
 
 func (s *Store) upsertPullRequestsImpl(ctx context.Context, rows []storecontracts.PullRequestRecord) error {

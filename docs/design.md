@@ -77,7 +77,7 @@ PostgreSQL is the active runtime store behind `pkg/store/contracts` and `pkg/sto
 
 The persisted model includes:
 
-- run facts such as `cfa_runs`
+- run facts such as `cfa_runs`, including authoritative Prow timing and selected Azure region metadata when available
 - raw failure facts such as `cfa_raw_failures`
 - daily metrics such as `cfa_metrics_daily`
 - source checkpoints, sync state, and related metadata
@@ -133,7 +133,9 @@ The primary surfaces served by `cihealth app` are:
 - `/api/run-log/day`: JSON form of the day-scoped run-log surface
 - `/api/review/signals/window`: internal review-signal diagnostics for a date window
 
-The run-log surface is intentionally run-centric. It loads one UTC day of runs and raw failures, then enriches those rows with the contributing failure-pattern matches for that same day.
+The run-log surface is intentionally run-centric. It loads one UTC day of runs and raw failures, displays total Prow runtime and the selected Azure region when available, then enriches those rows with the contributing failure-pattern matches for that same day.
+
+The `source.prow.metadata` controller enriches Sippy-discovered runs within the configured history horizon. It reads authoritative start/completion timestamps from each run's `prowjob.json`, and independently reads the slot-manager lease-acquire build log for supported runs to determine the selected Azure region. Artifact access uses shared typed outcomes: `403 Forbidden` is terminal, `404 Not Found` and incomplete metadata remain retryable only during the publication grace period, and network errors, `408`, `429`, and `5xx` remain transient.
 
 Tide batch runs are classified from the run URL (`.../pull/batch/...`), not from a stored flag. They are surfaced with a `batch` badge (replacing the `post-good`/`merged PR` badges) and are treated as post-good in the DEV daily metrics, since every PR in a batch has already passed e2e in its own PR check.
 
@@ -193,6 +195,6 @@ Focused validation loops:
 
 The most important current limitations are:
 
-- the run-log surface is useful for day-scoped investigation, but it does not yet carry the full richer build-history metadata available in Prow
+- the run-log surface is useful for day-scoped investigation, but it does not yet carry the full richer build-history metadata available in Prow beyond timing and selected region
 - some raw failures can still reference runs that need additional run-record backfill or lookup
 - hosted app operation, auth, backups, and runbooks are still being hardened operationally

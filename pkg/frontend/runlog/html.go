@@ -59,7 +59,7 @@ func RenderHTML(
 	b.WriteString("    .runs-table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0 12px; }\n")
 	b.WriteString("    .runs-table th, .runs-table td { border: 1px solid #e5e7eb; padding: 8px 9px; text-align: left; vertical-align: top; }\n")
 	b.WriteString("    .runs-table th { background: #f3f4f6; color: #374151; font-weight: 700; }\n")
-	b.WriteString("    .runs-table td.result-col, .runs-table td.time-col, .runs-table td.pr-col, .runs-table td.failed-tests-col { white-space: nowrap; }\n")
+	b.WriteString("    .runs-table td.result-col, .runs-table td.time-col, .runs-table td.runtime-col, .runs-table td.region-col, .runs-table td.pr-col, .runs-table td.failed-tests-col { white-space: nowrap; }\n")
 	b.WriteString("    .status-badge { display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; padding: 2px 8px; font-size: 11px; font-weight: 700; border: 1px solid transparent; }\n")
 	b.WriteString("    .status-failed { background: #fee2e2; border-color: #fecaca; color: #991b1b; }\n")
 	b.WriteString("    .status-passed { background: #dcfce7; border-color: #bbf7d0; color: #166534; }\n")
@@ -118,7 +118,7 @@ func RenderHTML(
 			continue
 		}
 		b.WriteString("    <table class=\"runs-table\">\n")
-		b.WriteString("      <thead><tr><th class=\"tz-header\">Time (UTC)</th><th>Job</th><th>Failed at</th><th>Result</th><th>PR</th><th>Failed tests</th><th>Details</th></tr></thead>\n")
+		b.WriteString("      <thead><tr><th class=\"tz-header\">Time (UTC)</th><th>Runtime</th><th>Job</th><th>Region</th><th>Failed at</th><th>Result</th><th>PR</th><th>Failed tests</th><th>Details</th></tr></thead>\n")
 		b.WriteString("      <tbody>\n")
 		for _, row := range environment.Runs {
 			b.WriteString(runLogDayRunRowHTML(row))
@@ -284,6 +284,7 @@ func runLogDayRunRowHTML(row readmodelrunlog.JobHistoryRunRow) string {
 	var b strings.Builder
 	b.WriteString("        <tr class=\"run-row\">\n")
 	b.WriteString(fmt.Sprintf("          <td class=\"time-col\">%s</td>\n", runLogDayRunTimeHTML(row.Run.OccurredAt)))
+	b.WriteString(fmt.Sprintf("          <td class=\"runtime-col\">%s</td>\n", html.EscapeString(runLogDayRuntime(row.Run))))
 	b.WriteString("          <td>")
 	b.WriteString(runLogDayJobHTML(row.Run))
 	if flagsHTML := runLogDayRunFlagsHTML(row.Run); flagsHTML != "" {
@@ -291,6 +292,7 @@ func runLogDayRunRowHTML(row readmodelrunlog.JobHistoryRunRow) string {
 	}
 	b.WriteString(fmt.Sprintf("<div class=\"job-submeta\">%s</div>", html.EscapeString(runLogDayRunSubmeta(row.Run))))
 	b.WriteString("</td>\n")
+	b.WriteString(fmt.Sprintf("          <td class=\"region-col\">%s</td>\n", runLogDayRegionHTML(row.Run)))
 	b.WriteString(fmt.Sprintf("          <td>%s</td>\n", html.EscapeString(runLogDayLaneSummary(row))))
 	b.WriteString(fmt.Sprintf("          <td class=\"result-col\">%s</td>\n", runLogDayResultBadgeHTML(row.Run)))
 	b.WriteString(fmt.Sprintf("          <td class=\"pr-col\">%s</td>\n", runLogDayPRHTML(row)))
@@ -330,6 +332,35 @@ func runLogDayRunTimeHTML(occurredAt string) string {
 	return frontui.TimestampHTML(parsed, "15:04:05", frontui.TzFmtTime)
 }
 
+func runLogDayRuntime(run storecontracts.RunRecord) string {
+	startedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(run.StartedAt))
+	if err != nil {
+		return "n/a"
+	}
+	completedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(run.CompletedAt))
+	if err != nil || completedAt.Before(startedAt) {
+		return "n/a"
+	}
+	duration := completedAt.Sub(startedAt).Round(time.Second)
+	if duration < time.Minute {
+		return fmt.Sprintf("%ds", int64(duration/time.Second))
+	}
+	hours := int64(duration / time.Hour)
+	duration -= time.Duration(hours) * time.Hour
+	minutes := int64(duration / time.Minute)
+	duration -= time.Duration(minutes) * time.Minute
+	seconds := int64(duration / time.Second)
+	parts := make([]string, 0, 3)
+	if hours > 0 {
+		parts = append(parts, fmt.Sprintf("%dh", hours))
+	}
+	if minutes > 0 || hours > 0 {
+		parts = append(parts, fmt.Sprintf("%dm", minutes))
+	}
+	parts = append(parts, fmt.Sprintf("%ds", seconds))
+	return strings.Join(parts, " ")
+}
+
 func runLogDayJobLabel(run storecontracts.RunRecord) string {
 	label := strings.TrimSpace(run.JobName)
 	if label != "" {
@@ -344,6 +375,14 @@ func runLogDayJobHTML(run storecontracts.RunRecord) string {
 		return fmt.Sprintf("<a class=\"job-link\" href=\"%s\">%s</a>", html.EscapeString(href), html.EscapeString(label))
 	}
 	return fmt.Sprintf("<span class=\"job-link\">%s</span>", html.EscapeString(label))
+}
+
+func runLogDayRegionHTML(run storecontracts.RunRecord) string {
+	region := strings.TrimSpace(run.Region)
+	if region == "" {
+		return "<span class=\"muted\">n/a</span>"
+	}
+	return html.EscapeString(region)
 }
 
 func runLogDayRunFlagsHTML(run storecontracts.RunRecord) string {

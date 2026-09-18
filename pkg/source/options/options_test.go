@@ -137,6 +137,21 @@ func TestValidateRejectsNegativeArtifactRetryWindow(t *testing.T) {
 	}
 }
 
+func TestRunRegionArtifactPathForEnvironment(t *testing.T) {
+	t.Parallel()
+
+	path, ok := RunRegionArtifactPathForEnvironment("DEV")
+	if !ok {
+		t.Fatalf("expected DEV region artifact path")
+	}
+	if path != "artifacts/e2e-parallel/aro-hcp-lease-acquire/build-log.txt" {
+		t.Fatalf("unexpected DEV region artifact path: %q", path)
+	}
+	if _, ok := RunRegionArtifactPathForEnvironment("int"); ok {
+		t.Fatalf("did not expect an INT region artifact path")
+	}
+}
+
 func TestProwJobNamesForEnvironment(t *testing.T) {
 	t.Parallel()
 

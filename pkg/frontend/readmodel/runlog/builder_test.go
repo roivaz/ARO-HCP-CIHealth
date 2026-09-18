@@ -16,7 +16,13 @@ func TestBuildDayBuildsMatchedAndUnmatchedRuns(t *testing.T) {
 	ctx := context.Background()
 	fixture := testsupport.NewIntegrationFixture(t, "")
 	store := fixture.OpenWeekStore(t, "2026-03-16")
-	if err := store.UpsertRuns(ctx, testsupport.SampleRunsFixture()); err != nil {
+	runs := testsupport.SampleRunsFixture()
+	runs[0].StartedAt = "2026-03-16T08:00:12Z"
+	runs[0].CompletedAt = "2026-03-16T10:08:55Z"
+	runs[0].TimingMetadataState = storecontracts.RunTimingMetadataStateFound
+	runs[0].Region = "westus3"
+	runs[0].RegionMetadataState = storecontracts.RunRegionMetadataStateFound
+	if err := store.UpsertRuns(ctx, runs); err != nil {
 		t.Fatalf("seed runs: %v", err)
 	}
 	if err := store.UpsertRawFailures(ctx, testsupport.SampleRawFailuresFixture()); err != nil {
@@ -52,6 +58,15 @@ func TestBuildDayBuildsMatchedAndUnmatchedRuns(t *testing.T) {
 	}
 
 	matchedRun := jobHistoryRunByURL(t, environment, "https://prow.example.com/view/1")
+	if got, want := matchedRun.Run.Region, "westus3"; got != want {
+		t.Fatalf("unexpected matched run region: got=%q want=%q", got, want)
+	}
+	if got, want := matchedRun.Run.StartedAt, "2026-03-16T08:00:12Z"; got != want {
+		t.Fatalf("unexpected matched run start time: got=%q want=%q", got, want)
+	}
+	if got, want := matchedRun.Run.CompletedAt, "2026-03-16T10:08:55Z"; got != want {
+		t.Fatalf("unexpected matched run completion time: got=%q want=%q", got, want)
+	}
 	if got, want := matchedRun.SemanticRollups.AttachmentSummary, "single_clustered"; got != want {
 		t.Fatalf("unexpected matched run summary: got=%q want=%q", got, want)
 	}

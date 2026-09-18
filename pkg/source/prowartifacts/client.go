@@ -3,6 +3,7 @@ package prowartifacts
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -18,8 +20,25 @@ import (
 )
 
 const (
-	defaultHTTPTimeout = 90 * time.Second
+	defaultHTTPTimeout       = 90 * time.Second
+	maxArtifactResponseBytes = 32 << 20
+	prowJobArtifactPath      = "prowjob.json"
 )
+
+type ArtifactOutcome string
+
+const (
+	ArtifactOutcomeFound     ArtifactOutcome = "found"
+	ArtifactOutcomeMissing   ArtifactOutcome = "missing"
+	ArtifactOutcomeForbidden ArtifactOutcome = "forbidden"
+	ArtifactOutcomeInvalid   ArtifactOutcome = "invalid"
+)
+
+type ArtifactResult struct {
+	Outcome ArtifactOutcome
+	Body    []byte
+	URL     string
+}
 
 type Failure struct {
 	ArtifactURL string
@@ -28,8 +47,29 @@ type Failure struct {
 	FailureText string
 }
 
+type FailureListResult struct {
+	Outcome  ArtifactOutcome
+	Failures []Failure
+}
+
+type RegionResult struct {
+	Outcome     ArtifactOutcome
+	Region      string
+	ArtifactURL string
+}
+
+type TimingResult struct {
+	Outcome     ArtifactOutcome
+	StartedAt   string
+	CompletedAt string
+	ArtifactURL string
+}
+
 type Client interface {
-	ListFailures(ctx context.Context, environment string, runURL string) ([]Failure, error)
+	FetchArtifact(ctx context.Context, runURL string, relativePath string) (ArtifactResult, error)
+	ListFailures(ctx context.Context, environment string, runURL string) (FailureListResult, error)
+	GetRunTiming(ctx context.Context, runURL string) (TimingResult, error)
+	GetRunRegion(ctx context.Context, runURL string, relativePath string) (RegionResult, error)
 }
 
 type ClientOptions struct {
@@ -68,33 +108,42 @@ func NewHTTPClient(options ClientOptions) *HTTPClient {
 	}
 }
 
-func (c *HTTPClient) ListFailures(ctx context.Context, environment string, runURL string) ([]Failure, error) {
-	prefix, err := ArtifactPrefixFromRunURL(runURL)
-	if err != nil {
-		return nil, err
-	}
-
+func (c *HTTPClient) ListFailures(ctx context.Context, environment string, runURL string) (FailureListResult, error) {
 	junitPaths := c.junitPathsForEnvironment(environment)
 	failures := make([]Failure, 0, 8)
 	seen := map[string]struct{}{}
 	fetchErrors := make([]error, 0, len(junitPaths))
+	sawFound := false
+	sawForbidden := false
+	sawInvalid := false
 
 	for _, junitPath := range junitPaths {
-		artifactURL := c.artifactURL(prefix, junitPath)
-		contents, found, err := c.fetchArtifact(ctx, artifactURL)
+		result, err := c.FetchArtifact(ctx, runURL, junitPath)
 		if err != nil {
 			fetchErrors = append(fetchErrors, fmt.Errorf("fetch junit %q: %w", junitPath, err))
 			continue
 		}
-		if !found {
+		switch result.Outcome {
+		case ArtifactOutcomeForbidden:
+			sawForbidden = true
 			continue
+		case ArtifactOutcomeMissing:
+			continue
+		case ArtifactOutcomeInvalid:
+			sawInvalid = true
+			continue
+		case ArtifactOutcomeFound:
+			sawFound = true
+		default:
+			return FailureListResult{}, fmt.Errorf("fetch junit %q returned unknown artifact outcome %q", junitPath, result.Outcome)
 		}
 
-		rows, err := parseJUnitFailures(contents, artifactURL)
+		rows, err := parseJUnitFailures(result.Body, result.URL)
 		if err != nil {
 			// A 200 with unparsable/empty/non-junit XML is a terminal content
 			// mismatch for this deterministic path. Treat as missing instead of a
 			// retryable transport error.
+			sawInvalid = true
 			continue
 		}
 
@@ -114,7 +163,7 @@ func (c *HTTPClient) ListFailures(ctx context.Context, environment string, runUR
 	}
 
 	if len(fetchErrors) > 0 {
-		return nil, errors.Join(fetchErrors...)
+		return FailureListResult{}, errors.Join(fetchErrors...)
 	}
 	if len(failures) > 0 {
 		sort.Slice(failures, func(i, j int) bool {
@@ -129,9 +178,21 @@ func (c *HTTPClient) ListFailures(ctx context.Context, environment string, runUR
 			}
 			return failures[i].FailureText < failures[j].FailureText
 		})
-		return failures, nil
+		return FailureListResult{
+			Outcome:  ArtifactOutcomeFound,
+			Failures: failures,
+		}, nil
 	}
-	return []Failure{}, nil
+	if sawForbidden {
+		return FailureListResult{Outcome: ArtifactOutcomeForbidden}, nil
+	}
+	if sawFound {
+		return FailureListResult{Outcome: ArtifactOutcomeFound, Failures: []Failure{}}, nil
+	}
+	if sawInvalid {
+		return FailureListResult{Outcome: ArtifactOutcomeInvalid, Failures: []Failure{}}, nil
+	}
+	return FailureListResult{Outcome: ArtifactOutcomeMissing, Failures: []Failure{}}, nil
 }
 
 func (c *HTTPClient) junitPathsForEnvironment(environment string) []string {
@@ -149,71 +210,219 @@ func (c *HTTPClient) artifactURL(prefix string, relPath string) string {
 	return c.artifactsBaseURL + "/" + joined
 }
 
-func (c *HTTPClient) fetchArtifact(ctx context.Context, artifactURL string) ([]byte, bool, error) {
+func (c *HTTPClient) FetchArtifact(ctx context.Context, runURL string, relativePath string) (ArtifactResult, error) {
+	prefix, err := ArtifactPrefixFromRunURL(runURL)
+	if err != nil {
+		return ArtifactResult{}, err
+	}
+	return c.fetchArtifactURL(ctx, c.artifactURL(prefix, relativePath))
+}
+
+func (c *HTTPClient) GetRunRegion(ctx context.Context, runURL string, relativePath string) (RegionResult, error) {
+	result, err := c.FetchArtifact(ctx, runURL, relativePath)
+	if err != nil {
+		return RegionResult{}, err
+	}
+	regionResult := RegionResult{
+		Outcome:     result.Outcome,
+		ArtifactURL: result.URL,
+	}
+	if result.Outcome != ArtifactOutcomeFound {
+		return regionResult, nil
+	}
+
+	region, err := parseRuntimeRegion(result.Body)
+	if err != nil {
+		regionResult.Outcome = ArtifactOutcomeInvalid
+		return regionResult, nil
+	}
+	regionResult.Region = region
+	return regionResult, nil
+}
+
+func (c *HTTPClient) GetRunTiming(ctx context.Context, runURL string) (TimingResult, error) {
+	result, err := c.FetchArtifact(ctx, runURL, prowJobArtifactPath)
+	if err != nil {
+		return TimingResult{}, err
+	}
+	timingResult := TimingResult{
+		Outcome:     result.Outcome,
+		ArtifactURL: result.URL,
+	}
+	if result.Outcome != ArtifactOutcomeFound {
+		return timingResult, nil
+	}
+
+	startedAt, completedAt, err := parseProwJobTiming(result.Body)
+	if err != nil {
+		timingResult.Outcome = ArtifactOutcomeInvalid
+		return timingResult, nil
+	}
+	timingResult.StartedAt = startedAt
+	timingResult.CompletedAt = completedAt
+	return timingResult, nil
+}
+
+func (c *HTTPClient) fetchArtifactURL(ctx context.Context, artifactURL string) (ArtifactResult, error) {
 	const maxAttempts = 3
 	var lastErr error
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		select {
 		case <-ctx.Done():
-			return nil, false, ctx.Err()
+			return ArtifactResult{}, ctx.Err()
 		default:
 		}
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, artifactURL, nil)
 		if err != nil {
-			return nil, false, fmt.Errorf("build artifact request: %w", err)
+			return ArtifactResult{}, fmt.Errorf("build artifact request: %w", err)
 		}
-		req.Header.Set("Accept", "application/xml,text/xml,text/plain")
+		req.Header.Set("Accept", "application/json,application/xml,text/xml,text/plain,*/*")
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
+			if ctx.Err() != nil {
+				return ArtifactResult{}, ctx.Err()
+			}
 			lastErr = fmt.Errorf("fetch artifact %q: %w", artifactURL, err)
 			if attempt < maxAttempts {
-				time.Sleep(time.Duration(attempt) * time.Second)
+				if err := waitForRetry(ctx, time.Duration(attempt)*time.Second); err != nil {
+					return ArtifactResult{}, err
+				}
 				continue
 			}
-			return nil, false, lastErr
+			return ArtifactResult{}, lastErr
 		}
 
-		body, readErr := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxArtifactResponseBytes+1))
 		resp.Body.Close()
 		if readErr != nil {
-			return nil, false, fmt.Errorf("read artifact response %q: %w", artifactURL, readErr)
+			lastErr = fmt.Errorf("read artifact response %q: %w", artifactURL, readErr)
+			if attempt < maxAttempts {
+				if err := waitForRetry(ctx, time.Duration(attempt)*time.Second); err != nil {
+					return ArtifactResult{}, err
+				}
+				continue
+			}
+			return ArtifactResult{}, lastErr
 		}
 
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, false, nil
+			return ArtifactResult{Outcome: ArtifactOutcomeMissing, URL: artifactURL}, nil
+		}
+		if resp.StatusCode == http.StatusForbidden {
+			return ArtifactResult{Outcome: ArtifactOutcomeForbidden, URL: artifactURL}, nil
 		}
 		if resp.StatusCode != http.StatusOK {
 			lastErr = fmt.Errorf("fetch artifact %q returned status %d: %s", artifactURL, resp.StatusCode, strings.TrimSpace(string(limitBytes(body, 2048))))
 			if attempt < maxAttempts && isRetryableStatusCode(resp.StatusCode) {
-				time.Sleep(time.Duration(attempt) * time.Second)
+				if err := waitForRetry(ctx, time.Duration(attempt)*time.Second); err != nil {
+					return ArtifactResult{}, err
+				}
 				continue
 			}
-			return nil, false, lastErr
+			return ArtifactResult{}, lastErr
+		}
+		if len(body) > maxArtifactResponseBytes {
+			return ArtifactResult{}, fmt.Errorf("artifact %q exceeds maximum response size of %d bytes", artifactURL, maxArtifactResponseBytes)
 		}
 
 		contentType := strings.ToLower(resp.Header.Get("Content-Type"))
 		if strings.Contains(contentType, "text/html") || looksLikeHTML(body) {
 			// Some artifact paths legitimately resolve to HTML directory/index pages.
 			// Treat those as "artifact not found" instead of retryable failures.
-			return nil, false, nil
+			return ArtifactResult{Outcome: ArtifactOutcomeMissing, URL: artifactURL}, nil
 		}
 
-		return body, true, nil
+		return ArtifactResult{
+			Outcome: ArtifactOutcomeFound,
+			Body:    body,
+			URL:     artifactURL,
+		}, nil
 	}
 
 	if lastErr != nil {
-		return nil, false, lastErr
+		return ArtifactResult{}, lastErr
 	}
-	return nil, false, fmt.Errorf("fetch artifact %q failed without explicit error", artifactURL)
+	return ArtifactResult{}, fmt.Errorf("fetch artifact %q failed without explicit error", artifactURL)
 }
 
 func isRetryableStatusCode(statusCode int) bool {
 	return statusCode == http.StatusTooManyRequests ||
 		statusCode == http.StatusRequestTimeout ||
 		statusCode >= http.StatusInternalServerError
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+var ansiEscapeSequence = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+
+func parseProwJobTiming(contents []byte) (string, string, error) {
+	var prowJob struct {
+		Status struct {
+			StartTime      string `json:"startTime"`
+			CompletionTime string `json:"completionTime"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(contents, &prowJob); err != nil {
+		return "", "", fmt.Errorf("decode prowjob metadata: %w", err)
+	}
+
+	startedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(prowJob.Status.StartTime))
+	if err != nil {
+		return "", "", fmt.Errorf("parse prowjob startTime: %w", err)
+	}
+	startedAt = startedAt.UTC()
+
+	rawCompletedAt := strings.TrimSpace(prowJob.Status.CompletionTime)
+	if rawCompletedAt == "" {
+		return startedAt.Format(time.RFC3339Nano), "", nil
+	}
+	completedAt, err := time.Parse(time.RFC3339Nano, rawCompletedAt)
+	if err != nil {
+		return "", "", fmt.Errorf("parse prowjob completionTime: %w", err)
+	}
+	completedAt = completedAt.UTC()
+	if completedAt.Before(startedAt) {
+		return "", "", fmt.Errorf("prowjob completionTime precedes startTime")
+	}
+	return startedAt.Format(time.RFC3339Nano), completedAt.Format(time.RFC3339Nano), nil
+}
+
+func parseRuntimeRegion(contents []byte) (string, error) {
+	cleaned := ansiEscapeSequence.ReplaceAll(contents, nil)
+	const marker = "Acquired slot and wrote shared artifacts"
+	markerIndex := bytes.Index(cleaned, []byte(marker))
+	if markerIndex < 0 {
+		return "", fmt.Errorf("slot acquisition marker not found")
+	}
+	jsonStart := bytes.IndexByte(cleaned[markerIndex+len(marker):], '{')
+	if jsonStart < 0 {
+		return "", fmt.Errorf("slot acquisition metadata JSON not found")
+	}
+	jsonStart += markerIndex + len(marker)
+
+	var metadata struct {
+		RuntimeRegion string `json:"runtimeRegion"`
+	}
+	if err := json.NewDecoder(bytes.NewReader(cleaned[jsonStart:])).Decode(&metadata); err != nil {
+		return "", fmt.Errorf("decode slot acquisition metadata: %w", err)
+	}
+	region := strings.ToLower(strings.TrimSpace(metadata.RuntimeRegion))
+	if region == "" {
+		return "", fmt.Errorf("slot acquisition metadata missing runtimeRegion")
+	}
+	return region, nil
 }
 
 func CanonicalRunURL(deckBaseURL string, runURL string) (string, error) {

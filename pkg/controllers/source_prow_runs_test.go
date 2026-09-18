@@ -564,9 +564,10 @@ func (f *fakeProwSnapshotClient) GetJobHistoryPage(_ context.Context, historyPat
 }
 
 type fakeProwRunsStore struct {
-	runs            map[string]contracts.RunRecord
-	checkpoints     map[string]contracts.CheckpointRecord
-	upsertRunsCalls int
+	runs             map[string]contracts.RunRecord
+	artifactFailures map[string][]contracts.ArtifactFailureRecord
+	checkpoints      map[string]contracts.CheckpointRecord
+	upsertRunsCalls  int
 }
 
 func (f *fakeProwRunsStore) GetStoredRun(environment string, runURL string) (contracts.RunRecord, bool) {
@@ -584,8 +585,8 @@ func (f *fakeProwRunsStore) UpsertRuns(_ context.Context, runs []contracts.RunRe
 
 func (f *fakeProwRunsStore) ListRunKeys(_ context.Context) ([]string, error) {
 	keys := make([]string, 0, len(f.runs))
-	for key := range f.runs {
-		keys = append(keys, key)
+	for _, run := range f.runs {
+		keys = append(keys, run.Environment+"|"+run.RunURL)
 	}
 	return keys, nil
 }
@@ -598,9 +599,82 @@ func (f *fakeProwRunsStore) ListRunsByDateRange(_ context.Context, environment s
 	return nil, nil
 }
 
+func (f *fakeProwRunsStore) ListRunsNeedingTimingMetadata(_ context.Context, environments []string, startTime time.Time) ([]contracts.RunRecord, error) {
+	environmentSet := map[string]struct{}{}
+	for _, environment := range environments {
+		environmentSet[environment] = struct{}{}
+	}
+	rows := make([]contracts.RunRecord, 0)
+	for _, run := range f.runs {
+		if _, ok := environmentSet[run.Environment]; !ok {
+			continue
+		}
+		if runTimingMetadataTerminal(run) {
+			continue
+		}
+		occurredAt, ok := parseTimestamp(run.OccurredAt)
+		if ok && occurredAt.Before(startTime) {
+			continue
+		}
+		rows = append(rows, run)
+	}
+	return rows, nil
+}
+
+func (f *fakeProwRunsStore) ListRunsNeedingRegionMetadata(_ context.Context, environments []string, startTime time.Time) ([]contracts.RunRecord, error) {
+	environmentSet := map[string]struct{}{}
+	for _, environment := range environments {
+		environmentSet[environment] = struct{}{}
+	}
+	rows := make([]contracts.RunRecord, 0)
+	for _, run := range f.runs {
+		if _, ok := environmentSet[run.Environment]; !ok {
+			continue
+		}
+		if runRegionMetadataTerminal(run) {
+			continue
+		}
+		occurredAt, ok := parseTimestamp(run.OccurredAt)
+		if ok && occurredAt.Before(startTime) {
+			continue
+		}
+		rows = append(rows, run)
+	}
+	return rows, nil
+}
+
 func (f *fakeProwRunsStore) GetRun(_ context.Context, environment string, runURL string) (contracts.RunRecord, bool, error) {
 	row, found := f.GetStoredRun(environment, runURL)
 	return row, found, nil
+}
+
+func (f *fakeProwRunsStore) UpdateRunRegionMetadata(_ context.Context, run contracts.RunRecord) error {
+	key := f.runKey(run.Environment, run.RunURL)
+	existing, found := f.runs[key]
+	if !found {
+		return fmt.Errorf("run not found")
+	}
+	existing.Region = run.Region
+	existing.RegionMetadataState = run.RegionMetadataState
+	existing.RegionMetadataFirstCheckedAt = run.RegionMetadataFirstCheckedAt
+	existing.RegionMetadataCheckedAt = run.RegionMetadataCheckedAt
+	f.runs[key] = existing
+	return nil
+}
+
+func (f *fakeProwRunsStore) UpdateRunTimingMetadata(_ context.Context, run contracts.RunRecord) error {
+	key := f.runKey(run.Environment, run.RunURL)
+	existing, found := f.runs[key]
+	if !found {
+		return fmt.Errorf("run not found")
+	}
+	existing.StartedAt = run.StartedAt
+	existing.CompletedAt = run.CompletedAt
+	existing.TimingMetadataState = run.TimingMetadataState
+	existing.TimingMetadataFirstCheckedAt = run.TimingMetadataFirstCheckedAt
+	existing.TimingMetadataCheckedAt = run.TimingMetadataCheckedAt
+	f.runs[key] = existing
+	return nil
 }
 
 func (f *fakeProwRunsStore) UpsertPullRequests(_ context.Context, rows []contracts.PullRequestRecord) error {
@@ -616,6 +690,13 @@ func (f *fakeProwRunsStore) GetPullRequest(_ context.Context, prNumber int) (con
 }
 
 func (f *fakeProwRunsStore) UpsertArtifactFailures(_ context.Context, rows []contracts.ArtifactFailureRecord) error {
+	if f.artifactFailures == nil {
+		f.artifactFailures = map[string][]contracts.ArtifactFailureRecord{}
+	}
+	for _, row := range rows {
+		key := f.runKey(row.Environment, row.RunURL)
+		f.artifactFailures[key] = append(f.artifactFailures[key], row)
+	}
 	return nil
 }
 
@@ -624,7 +705,7 @@ func (f *fakeProwRunsStore) ListArtifactRunKeys(_ context.Context) ([]string, er
 }
 
 func (f *fakeProwRunsStore) ListArtifactFailuresByRun(_ context.Context, environment string, runURL string) ([]contracts.ArtifactFailureRecord, error) {
-	return nil, nil
+	return append([]contracts.ArtifactFailureRecord(nil), f.artifactFailures[f.runKey(environment, runURL)]...), nil
 }
 
 func (f *fakeProwRunsStore) UpsertRawFailures(_ context.Context, rows []contracts.RawFailureRecord) error {

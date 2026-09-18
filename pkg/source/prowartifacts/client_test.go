@@ -196,9 +196,9 @@ func TestHTTPClientListFailuresReturnsErrorWhenOneDeterministicPathFails(t *test
 	t.Cleanup(server.Close)
 
 	client := NewHTTPClient(ClientOptions{ArtifactsBaseURL: server.URL + "/gcs"})
-	failures, err := client.ListFailures(context.Background(), "dev", "https://prow.ci.openshift.org/view/gs/test-bucket/job/999")
+	result, err := client.ListFailures(context.Background(), "dev", "https://prow.ci.openshift.org/view/gs/test-bucket/job/999")
 	if err == nil {
-		t.Fatalf("expected error when one deterministic junit path fails, failures=%v", failures)
+		t.Fatalf("expected error when one deterministic junit path fails, result=%v", result)
 	}
 	if !strings.Contains(err.Error(), "prowjob_junit.xml") {
 		t.Fatalf("expected error to reference failing junit path, got=%v", err)
@@ -248,12 +248,12 @@ func TestHTTPClientListFailuresTreatsHTMLAsNotFoundWithoutRetry(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewHTTPClient(ClientOptions{ArtifactsBaseURL: server.URL + "/gcs"})
-	failures, err := client.ListFailures(context.Background(), "dev", "https://prow.ci.openshift.org/view/gs/test-bucket/job/1001")
+	result, err := client.ListFailures(context.Background(), "dev", "https://prow.ci.openshift.org/view/gs/test-bucket/job/1001")
 	if err != nil {
 		t.Fatalf("expected HTML response to be treated as missing artifact, got err=%v", err)
 	}
-	if len(failures) != 1 {
-		t.Fatalf("expected only entrypoint failure to be returned, got=%d", len(failures))
+	if len(result.Failures) != 1 {
+		t.Fatalf("expected only entrypoint failure to be returned, got=%d", len(result.Failures))
 	}
 
 	mu.Lock()
@@ -300,12 +300,12 @@ func TestHTTPClientListFailuresTreatsUnparseableJUnitAsTerminalMissing(t *testin
 	t.Cleanup(server.Close)
 
 	client := NewHTTPClient(ClientOptions{ArtifactsBaseURL: server.URL + "/gcs"})
-	failures, err := client.ListFailures(context.Background(), "dev", "https://prow.ci.openshift.org/view/gs/test-bucket/job/1002")
+	result, err := client.ListFailures(context.Background(), "dev", "https://prow.ci.openshift.org/view/gs/test-bucket/job/1002")
 	if err != nil {
 		t.Fatalf("expected unparseable junit content to be treated as missing artifact, got err=%v", err)
 	}
-	if len(failures) != 1 {
-		t.Fatalf("expected only entrypoint failure to be returned, got=%d", len(failures))
+	if len(result.Failures) != 1 {
+		t.Fatalf("expected only entrypoint failure to be returned, got=%d", len(result.Failures))
 	}
 
 	mu.Lock()
@@ -357,12 +357,12 @@ func TestHTTPClientListFailuresRetries429AndSucceeds(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewHTTPClient(ClientOptions{ArtifactsBaseURL: server.URL + "/gcs"})
-	failures, err := client.ListFailures(context.Background(), "dev", "https://prow.ci.openshift.org/view/gs/test-bucket/job/1000")
+	result, err := client.ListFailures(context.Background(), "dev", "https://prow.ci.openshift.org/view/gs/test-bucket/job/1000")
 	if err != nil {
 		t.Fatalf("expected retries to eventually succeed, got err=%v", err)
 	}
-	if len(failures) != 1 {
-		t.Fatalf("unexpected failure count after retry success: got=%d want=1", len(failures))
+	if len(result.Failures) != 1 {
+		t.Fatalf("unexpected failure count after retry success: got=%d want=1", len(result.Failures))
 	}
 
 	mu.Lock()
@@ -370,5 +370,184 @@ func TestHTTPClientListFailuresRetries429AndSucceeds(t *testing.T) {
 	mu.Unlock()
 	if entrypointRequests != 3 {
 		t.Fatalf("expected 3 attempts for retryable 429, got=%d", entrypointRequests)
+	}
+}
+
+func TestHTTPClientFetchArtifactTreatsForbiddenAsTerminal(t *testing.T) {
+	t.Parallel()
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewHTTPClient(ClientOptions{ArtifactsBaseURL: server.URL + "/gcs"})
+	result, err := client.FetchArtifact(
+		context.Background(),
+		"https://prow.ci.openshift.org/view/gs/test-bucket/job/forbidden",
+		"artifact.txt",
+	)
+	if err != nil {
+		t.Fatalf("FetchArtifact returned error for terminal forbidden response: %v", err)
+	}
+	if result.Outcome != ArtifactOutcomeForbidden {
+		t.Fatalf("unexpected outcome: got=%q want=%q", result.Outcome, ArtifactOutcomeForbidden)
+	}
+	if requests != 1 {
+		t.Fatalf("expected forbidden response not to be retried, got requests=%d", requests)
+	}
+}
+
+func TestHTTPClientListFailuresReturnsForbiddenOutcome(t *testing.T) {
+	t.Parallel()
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewHTTPClient(ClientOptions{
+		ArtifactsBaseURL:  server.URL + "/gcs",
+		DefaultJUnitPaths: []string{"first.xml", "second.xml"},
+	})
+	result, err := client.ListFailures(
+		context.Background(),
+		"unknown",
+		"https://prow.ci.openshift.org/view/gs/test-bucket/job/forbidden",
+	)
+	if err != nil {
+		t.Fatalf("ListFailures returned error for terminal forbidden response: %v", err)
+	}
+	if result.Outcome != ArtifactOutcomeForbidden {
+		t.Fatalf("unexpected outcome: got=%q want=%q", result.Outcome, ArtifactOutcomeForbidden)
+	}
+	if requests != 2 {
+		t.Fatalf("expected each deterministic path to be attempted once without retries, got requests=%d", requests)
+	}
+}
+
+func TestHTTPClientGetRunTimingParsesProwJobStatus(t *testing.T) {
+	t.Parallel()
+
+	var requestedPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"status": {
+				"startTime": "2026-09-18T10:19:12Z",
+				"completionTime": "2026-09-18T12:27:55Z"
+			}
+		}`))
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewHTTPClient(ClientOptions{ArtifactsBaseURL: server.URL + "/gcs"})
+	result, err := client.GetRunTiming(
+		context.Background(),
+		"https://prow.ci.openshift.org/view/gs/test-bucket/job/complete",
+	)
+	if err != nil {
+		t.Fatalf("GetRunTiming returned error: %v", err)
+	}
+	if requestedPath != "/gcs/test-bucket/job/complete/prowjob.json" {
+		t.Fatalf("unexpected artifact path: got=%q", requestedPath)
+	}
+	if result.Outcome != ArtifactOutcomeFound {
+		t.Fatalf("unexpected outcome: got=%q want=%q", result.Outcome, ArtifactOutcomeFound)
+	}
+	if result.StartedAt != "2026-09-18T10:19:12Z" || result.CompletedAt != "2026-09-18T12:27:55Z" {
+		t.Fatalf("unexpected timing: started=%q completed=%q", result.StartedAt, result.CompletedAt)
+	}
+}
+
+func TestHTTPClientGetRunTimingReturnsIncompleteProwJobAsFound(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":{"startTime":"2026-09-18T10:19:12Z"}}`))
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewHTTPClient(ClientOptions{ArtifactsBaseURL: server.URL + "/gcs"})
+	result, err := client.GetRunTiming(
+		context.Background(),
+		"https://prow.ci.openshift.org/view/gs/test-bucket/job/running",
+	)
+	if err != nil {
+		t.Fatalf("GetRunTiming returned error: %v", err)
+	}
+	if result.Outcome != ArtifactOutcomeFound || result.StartedAt == "" || result.CompletedAt != "" {
+		t.Fatalf("unexpected incomplete timing result: %+v", result)
+	}
+}
+
+func TestHTTPClientGetRunTimingTreatsInvalidStatusAsInvalid(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"status": {
+				"startTime": "2026-09-18T12:27:55Z",
+				"completionTime": "2026-09-18T10:19:12Z"
+			}
+		}`))
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewHTTPClient(ClientOptions{ArtifactsBaseURL: server.URL + "/gcs"})
+	result, err := client.GetRunTiming(
+		context.Background(),
+		"https://prow.ci.openshift.org/view/gs/test-bucket/job/invalid",
+	)
+	if err != nil {
+		t.Fatalf("GetRunTiming returned error: %v", err)
+	}
+	if result.Outcome != ArtifactOutcomeInvalid {
+		t.Fatalf("unexpected outcome: got=%q want=%q", result.Outcome, ArtifactOutcomeInvalid)
+	}
+}
+
+func TestParseRuntimeRegion(t *testing.T) {
+	t.Parallel()
+
+	payload := []byte("\x1b[37m[09:45:53.580]\x1b[0m INFO: Acquired slot and wrote shared artifacts \x1b[90m{\n" +
+		`  "environment": "dev",` + "\n" +
+		`  "runtimeRegion": "westus3",` + "\n" +
+		`  "slotName": "aro-hcp-dev-shard1-slot-03"` + "\n" +
+		"}\x1b[0m\n")
+
+	region, err := parseRuntimeRegion(payload)
+	if err != nil {
+		t.Fatalf("parseRuntimeRegion returned error: %v", err)
+	}
+	if region != "westus3" {
+		t.Fatalf("unexpected region: got=%q want=%q", region, "westus3")
+	}
+}
+
+func TestHTTPClientGetRunRegionTreatsMalformedLogAsInvalid(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("lease acquired without structured metadata"))
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewHTTPClient(ClientOptions{ArtifactsBaseURL: server.URL + "/gcs"})
+	result, err := client.GetRunRegion(
+		context.Background(),
+		"https://prow.ci.openshift.org/view/gs/test-bucket/job/invalid",
+		"artifacts/e2e-parallel/aro-hcp-lease-acquire/build-log.txt",
+	)
+	if err != nil {
+		t.Fatalf("GetRunRegion returned error: %v", err)
+	}
+	if result.Outcome != ArtifactOutcomeInvalid {
+		t.Fatalf("unexpected outcome: got=%q want=%q", result.Outcome, ArtifactOutcomeInvalid)
 	}
 }

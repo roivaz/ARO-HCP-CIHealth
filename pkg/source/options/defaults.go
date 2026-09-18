@@ -11,6 +11,7 @@ type EnvironmentDefaults struct {
 	SippyRelease            string
 	SippyJobNames           []string
 	DeterministicJUnitPaths []string
+	RunRegionArtifactPath   string
 	SupportsPRLookup        bool
 }
 
@@ -59,7 +60,8 @@ var defaultRuntimeDefaults = RuntimeDefaults{
 				"artifacts/e2e-parallel/aro-hcp-gather-observability/artifacts/junit_alerts.xml",
 				"prowjob_junit.xml",
 			},
-			SupportsPRLookup: true,
+			RunRegionArtifactPath: "artifacts/e2e-parallel/aro-hcp-lease-acquire/build-log.txt",
+			SupportsPRLookup:      true,
 		},
 		"int": {
 			SippyRelease: "aro-integration",
@@ -152,6 +154,15 @@ func DeterministicJUnitPathsByEnvironment() map[string][]string {
 		out[environment] = append([]string(nil), defaults.DeterministicJUnitPaths...)
 	}
 	return out
+}
+
+func RunRegionArtifactPathForEnvironment(environment string) (string, bool) {
+	defaults, ok := EnvironmentDefaultsFor(environment)
+	if !ok {
+		return "", false
+	}
+	artifactPath := strings.Trim(strings.TrimSpace(defaults.RunRegionArtifactPath), "/")
+	return artifactPath, artifactPath != ""
 }
 
 func DefaultGitHubRepoOwner() string {

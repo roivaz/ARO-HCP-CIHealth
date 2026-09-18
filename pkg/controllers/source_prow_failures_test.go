@@ -5,45 +5,55 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
+
+	"github.com/roivaz/ARO-HCP-CIHealth/pkg/source/prowartifacts"
 	"github.com/roivaz/ARO-HCP-CIHealth/pkg/store/contracts"
 )
 
-func TestIsArchivedProwRunURL(t *testing.T) {
+func TestSourceProwFailuresTreatsForbiddenAsTerminal(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name     string
-		runURL   string
-		archived bool
-	}{
-		{
-			name:     "archived presubmit",
-			runURL:   "https://prow.ci.openshift.org/view/gs/test-platform-results/pr-logs/pull/Azure_ARO-HCP/6970/job/123",
-			archived: true,
-		},
-		{
-			name:     "archived periodic",
-			runURL:   "https://prow.ci.openshift.org/view/gs/test-platform-results/logs/job/123",
-			archived: true,
-		},
-		{
-			name:   "public bucket",
-			runURL: "https://prow.ci.openshift.org/view/gs/test-platform-results-public/pr-logs/pull/batch/job/123",
-		},
-		{
-			name:   "unrelated path",
-			runURL: "https://prow.ci.openshift.org/job/123",
+	runURL := "https://prow.ci.openshift.org/view/gs/test-platform-results-public/pr-logs/pull/batch/pull-ci-Azure-ARO-HCP-main-e2e-parallel/2100878007617982464"
+	store := newFakeRunStore(contracts.RunRecord{
+		Environment: "dev",
+		RunURL:      runURL,
+		JobName:     "pull-ci-Azure-ARO-HCP-main-e2e-parallel",
+		Failed:      true,
+		OccurredAt:  time.Now().UTC().Format(time.RFC3339Nano),
+	})
+	client := &fakeProwArtifactsClient{
+		failuresResult: prowartifacts.FailureListResult{
+			Outcome: prowartifacts.ArtifactOutcomeForbidden,
 		},
 	}
+	controller, err := newSourceProwFailuresController(logr.Discard(), Dependencies{
+		Store:  store,
+		Source: testSourceOptions(t, []string{"dev"}),
+	}, client)
+	if err != nil {
+		t.Fatalf("new source prow failures controller: %v", err)
+	}
 
-	for _, test := range tests {
-		test := test
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			if got := isArchivedProwRunURL(test.runURL); got != test.archived {
-				t.Fatalf("isArchivedProwRunURL(%q)=%t, want %t", test.runURL, got, test.archived)
-			}
-		})
+	if err := controller.processKey(context.Background(), "dev|"+runURL); err != nil {
+		t.Fatalf("processKey returned error for terminal forbidden result: %v", err)
+	}
+	rows, err := store.ListArtifactFailuresByRun(context.Background(), "dev", runURL)
+	if err != nil {
+		t.Fatalf("list artifact failures: %v", err)
+	}
+	if len(rows) != 1 || rows[0].TestName != artifactMissingMarkerTestName {
+		t.Fatalf("expected terminal missing-artifact marker, got=%+v", rows)
+	}
+	if client.listFailuresCalls != 1 {
+		t.Fatalf("unexpected ListFailures calls: got=%d want=1", client.listFailuresCalls)
+	}
+
+	if err := controller.processKey(context.Background(), "dev|"+runURL); err != nil {
+		t.Fatalf("second processKey returned error: %v", err)
+	}
+	if client.listFailuresCalls != 1 {
+		t.Fatalf("expected stored terminal marker to suppress refetch, got calls=%d", client.listFailuresCalls)
 	}
 }
 
@@ -109,4 +119,27 @@ func (f *fakeCheckpointStore) UpsertCheckpoints(_ context.Context, rows []contra
 func (f *fakeCheckpointStore) GetCheckpoint(_ context.Context, name string) (contracts.CheckpointRecord, bool, error) {
 	row, found := f.checkpoints[name]
 	return row, found, nil
+}
+
+type fakeProwArtifactsClient struct {
+	failuresResult    prowartifacts.FailureListResult
+	failuresErr       error
+	listFailuresCalls int
+}
+
+func (f *fakeProwArtifactsClient) FetchArtifact(_ context.Context, _ string, _ string) (prowartifacts.ArtifactResult, error) {
+	return prowartifacts.ArtifactResult{}, nil
+}
+
+func (f *fakeProwArtifactsClient) ListFailures(_ context.Context, _ string, _ string) (prowartifacts.FailureListResult, error) {
+	f.listFailuresCalls++
+	return f.failuresResult, f.failuresErr
+}
+
+func (f *fakeProwArtifactsClient) GetRunRegion(_ context.Context, _ string, _ string) (prowartifacts.RegionResult, error) {
+	return prowartifacts.RegionResult{}, nil
+}
+
+func (f *fakeProwArtifactsClient) GetRunTiming(_ context.Context, _ string) (prowartifacts.TimingResult, error) {
+	return prowartifacts.TimingResult{}, nil
 }

@@ -86,6 +86,13 @@ var defaultRulesByEnvironment = map[string][]Rule{
 			},
 			Lane: LaneProvision,
 		},
+		{
+			Filter: TestFilter{
+				TestSuite:     "templatize-pipeline",
+				TestNameRegex: `Microsoft\.Azure\.ARO\.HCP`,
+			},
+			Lane: LaneProvision,
+		},
 	},
 	"int": {
 		{

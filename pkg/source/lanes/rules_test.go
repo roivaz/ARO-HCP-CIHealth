@@ -20,6 +20,13 @@ func TestClassifyLane(t *testing.T) {
 			wantLane:    LaneProvision,
 		},
 		{
+			name:        "dev provision by templatize pipeline regex",
+			environment: "dev",
+			testSuite:   "templatize-pipeline",
+			testName:    "Run pipeline step Microsoft.Azure.ARO.HCP.Service.Infra/service/admin-api-cert",
+			wantLane:    LaneProvision,
+		},
+		{
 			name:        "dev e2e by suite",
 			environment: "dev",
 			testSuite:   "rp-api-compat-all/parallel",
@@ -37,6 +44,13 @@ func TestClassifyLane(t *testing.T) {
 			name:        "dev step graph non aro test is unknown",
 			environment: "dev",
 			testSuite:   "step graph",
+			testName:    "Run pipeline step Other.Service",
+			wantLane:    LaneUnknown,
+		},
+		{
+			name:        "dev templatize pipeline non aro test is unknown",
+			environment: "dev",
+			testSuite:   "templatize-pipeline",
 			testName:    "Run pipeline step Other.Service",
 			wantLane:    LaneUnknown,
 		},
@@ -108,8 +122,8 @@ func TestDeriveLane(t *testing.T) {
 			name:         "empty artifact path falls back to suite classification",
 			environment:  "dev",
 			artifactPath: "",
-			testSuite:    "step graph",
-			testName:     "Run pipeline step Microsoft.Azure.ARO.HCP.Region",
+			testSuite:    "templatize-pipeline",
+			testName:     "Run pipeline step Microsoft.Azure.ARO.HCP.Service.Infra/service/admin-api-cert",
 			wantLane:     LaneProvision,
 		},
 		{
@@ -169,14 +183,17 @@ func TestFiltersForEnvironment(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected filters for dev")
 	}
-	if len(filters) != 2 {
-		t.Fatalf("unexpected filter count for dev: got=%d want=2", len(filters))
+	if len(filters) != 3 {
+		t.Fatalf("unexpected filter count for dev: got=%d want=3", len(filters))
 	}
 	if filters[0].TestSuite != "rp-api-compat-all/parallel" {
 		t.Fatalf("unexpected first suite filter: got=%q", filters[0].TestSuite)
 	}
 	if filters[1].TestSuite != "step graph" || filters[1].TestNameRegex == "" {
 		t.Fatalf("unexpected second filter: %+v", filters[1])
+	}
+	if filters[2].TestSuite != "templatize-pipeline" || filters[2].TestNameRegex == "" {
+		t.Fatalf("unexpected third filter: %+v", filters[2])
 	}
 
 	if _, ok := FiltersForEnvironment("unknown"); ok {

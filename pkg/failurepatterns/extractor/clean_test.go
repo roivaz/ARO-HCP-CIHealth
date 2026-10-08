@@ -335,6 +335,51 @@ func TestSummarizeAzureDetailMessageScrubsOperationalValues(t *testing.T) {
 	}
 }
 
+func TestCleanCanonicalPreservesNodePoolCreationAndConditionWords(t *testing.T) {
+	t.Parallel()
+
+	input := "node pool creation did not complete before the deadline; node pool condition AllNodesHealthy is False; hypershift NodePool status replicas is 0, want 2"
+	got := cleanCanonical(input)
+	if strings.Contains(got, "node pool <nodepool> did not complete") {
+		t.Fatalf("did not expect 'creation' to be treated as a node-pool name, got=%q", got)
+	}
+	if strings.Contains(got, "node pool <nodepool> AllNodesHealthy") {
+		t.Fatalf("did not expect 'condition' to be treated as a node-pool name, got=%q", got)
+	}
+	if strings.Contains(strings.ToLower(got), "nodepool <nodepool> status") || strings.Contains(strings.ToLower(got), "nodepool <nodepool> replicas") {
+		t.Fatalf("did not expect 'NodePool status' to be treated as a node-pool name, got=%q", got)
+	}
+	if !strings.Contains(got, "node pool creation did not complete before the deadline") {
+		t.Fatalf("expected node pool creation wording to remain, got=%q", got)
+	}
+}
+
+func TestCleanCanonicalScrubsMachineObjectNames(t *testing.T) {
+	t.Parallel()
+
+	input := "Machine private-kas-np-1-5dbrz-khxf4: InspectionFailed: Waiting for AzureMachine to report spec.providerID"
+	got := cleanCanonical(input)
+	if strings.Contains(got, "private-kas-np-1-5dbrz-khxf4") {
+		t.Fatalf("expected Machine object name to be scrubbed, got=%q", got)
+	}
+	if !strings.Contains(got, "Machine <node>:") {
+		t.Fatalf("expected Machine placeholder, got=%q", got)
+	}
+}
+
+func TestCleanCanonicalScrubsClusterIdentityNamespaceName(t *testing.T) {
+	t.Parallel()
+
+	input := `cluster delayed-rbac-87tl668hqnnr/delayed-rbac-cluster entered terminal state "Failed" after role assignment deployment; expected "Succeeded"`
+	got := cleanCanonical(input)
+	if strings.Contains(got, "delayed-rbac-87tl668hqnnr") {
+		t.Fatalf("expected generated identity name to be scrubbed, got=%q", got)
+	}
+	if !strings.Contains(got, "cluster <resource-group>/<cluster>") {
+		t.Fatalf("expected cluster namespace/name placeholder, got=%q", got)
+	}
+}
+
 func TestStripReleaseFailureWrapperRemovesStampWithOrWithoutColon(t *testing.T) {
 	t.Parallel()
 

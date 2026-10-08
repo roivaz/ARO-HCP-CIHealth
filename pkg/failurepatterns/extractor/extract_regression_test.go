@@ -187,6 +187,18 @@ runtime.throw({0x1, 0x2})`
 	}
 }
 
+func TestExtractDeserializationPrefilterPreservesCaseAndSpellingVariants(t *testing.T) {
+	t.Parallel()
+	for _, spelling := range []string{"Deserialization", "Deserializaion"} {
+		message := strings.ToUpper(spelling + " Error: no output from command")
+		raw := "Command Error: exit status 2\n" + message
+		got := Extract(raw)
+		if got.CanonicalEvidencePhrase != message || got.SearchQueryPhrase != message {
+			t.Fatalf("deserialization detail lost behind exit status: %+v", got)
+		}
+	}
+}
+
 func TestExtractEvidenceUsesAzureInnerThrottlingCodeAndMessage(t *testing.T) {
 	t.Parallel()
 
@@ -1753,5 +1765,129 @@ func TestExtractEvidenceNormalizesAlertLabelDeploymentAndNodePoolAssignment(t *t
 	gotNodePool := extractEvidence(nodePool).CanonicalEvidencePhrase
 	if strings.Contains(gotNodePool, "npdg-4-21") || !strings.Contains(gotNodePool, "nodePool=<nodepool>") {
 		t.Fatalf("expected nodePool assignment to be normalized, got=%q", gotNodePool)
+	}
+}
+
+func TestExtractEvidenceMergesNodePoolDeadlineMachineDumps(t *testing.T) {
+	t.Parallel()
+
+	base := `GET https://rp.example/subscriptions/XXXX/providers/Microsoft.RedHatOpenShift/locations/westus3/hcpOperationStatuses/id
+ERROR CODE: DeadlineExceeded
+{"error":{"code":"DeadlineExceeded","message":%q}}`
+	rawA := fmt.Sprintf(base, `node pool creation did not complete before the deadline; [clusterServiceNodePoolStatus] cluster service node pool is installing; [hypershiftNodePool] hypershift NodePool status replicas is 0, want 2; node pool condition AllNodesHealthy is False: 2 of 2 machines are not healthy Machine r7c9a5t8w8z7a7s-np-g7cq98-q7czc-7skt7: InspectionFailed: Waiting for AzureMachine to report spec.providerID Machine r7c9a5t8w8z7a7s-np-g7cq98-q7czc-v7h4x: InspectionFailed: Waiting for AzureMachine to report spec.providerID; node pool condition AllMachinesReady is False: 2 of 2 machines are not ready Machine r7c9a5t8w8z7a7s-np-g7cq98-q7czc-7skt7: Creating: virtualmachine creating or updating Machine r7c9a5t8w8z7a7s-np-g7cq98-q7czc-v7h4x: Creating: virtualmachine creating or updating`)
+	rawB := fmt.Sprintf(base, `node pool creation did not complete before the deadline; [clusterServiceNodePoolStatus] cluster service node pool is installing; [hypershiftNodePool] hypershift NodePool status replicas is 1, want 2; node pool condition AllNodesHealthy is False: 1 of 2 machines are not healthy Machine cilium-cluster-cilium-np-597b9-prdsc: InspectionFailed: Waiting for AzureMachine to report spec.providerID; node pool condition AllMachinesReady is False: 1 of 2 machines are not ready Machine cilium-cluster-cilium-np-597b9-prdsc: Creating: virtualmachine creating or updating`)
+	rawAutoscale := fmt.Sprintf(base, `node pool creation did not complete before the deadline; [clusterServiceNodePoolStatus] cluster service node pool is installing; [hypershiftNodePool] hypershift NodePool status replicas is 2, want >= 3 (autoscaling min); node pool condition AllNodesHealthy is False: 1 of 3 machines are not healthy Machine p5d6o0j0i5s4u7a-autoscale-noaz-686hx-dvr6p: InspectionFailed: Waiting for AzureMachine to report spec.providerID; node pool condition AllMachinesReady is False: 1 of 3 machines are not ready Machine p5d6o0j0i5s4u7a-autoscale-noaz-686hx-dvr6p: Creating: virtualmachine creating or updating`)
+
+	gotA := extractEvidence(rawA).CanonicalEvidencePhrase
+	gotB := extractEvidence(rawB).CanonicalEvidencePhrase
+	if gotA != gotB {
+		t.Fatalf("expected node-pool machine dumps and replica counts to merge:\n  A=%q\n  B=%q", gotA, gotB)
+	}
+	for _, artifact := range []string{"r7c9a5t8w8z7a7s", "cilium-cluster-cilium-np-597b9-prdsc", "replicas is 0", "replicas is 1", "2 of 2 machines", "1 of 2 machines"} {
+		if strings.Contains(gotA, artifact) {
+			t.Fatalf("expected node-pool artifact %q to be normalized, got=%q", artifact, gotA)
+		}
+	}
+	if !strings.Contains(gotA, "node pool creation did not complete before the deadline") {
+		t.Fatalf("expected node pool creation wording to be preserved, got=%q", gotA)
+	}
+	if !strings.Contains(gotA, "NodePool status replicas is <count>, want <count>") {
+		t.Fatalf("expected replica-count placeholders, got=%q", gotA)
+	}
+	if strings.Count(strings.ToLower(gotA), "machine <node>: inspectionfailed") != 1 {
+		t.Fatalf("expected duplicate machine InspectionFailed rows to collapse, got=%q", gotA)
+	}
+
+	gotAutoscale := extractEvidence(rawAutoscale).CanonicalEvidencePhrase
+	if gotA == gotAutoscale {
+		t.Fatalf("expected autoscaling replica target to remain a merge boundary, got=%q", gotA)
+	}
+	if !strings.Contains(gotAutoscale, "want >= <count> (autoscaling min)") {
+		t.Fatalf("expected autoscaling replica placeholder, got=%q", gotAutoscale)
+	}
+}
+
+func TestExtractEvidenceMergesHostedClusterUnavailableReplicaLists(t *testing.T) {
+	t.Parallel()
+
+	base := `GET https://rp.example/subscriptions/XXXX/providers/Microsoft.RedHatOpenShift/locations/westus3/hcpOperationStatuses/id
+ERROR CODE: DeadlineExceeded
+{"error":{"code":"DeadlineExceeded","message":%q}}`
+	rawA := fmt.Sprintf(base, `cluster creation did not complete before the deadline; [clusterServiceClusterStatus] cluster service is installing; [hypershiftHostedCluster] hosted cluster is not available: KubeconfigWaitingForCreate: Waiting for hosted control plane kubeconfig to be created; hosted cluster degraded: UnavailableReplicas: capi-provider deployment has 2 unavailable replicas`)
+	rawB := fmt.Sprintf(base, `cluster creation did not complete before the deadline; [clusterServiceClusterStatus] cluster service is installing; [hypershiftHostedCluster] hosted cluster is not available: KubeconfigWaitingForCreate: Waiting for hosted control plane kubeconfig to be created; hosted cluster degraded: UnavailableReplicas: capi-provider deployment has 1 unavailable replicas`)
+	rawRouter := fmt.Sprintf(base, `cluster creation did not complete before the deadline; [clusterServiceClusterStatus] cluster service is installing; [hypershiftHostedCluster] hosted cluster is not available: KubeconfigWaitingForCreate: Waiting for hosted control plane kubeconfig to be created; hosted cluster degraded: UnavailableReplicas: [router deployment has 2 unavailable replicas]`)
+	rawVersion := fmt.Sprintf(base, `cluster creation did not complete before the deadline; [hypershiftHostedCluster] hosted cluster control plane version not yet completed: version 4.20.40 is Partial (want Completed), started 1m39s ago; version 4.20.40 is Partial (want Completed), started 4m49s ago; version 4.20.40 is Partial (want Completed), started 10m52s ago; hosted cluster degraded: UnavailableReplicas: [openshift-apiserver]`)
+
+	gotA := extractEvidence(rawA).CanonicalEvidencePhrase
+	gotB := extractEvidence(rawB).CanonicalEvidencePhrase
+	if gotA != gotB {
+		t.Fatalf("expected UnavailableReplicas replica counts to merge:\n  A=%q\n  B=%q", gotA, gotB)
+	}
+	if !strings.Contains(gotA, "UnavailableReplicas: [capi-provider]") {
+		t.Fatalf("expected UnavailableReplicas to keep the affected workload, got=%q", gotA)
+	}
+
+	gotRouter := extractEvidence(rawRouter).CanonicalEvidencePhrase
+	if gotA == gotRouter {
+		t.Fatalf("expected distinct UnavailableReplicas workloads to remain separate:\n  capi=%q\n  router=%q", gotA, gotRouter)
+	}
+	if !strings.Contains(gotRouter, "UnavailableReplicas: [router]") {
+		t.Fatalf("expected router to remain in UnavailableReplicas, got=%q", gotRouter)
+	}
+
+	gotVersion := extractEvidence(rawVersion).CanonicalEvidencePhrase
+	if strings.Count(strings.ToLower(gotVersion), "is partial (want completed)") != 1 {
+		t.Fatalf("expected repeated Partial version clauses to collapse, got=%q", gotVersion)
+	}
+	if strings.Contains(gotVersion, "4.20.40") {
+		t.Fatalf("expected control-plane version to be normalized, got=%q", gotVersion)
+	}
+}
+
+func TestExtractEvidenceMergesNightlyVersionAndOrasArtifacts(t *testing.T) {
+	t.Parallel()
+
+	rawA := `ERROR CODE: InvalidRequestContent
+{"error":{"code":"InvalidRequestContent","message":"Invalid value: \"4.20.0-0.nightly-multi-2026-09-30-014938\": must be at least 4.20.8"}}`
+	rawB := `ERROR CODE: InvalidRequestContent
+{"error":{"code":"InvalidRequestContent","message":"Invalid value: \"4.20.0-0.nightly-multi-2026-10-01-125400\": must be at least 4.20.8"}}`
+	gotA := extractEvidence(rawA).CanonicalEvidencePhrase
+	gotB := extractEvidence(rawB).CanonicalEvidencePhrase
+	if gotA != gotB {
+		t.Fatalf("expected nightly payload timestamps to merge:\n  A=%q\n  B=%q", gotA, gotB)
+	}
+	if strings.Contains(gotA, "2026-09-30") || strings.Contains(gotA, "014938") {
+		t.Fatalf("expected nightly timestamp to be normalized, got=%q", gotA)
+	}
+
+	orasA := `Command failed after 5 attempts: oras cp registry.build11.ci.openshift.org/ci-op-49jbb95d/pipeline@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa arohcpsvcdev.azurecr.io/ci-op-49jbb95d/pipeline:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb --from-registry-config /tmp/tmp.WQPJJsgkPI/containers/auth.json --to-registry-config /tmp/tmp.WQPJJsgkPI/containers/auth.json`
+	orasB := `Command failed after 5 attempts: oras cp registry.build11.ci.openshift.org/ci-op-8mw8v43n/pipeline@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc arohcpsvcdev.azurecr.io/ci-op-8mw8v43n/pipeline:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd --from-registry-config /tmp/tmp.RKxD35P2Nz/containers/auth.json --to-registry-config /tmp/tmp.RKxD35P2Nz/containers/auth.json`
+	gotOrasA := extractEvidence(orasA).CanonicalEvidencePhrase
+	gotOrasB := extractEvidence(orasB).CanonicalEvidencePhrase
+	if gotOrasA != gotOrasB {
+		t.Fatalf("expected ci-op ids and tmp dirs to merge:\n  A=%q\n  B=%q", gotOrasA, gotOrasB)
+	}
+	if strings.Contains(gotOrasA, "ci-op-49jbb95d") || strings.Contains(gotOrasA, "/tmp/tmp.WQPJJsgkPI") {
+		t.Fatalf("expected oras artifacts to be normalized, got=%q", gotOrasA)
+	}
+}
+
+func TestExtractEvidenceMergesDelayedRbacIdentityNames(t *testing.T) {
+	t.Parallel()
+
+	rawA := `cluster delayed-rbac-87tl668hqnnr/delayed-rbac-cluster entered terminal state "Failed" after role assignment deployment; expected "Succeeded"`
+	rawB := `cluster delayed-rbac-7fppc52tbxcc/delayed-rbac-cluster entered terminal state "Failed" after role assignment deployment; expected "Succeeded"`
+
+	gotA := extractEvidence(rawA).CanonicalEvidencePhrase
+	gotB := extractEvidence(rawB).CanonicalEvidencePhrase
+	if gotA != gotB {
+		t.Fatalf("expected generated delayed-rbac identities to merge:\n  A=%q\n  B=%q", gotA, gotB)
+	}
+	if strings.Contains(gotA, "delayed-rbac-87tl668hqnnr") || strings.Contains(gotA, "delayed-rbac-7fppc52tbxcc") {
+		t.Fatalf("expected identity name to be scrubbed, got=%q", gotA)
+	}
+	want := `cluster <resource-group>/<cluster> entered terminal state "Failed" after role assignment deployment; expected "Succeeded"`
+	if gotA != want {
+		t.Fatalf("unexpected canonical phrase: got=%q want=%q", gotA, want)
 	}
 }

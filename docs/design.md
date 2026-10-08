@@ -97,6 +97,12 @@ For each raw failure row, the extractor derives:
 
 Aggregation groups failures primarily by environment and extracted failure-pattern text. `signature_id` is retained as provenance and debugging context, but it is not the primary identity key for pattern merging.
 
+Canonicalization includes a deterministic generated-name fallback before text truncation. It preserves stable prefixes (`delayed-rbac-<id>`) and masks lowercase suffixes with conservative letter/digit structure: 5–6 character Kubernetes-style suffixes containing letters and digits, or 8–32 character suffixes with at least three letters, three digits, and three letter/digit transitions. Standalone opaque IDs require at least 20 characters. Letter-only suffixes and ambiguous names remain unchanged.
+
+This fallback leaves dotted, underscored, and uppercase-bearing tokens intact to avoid interpreting versions, API fields, domains, and VM SKUs as generated names. Existing context-specific normalizers still apply first, including their explicit version policies. A stable workload prefix such as `router` or `capi-provider` is retained. No window-level similarity merge is performed: identity does not depend on neighboring failures or the selected date range.
+
+Azure leaf-detail extraction reuses the code-hit index collected for its decoded payload across message lookups, preserving reverse-order selection without rescanning the payload for each candidate. Deserialization refinement uses the already-lowercased raw text to check for the required `no output from command` literal before running its case-insensitive regex; the picked-phrase fallback remains intact. These optimizations do not alter canonicalization or merge identity.
+
 The resulting read models carry operator-facing fields such as:
 
 - occurrences

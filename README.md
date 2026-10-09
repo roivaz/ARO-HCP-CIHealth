@@ -62,6 +62,7 @@ Key app routes:
 - `/report?week=YYYY-MM-DD` renders the classic week-shaped report view
 - `/report?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` renders an arbitrary UTC report window
 - `/failure-patterns?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` renders the failure-patterns window view (optional `env=<name>` and `failed_at=<provision|e2e|alert|other>` filters, both also honored by `/api/failure-patterns/window`)
+- `/api/failure-patterns/window` also accepts `details=false` to omit `full_error_samples` from every row (default `true`); use it when a client only needs counts, impact, and affected runs, since the samples are most of the payload
 - `/trends` compares raw and PR-regression-filtered overall job success for DEV `e2e-parallel` presubmits, including Tide batches. `/api/trends` returns the same read model. Both default to the last 30 UTC calendar days including today, with daily points; Reset restores this default. Select `granularity=daily|weekly` (daily by default), independently of the date range: `mode=relative&days=N` for the last 1, 2, 5, 7, 14, 30, or 90 UTC calendar days including today, `mode=weekly|sprint` for the current week/sprint, `mode=all` for stored history, or `start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`. Relative windows are resolved on each request, not exact trailing 24-hour periods; `mode=rolling` remains an alias for seven days. Only `env=dev` is supported.
 - `/api/review/signals/window?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` returns internal review-signal diagnostics for a UTC date window
 

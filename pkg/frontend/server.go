@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -245,6 +246,11 @@ func (h *handler) handleAPIFailurePatterns(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
 		return
 	}
+	includeDetails, err := detailsQueryFromRequest(r)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err)
+		return
+	}
 	response, err := readmodelpatterns.BuildWindowData(r.Context(), h.service, failurePatternsQueryFromRequest(r))
 	if err != nil {
 		statusCode := http.StatusBadRequest
@@ -254,7 +260,40 @@ func (h *handler) handleAPIFailurePatterns(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, statusCode, err)
 		return
 	}
+	if !includeDetails {
+		omitFailurePatternsRowDetails(response.Environments)
+	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+// detailsQueryFromRequest reads the optional `details` flag. It defaults to
+// true so existing callers keep receiving full_error_samples; details=false
+// lets size-capped clients (e.g. chat bots) fetch the window without them.
+func detailsQueryFromRequest(r *http.Request) (bool, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get("details"))
+	if raw == "" {
+		return true, nil
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("details must be true or false, got %q", raw)
+	}
+	return value, nil
+}
+
+// omitFailurePatternsRowDetails drops full_error_samples, which make up nearly
+// all of the payload, from every row and linked child row.
+func omitFailurePatternsRowDetails(environments []readmodelpatterns.FailurePatternsEnvironment) {
+	var omitRows func(rows []readmodelpatterns.FailurePatternsRow)
+	omitRows = func(rows []readmodelpatterns.FailurePatternsRow) {
+		for index := range rows {
+			rows[index].FullErrorSamples = nil
+			omitRows(rows[index].LinkedChildren)
+		}
+	}
+	for index := range environments {
+		omitRows(environments[index].Rows)
+	}
 }
 
 func (h *handler) handleAPIReviewSignalsWindow(w http.ResponseWriter, r *http.Request) {

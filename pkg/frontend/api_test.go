@@ -120,42 +120,7 @@ func TestHandleReadyzReturnsServiceUnavailableWhenPostgresClosed(t *testing.T) {
 func TestHandleAPIFailurePatternsReturnsJSON(t *testing.T) {
 	t.Parallel()
 
-	ctx := context.Background()
-	fixture := newHandlerFixture(t)
-	store := fixture.openWeekStore(t, "2026-03-16")
-	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
-		{
-			Environment: "dev",
-			RunURL:      "https://prow.example.com/view/1",
-			JobName:     "periodic-ci",
-			Failed:      true,
-			OccurredAt:  "2026-03-16T08:00:00Z",
-		},
-		{
-			Environment: "dev",
-			RunURL:      "https://prow.example.com/view/2",
-			JobName:     "periodic-ci-nodepool",
-			Failed:      true,
-			OccurredAt:  "2026-03-16T09:00:00Z",
-		},
-	}); err != nil {
-		t.Fatalf("seed runs: %v", err)
-	}
-	if err := store.UpsertRawFailures(ctx, reviewAPIRawFailures()); err != nil {
-		t.Fatalf("seed raw failures: %v", err)
-	}
-	if err := store.UpsertMetricsDaily(ctx, []storecontracts.MetricDailyRecord{
-		{Environment: "dev", Date: "2026-03-16", Metric: "run_count", Value: 5},
-	}); err != nil {
-		t.Fatalf("seed metrics daily: %v", err)
-	}
-
-	handler, err := NewHandler(HandlerOptions{
-		PostgresPool: fixture.pool,
-	})
-	if err != nil {
-		t.Fatalf("new handler: %v", err)
-	}
+	handler := newFailurePatternsAPIHandler(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/failure-patterns/window?start_date=2026-03-16&end_date=2026-03-16&env=dev", nil)
 	recorder := httptest.NewRecorder()
@@ -215,6 +180,122 @@ func TestHandleAPIFailurePatternsReturnsJSON(t *testing.T) {
 	if got, want := linkedRow.FullErrorSamples[0], reviewAPILongRawFailureText(); got != want {
 		t.Fatalf("expected full raw failure sample without truncation: got=%q want=%q", got, want)
 	}
+}
+
+func TestHandleAPIFailurePatternsDetailsFlag(t *testing.T) {
+	t.Parallel()
+
+	handler := newFailurePatternsAPIHandler(t)
+
+	for _, tc := range []struct {
+		name        string
+		details     string
+		wantSamples bool
+	}{
+		{name: "explicit true keeps samples", details: "true", wantSamples: true},
+		{name: "false omits samples", details: "false", wantSamples: false},
+		{name: "zero omits samples", details: "0", wantSamples: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/failure-patterns/window?start_date=2026-03-16&end_date=2026-03-16&env=dev&details="+tc.details, nil)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, req)
+
+			if got, want := recorder.Code, http.StatusOK; got != want {
+				t.Fatalf("unexpected status code: got=%d want=%d body=%s", got, want, recorder.Body.String())
+			}
+			body := recorder.Body.String()
+			if got := strings.Contains(body, "\"full_error_samples\""); got != tc.wantSamples {
+				t.Fatalf("full_error_samples present=%t, want %t: %s", got, tc.wantSamples, body)
+			}
+
+			var payload readmodelpatterns.FailurePatternsData
+			if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if got, want := len(payload.Environments), 1; got != want {
+				t.Fatalf("unexpected environment count: got=%d want=%d", got, want)
+			}
+			if got, want := len(payload.Environments[0].Rows), 2; got != want {
+				t.Fatalf("unexpected row count: got=%d want=%d", got, want)
+			}
+			for _, row := range payload.Environments[0].Rows {
+				if len(row.References) == 0 {
+					t.Fatalf("expected affected_runs to be kept for row %q", row.CanonicalEvidencePhrase)
+				}
+			}
+		})
+	}
+}
+
+func TestHandleAPIFailurePatternsRejectsInvalidDetails(t *testing.T) {
+	t.Parallel()
+
+	fixture := newHandlerFixture(t)
+	handler, err := NewHandler(HandlerOptions{
+		PostgresPool: fixture.pool,
+	})
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/failure-patterns/window?start_date=2026-03-16&end_date=2026-03-16&details=maybe", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if got, want := recorder.Code, http.StatusBadRequest; got != want {
+		t.Fatalf("unexpected status code: got=%d want=%d body=%s", got, want, recorder.Body.String())
+	}
+
+	var payload map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if got := payload["error"]; !strings.Contains(got, "details must be true or false") {
+		t.Fatalf("unexpected error message: %q", got)
+	}
+}
+
+func newFailurePatternsAPIHandler(t *testing.T) http.Handler {
+	t.Helper()
+
+	ctx := context.Background()
+	fixture := newHandlerFixture(t)
+	store := fixture.openWeekStore(t, "2026-03-16")
+	if err := store.UpsertRuns(ctx, []storecontracts.RunRecord{
+		{
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/view/1",
+			JobName:     "periodic-ci",
+			Failed:      true,
+			OccurredAt:  "2026-03-16T08:00:00Z",
+		},
+		{
+			Environment: "dev",
+			RunURL:      "https://prow.example.com/view/2",
+			JobName:     "periodic-ci-nodepool",
+			Failed:      true,
+			OccurredAt:  "2026-03-16T09:00:00Z",
+		},
+	}); err != nil {
+		t.Fatalf("seed runs: %v", err)
+	}
+	if err := store.UpsertRawFailures(ctx, reviewAPIRawFailures()); err != nil {
+		t.Fatalf("seed raw failures: %v", err)
+	}
+	if err := store.UpsertMetricsDaily(ctx, []storecontracts.MetricDailyRecord{
+		{Environment: "dev", Date: "2026-03-16", Metric: "run_count", Value: 5},
+	}); err != nil {
+		t.Fatalf("seed metrics daily: %v", err)
+	}
+
+	handler, err := NewHandler(HandlerOptions{
+		PostgresPool: fixture.pool,
+	})
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+	return handler
 }
 
 func TestHandleAPIFailurePatternsReturnsJSONError(t *testing.T) {

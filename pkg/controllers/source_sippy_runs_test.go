@@ -19,6 +19,7 @@ func TestSyncEnvironmentFetchesAllConfiguredSippyJobs(t *testing.T) {
 	opts := testSourceOptions(t, []string{"int"})
 	periodicJobName := "periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel"
 	branchJobName := "branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel"
+	branchAllJobName := "branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel-all"
 	periodicStartedAt := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
 	branchStartedAt := time.Now().UTC().Add(-8 * time.Minute).Truncate(time.Second)
 
@@ -59,7 +60,7 @@ func TestSyncEnvironmentFetchesAllConfiguredSippyJobs(t *testing.T) {
 		t.Fatalf("syncEnvironment returned error: %v", err)
 	}
 
-	if got := client.recordedJobNames(); len(got) != 2 || got[0] != branchJobName || got[1] != periodicJobName {
+	if got := client.recordedJobNames(); len(got) != 3 || got[0] != branchJobName || got[1] != branchAllJobName || got[2] != periodicJobName {
 		t.Fatalf("unexpected job names queried: got=%v", got)
 	}
 
@@ -129,8 +130,8 @@ func TestSyncSingleRunByKeySearchesAllConfiguredSippyJobs(t *testing.T) {
 	if row.JobName != branchJobName {
 		t.Fatalf("unexpected synced job name: got=%q want=%q", row.JobName, branchJobName)
 	}
-	if got := client.recordedJobNames(); len(got) != 2 {
-		t.Fatalf("expected both configured job queries, got=%v", got)
+	if got := client.recordedJobNames(); len(got) != 3 {
+		t.Fatalf("expected all configured job queries, got=%v", got)
 	}
 }
 

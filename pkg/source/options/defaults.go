@@ -70,14 +70,17 @@ var defaultRuntimeDefaults = RuntimeDefaults{
 			SippyJobNames: []string{
 				"periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel",
 				"branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel",
+				"branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel-all",
 			},
 			DeterministicJUnitPaths: []string{
 				"artifacts/integration-e2e-parallel/aro-hcp-test-persistent/artifacts/junit.xml",
+				"artifacts/integration-e2e-parallel-all/aro-hcp-test-persistent/artifacts/junit.xml",
 				"prowjob_junit.xml",
 			},
 			RunRegionArtifactPathsByJobName: map[string]string{
 				"periodic-ci-Azure-ARO-HCP-main-periodic-integration-e2e-parallel": "artifacts/integration-e2e-parallel/aro-hcp-lease-acquire/build-log.txt",
 				"branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel":        "artifacts/integration-e2e-parallel/aro-hcp-lease-acquire/build-log.txt",
+				"branch-ci-Azure-ARO-HCP-main-e2e-integration-e2e-parallel-all":    "artifacts/integration-e2e-parallel-all/aro-hcp-lease-acquire/build-log.txt",
 			},
 		},
 		"stg": {
@@ -86,16 +89,19 @@ var defaultRuntimeDefaults = RuntimeDefaults{
 				"periodic-ci-Azure-ARO-HCP-main-periodic-stage-e2e-parallel",
 				"periodic-ci-Azure-ARO-HCP-main-periodic-stage-e2e-parallel-ocp-nightly",
 				"branch-ci-Azure-ARO-HCP-main-e2e-stage-e2e-parallel",
+				"branch-ci-Azure-ARO-HCP-main-e2e-stage-e2e-parallel-all",
 			},
 			DeterministicJUnitPaths: []string{
 				"artifacts/stage-e2e-parallel/aro-hcp-test-persistent/artifacts/junit.xml",
 				"artifacts/stage-e2e-parallel-ocp-nightly/aro-hcp-test-persistent/artifacts/junit.xml",
+				"artifacts/stage-e2e-parallel-all/aro-hcp-test-persistent/artifacts/junit.xml",
 				"prowjob_junit.xml",
 			},
 			RunRegionArtifactPathsByJobName: map[string]string{
 				"periodic-ci-Azure-ARO-HCP-main-periodic-stage-e2e-parallel":             "artifacts/stage-e2e-parallel/aro-hcp-lease-acquire/build-log.txt",
 				"periodic-ci-Azure-ARO-HCP-main-periodic-stage-e2e-parallel-ocp-nightly": "artifacts/stage-e2e-parallel-ocp-nightly/aro-hcp-lease-acquire/build-log.txt",
 				"branch-ci-Azure-ARO-HCP-main-e2e-stage-e2e-parallel":                    "artifacts/stage-e2e-parallel/aro-hcp-lease-acquire/build-log.txt",
+				"branch-ci-Azure-ARO-HCP-main-e2e-stage-e2e-parallel-all":                "artifacts/stage-e2e-parallel-all/aro-hcp-lease-acquire/build-log.txt",
 			},
 		},
 		"prod": {

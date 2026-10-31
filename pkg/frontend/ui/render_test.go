@@ -993,3 +993,40 @@ func TestStylesCSSExpandsOpenFullErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderTableOrdersByImpactBeforeSignalAndCapsAfterSorting(t *testing.T) {
+	t.Parallel()
+
+	regression := func(id string) FailurePatternRow {
+		return FailurePatternRow{
+			Environment:      "dev",
+			FailurePattern:   "single pr failure " + id,
+			FailurePatternID: id,
+			BadPREvaluated:   true,
+			BadPRScore:       3,
+			AffectedRuns:     []RunReference{{RunURL: "https://example.test/run/" + id, PRNumber: 1}},
+		}
+	}
+	busy := FailurePatternRow{
+		Environment:      "dev",
+		FailurePattern:   "widespread failure",
+		FailurePatternID: "busy",
+		AffectedRuns: []RunReference{
+			{RunURL: "https://example.test/run/a"},
+			{RunURL: "https://example.test/run/b"},
+			{RunURL: "https://example.test/run/c"},
+		},
+	}
+	if category, _ := ClassifyFailurePattern(busy); category == CategoryRegression {
+		t.Fatalf("test setup: busy row must not be a regression")
+	}
+
+	rows := []FailurePatternRow{regression("r1"), regression("r2"), regression("r3"), busy}
+	out := RenderTable(rows, TableOptions{ImpactTotalJobs: 10, LoadedRowsLimit: 2})
+	if !strings.Contains(out, "widespread failure") {
+		t.Fatalf("multi-run row must survive the row cap ahead of single-run regressions: %s", out)
+	}
+	if strings.Index(out, "widespread failure") > strings.Index(out, "single pr failure") {
+		t.Fatalf("highest-impact row must be listed first")
+	}
+}

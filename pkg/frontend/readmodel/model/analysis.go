@@ -430,17 +430,17 @@ func SortRowsByDefaultPriority(rows []FailurePatternRow) {
 
 func sortRowsByDefaultPriorityWithImpact(rows []FailurePatternRow, impactTotalJobs int) {
 	sort.Slice(rows, func(i, j int) bool {
+		impactI := impactShare(rowJobsAffected(rows[i]), impactTotalJobs)
+		impactJ := impactShare(rowJobsAffected(rows[j]), impactTotalJobs)
+		if impactI != impactJ {
+			return impactI > impactJ
+		}
 		catI, _ := ClassifyFailurePattern(rows[i])
 		catJ, _ := ClassifyFailurePattern(rows[j])
 		rankI := CategoryRank(catI)
 		rankJ := CategoryRank(catJ)
 		if rankI != rankJ {
 			return rankI < rankJ
-		}
-		impactI := impactShare(rowJobsAffected(rows[i]), impactTotalJobs)
-		impactJ := impactShare(rowJobsAffected(rows[j]), impactTotalJobs)
-		if impactI != impactJ {
-			return impactI > impactJ
 		}
 		jobsI := rowJobsAffected(rows[i])
 		jobsJ := rowJobsAffected(rows[j])
